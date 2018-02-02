@@ -19,11 +19,11 @@
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/"))
 (add-to-list 'package-archives '("org" . "https://orgmode.org/elpa/"))
 
-(setq use-package-always-ensure t)
 (unless (package-installed-p 'use-package)
   (progn
     (package-install 'use-package)))
 (require 'use-package)
+(setq use-package-always-ensure t)
 
 (use-package exec-path-from-shell
   :ensure t
@@ -54,6 +54,22 @@
 		  (define-key js2-mode-map "\C-ci" 'js-doc-insert-function-doc)
 		  (define-key js2-mode-map "@" 'js-doc-insert-tag)))
     ))
+
+(use-package rjsx-mode
+  :mode ("\\.jsx\\'" . rjsx-mode)
+  :config
+  (progn
+     (defadvice js-jsx-indent-line (after js-jsx-indent-line-after-hack activate)
+   "Workaround `sgml-mode' and follow airbnb component style."
+   (let* ((cur-line (buffer-substring-no-properties
+                     (line-beginning-position)
+                     (line-end-position))))
+     (if (string-match "^\\( +\\)\/?> *$" cur-line)
+         (let* ((empty-spaces (match-string 1 cur-line)))
+           (replace-regexp empty-spaces
+                           (make-string (- (length empty-spaces) sgml-basic-offset) 32)
+                           nil
+                           (line-beginning-position) (line-end-position))))))))
 
 ;; Set the monospaced font size when mixed Chinese and English words
 (defun gsmlg//set-monospaced-font (english chinese english-size chinese-size)

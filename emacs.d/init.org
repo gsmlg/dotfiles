@@ -1,0 +1,10 @@
+* start config
+#+BEGIN_SRC emacs-lisp
+  (use-package rjsx-mode
+    :ensure t
+    :mode "\\.jsx\\'"
+    :config
+    (progn
+      (message "rjsx-mode loaded")
+      ))
+#+END_SRC

@@ -1,0 +1,7 @@
+*.elc
+CVS
+.svn
+*~
+.cvsignore
+.*.lock
+\#*

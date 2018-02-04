@@ -13,7 +13,7 @@
   :ensure t
   :config
   (progn
-    (add-hook projectile-after-switch-project-hook 'editorconfig-apply)))
+    (add-hook 'projectile-after-switch-project-hook 'editorconfig-apply)))
 
 (use-package helm-projectile
   :ensure t

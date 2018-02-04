@@ -111,7 +111,7 @@
 
 
 
-(use-package 'immortal-scratch
+(use-package immortal-scratch
   :ensure t
   :config
   (add-hook 'after-init-hook 'immortal-scratch-mode))
@@ -191,7 +191,10 @@
 (add-to-list 'auto-mode-alist '("\\.emacs-project\\'" . emacs-lisp-mode))
 (add-to-list 'auto-mode-alist '("archive-contents\\'" . emacs-lisp-mode))
 
+(use-package cl-lib
+  :ensure t)
 (use-package cl-lib-highlight
+  :ensure t
   :config
   (after-load
       (cl-lib-highlight-initialize)))

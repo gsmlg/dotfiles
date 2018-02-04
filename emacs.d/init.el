@@ -20,6 +20,7 @@
 (require 'init-lisp)
 (require 'init-javascript)
 
+(require 'init-project)
 
 ;;; applications
 

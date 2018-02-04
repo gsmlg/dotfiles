@@ -12,6 +12,19 @@
   (tool-bar-mode -1))
 (when (fboundp 'set-scroll-bar-mode)
   (set-scroll-bar-mode nil))
+;; highlight window
+(use-package dimmer
+  :ensure t
+  :config
+  (dimmer-mode))
+
+;;------------------------------------------------------------------------------
+;; add all the icons packages for file icon
+;;------------------------------------------------------------------------------
+(use-package all-the-icons
+  :ensure t
+  :config
+  (setq neo-theme (if (display-graphic-p) 'icons 'arrow)))
 
 ;;----------------------------------------------------------------------------
 ;; Load packages
@@ -19,8 +32,32 @@
 (use-package spacemacs-theme
   :ensure t)
 
+;;------------------------------------------------------------------------------
+;; Config modeline
+;;------------------------------------------------------------------------------
+(use-package spaceline
+  :ensure t
+  :config
+  (progn
+    (require 'spaceline-config)
+    ))
 
-
+(use-package spaceline-all-the-icons
+  :ensure t
+  :config
+  (progn
+    (setq spaceline-all-the-icons-slim-render t
+	  spaceline-all-the-icons-separator-type 'arrow
+	  spaceline-all-the-icons-icon-set-sun-time 'sun/moon)
+    (spaceline-helm-mode)
+    (spaceline-info-mode)
+    (spaceline-all-the-icons-theme 'input-method 'buffer-encoding-abbrev 'org-pomodoro 'mu4e-alert-segment)
+    (spaceline-all-the-icons--setup-anzu)            ;; Enable anzu searching
+    (spaceline-all-the-icons--setup-package-updates) ;; Enable package update indicator
+    (spaceline-all-the-icons--setup-git-ahead)       ;; Enable # of commits ahead of upstream in git
+    (spaceline-all-the-icons--setup-paradox)         ;; Enable Paradox mode line
+    (spaceline-all-the-icons--setup-neotree)         ;; Enable Neotree mode line
+    ))
 
 ;;----------------------------------------------------------------------------
 ;; Stop C-z from minimizing windows under OS X

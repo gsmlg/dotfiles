@@ -146,7 +146,8 @@
     (indent-guide-mode -1)))
 
 (defvar sanityinc/lispy-modes-hook
-  '(enable-paredit-mode
+  '(
+    ;; enable-paredit-mode
     turn-on-eldoc-mode
     sanityinc/disable-indent-guide
     sanityinc/enable-check-parens-on-save)

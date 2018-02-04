@@ -28,4 +28,10 @@
 			      (line-beginning-position) (line-end-position))))))))
 
 
+(use-package tern
+  :config
+  (when (executable-find "tern")
+    (add-hook 'js2-mode-hook (lambda () (tern-mode t)))))
+
+
 (provide 'init-javascript)

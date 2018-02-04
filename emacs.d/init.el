@@ -7,15 +7,22 @@
 (defconst *is-a-win* (eq system-type 'windows-nt))
 (defconst *is-a-lin* (eq system-type 'gnu/linux))
 
+(require 'init-utils)
+(require 'init-site-lisp) ;; Must come before elpa, as it may provide package.el
+
 ;; (package-initialize)
 
 (require 'init-elpa)
 (require 'init-ui)
 (require 'init-helm)
 
-;;; coding setting
+;;; programe
 (require 'init-lisp)
 (require 'init-javascript)
+
+
+;;; applications
+
 
 (when (file-exists-p custom-file)
   (load custom-file))

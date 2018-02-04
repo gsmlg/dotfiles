@@ -47,7 +47,16 @@
 ;;----------------------------------------------------------------------------
 (add-hook 'after-init-hook (lambda ()
 			     (load-theme 'spacemacs-dark)
-			     (gsmlg//set-monospaced-font "Source Code Pro" "苹方-简" 14 18)
+			     (gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 14 18)
 			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)) t)
+
+;;----------------------------------------------------------------------------
+;; Modify minor mode by `diminish'
+;;----------------------------------------------------------------------------
+(use-package diminish
+  :ensure t)
+(use-package scratch
+  :ensure t)
+
 
 (provide 'init-ui)

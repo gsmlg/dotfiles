@@ -84,7 +84,7 @@
 ;;----------------------------------------------------------------------------
 (add-hook 'after-init-hook (lambda ()
 			     (load-theme 'spacemacs-dark)
-			     (gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 14 18)
+			     (gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20)
 			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)) t)
 
 ;;----------------------------------------------------------------------------

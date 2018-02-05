@@ -23,7 +23,9 @@
 (require 'init-project)
 
 ;;; applications
-
+(require 'init-org)
+(require 'init-elfeed)
+(require 'init-email)
 
 (when (file-exists-p custom-file)
   (load custom-file))

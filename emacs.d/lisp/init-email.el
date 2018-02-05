@@ -1,6 +1,7 @@
 (use-package mu4e
   :load-path "site-lisp/mu4e/"
-  :bind ("C-x m" . mu4e-compose-new)
+  :bind (("C-x m" . mu4e-compose-new)
+	 ("C-c m" . mu4e))
   :config
   (progn
     ;; Set up some common mu4e variables

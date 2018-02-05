@@ -5,7 +5,6 @@
 (use-package projectile
   :init
   (setq projectile-enable-idle-timer t
-	projectile-keymap-prefix (kbd "C-c p")
 	projectile-idle-timer-hook '()
 	projectile-file-exists-remote-cache-expire (* 10 60)
 	projectile-enable-caching nil)
@@ -13,6 +12,7 @@
   :ensure t
   :config
   (progn
+    (projectile-mode)
     (add-hook 'projectile-after-switch-project-hook 'editorconfig-apply)))
 
 (use-package helm-projectile

@@ -1,7 +1,7 @@
 (use-package elfeed
   :ensure t
-  :config
-  (setq elfeed-db-directory "~/.emacs.d/elfeed"))
+  :custom
+  (elfeed-db-directory (expand-file-name "elfeed" gsmlg/cache-directory)))
 
 (use-package elfeed-goodies
   :ensure t
@@ -9,7 +9,7 @@
   (elfeed-goodies/setup))
 
 (use-package elfeed-org
-  :ensure
+  :ensure t
   :config
   (progn
     (setq rmh-elfeed-org-files '("~/.emacs.d/elfeed.org"))

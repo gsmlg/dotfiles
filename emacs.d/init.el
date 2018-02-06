@@ -1,4 +1,4 @@
-(setq user-emacs-directory "~/.dotfiles/emacs.d")
+(setq user-emacs-directory "~/.dotfiles/emacs.d/")
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
 
@@ -15,10 +15,12 @@
 (require 'init-elpa)
 (require 'init-ui)
 (require 'init-helm)
+(require 'init-company)
 
 ;;; programe
 (require 'init-lisp)
 (require 'init-javascript)
+(require 'init-yaml)
 
 (require 'init-project)
 
@@ -26,6 +28,9 @@
 (require 'init-org)
 (require 'init-elfeed)
 (require 'init-email)
+
+(when *is-a-mac*
+  (gsmlg/mac-osx-remap-command))
 
 (when (file-exists-p custom-file)
   (load custom-file))

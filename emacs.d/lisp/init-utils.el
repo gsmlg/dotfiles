@@ -74,10 +74,11 @@
 
 ;;; define some function
 
+(defcustom gsmlg/cache-directory (expand-file-name ".cache/" user-emacs-directory)
+  "Defind the default cache directory")
+
 ;; set indent level for all mode
-(setq gsmlg/preferred-indent-level 4
-      gsmlg-cache-directory (expand-file-name ".cache/" user-emacs-directory)
-      )
+(defcustom gsmlg/preferred-indent-level 4 "Preferred indent level for all modes")
 
 (defun gsmlg/set-indent (&optional width)
   "set the indent of each language mode,

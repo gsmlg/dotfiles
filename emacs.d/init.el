@@ -15,10 +15,13 @@
 (require 'init-elpa)
 (require 'init-ui)
 (require 'init-helm)
+(require 'init-company)
+(require 'init-setting)
 
 ;;; programe
 (require 'init-lisp)
 (require 'init-javascript)
+(require 'init-yaml)
 
 (require 'init-project)
 
@@ -26,6 +29,9 @@
 (require 'init-org)
 (require 'init-elfeed)
 (require 'init-email)
+
+(when *is-a-mac*
+  (gsmlg/mac-osx-remap-command))
 
 (when (file-exists-p custom-file)
   (load custom-file))

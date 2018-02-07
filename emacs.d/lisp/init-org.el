@@ -250,7 +250,7 @@
 					  ("L" . ignore)
 					  ("M" . ignore)
 					  ("N" . bh/narrow-to-org-subtree)
-					  ("P" . bh/narrow-to-org-project)
+					  ("P" . org-pomodoro)
 					  ("Q" . ignore)
 					  ("R" . ignore)
 					  ("S" . ignore)
@@ -498,21 +498,17 @@ so change the default 'F' binding in the agenda to allow both"
          (,(if (locate-library "ob-sh") 'sh 'shell) . t)
          (sql . nil)
          (sqlite . t))))
-
     ))
 
 (use-package org-pomodoro
   :ensure t
-  :config
-  (progn
-    (setq org-pomodoro-keep-killed-pomodoro-time t)
-    (after-load 'org-agenda
-      (define-key org-agenda-mode-map (kbd "P") 'org-pomodoro))
-    ))
+  :bind (:map org-agenda-mode-map
+	      ("P" . org-pomodoro))
+  :init
+  (setq org-pomodoro-keep-killed-pomodoro-time t))
 
 (use-package org-bullets
   :ensure t
-  :config
-  (add-hook 'org-mode-hook (lambda () (org-bullets-mode 1))))
+  :hook (org-mode . org-bullets-mode))
 
 (provide 'init-org)

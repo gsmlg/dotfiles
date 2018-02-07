@@ -6,8 +6,7 @@
 	      (lambda () (setq-local sgml-basic-offset js2-basic-offset)))
     (add-hook 'js2-mode-hook
 	      (lambda ()
-		(setq-local js-switch-indent-offset js2-basic-offset)
-		(define-key js2-mode-map "@" 'js-doc-insert-tag)))))
+		(setq-local js-switch-indent-offset js2-basic-offset)))))
 
 (use-package rjsx-mode
   :mode ("\\.jsx?\\'" . rjsx-mode)
@@ -29,9 +28,7 @@
 
 
 (use-package tern
-  :config
-  (when (executable-find "tern")
-    (add-hook 'js2-mode-hook (lambda () (tern-mode t)))))
-
+  :if (executable-find "tern")
+  :hook (js2-mode . tern-mode))
 
 (provide 'init-javascript)

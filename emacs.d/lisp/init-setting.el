@@ -3,12 +3,35 @@
 (when (eval-when-compile (version< "24.4" emacs-version))
   (add-hook 'after-init-hook 'electric-indent-mode))
 
+(use-package exec-path-from-shell
+  :ensure t
+  :if (memq window-system '(mac ns))
+  :config
+  (dolist (var '("SSH_AUTH_SOCK" "SSH_AGENT_PID" "GPG_AGENT_INFO" "LANG" "LC_CTYPE"))
+    (add-to-list 'exec-path-from-shell-variables var))
+  (exec-path-from-shell-initialize))
+
+(use-package try
+  :ensure t)
+
 (use-package list-unicode-display
   :ensure t)
 
 (use-package dynamic-spaces
   :ensure t
   :config (dynamic-spaces-global-mode t))
+
+;; Huge files
+(use-package vlf
+  :ensure t
+  :config
+  (defun ffap-vlf ()
+    "Find file at point with VLF."
+    (interactive)
+    (let ((file (ffap-file-at-point)))
+      (unless (file-exists-p file)
+        (error "File does not exist: %s" file))
+      (vlf file))))
 
 (use-package rainbow-delimiters
   :ensure t

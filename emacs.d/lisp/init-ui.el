@@ -30,7 +30,8 @@
 ;; Load packages
 ;;----------------------------------------------------------------------------
 (use-package spacemacs-theme
-  :ensure t)
+  :ensure t
+  :no-require t)
 
 ;;------------------------------------------------------------------------------
 ;; Config modeline
@@ -41,26 +42,33 @@
   (progn
     (require 'spaceline-config)
     (spaceline-helm-mode)
-    (spaceline-info-mode)
-    (unless (display-graphic-p)
-      (spaceline-emacs-mode))))
+    (spaceline-info-mode)))
 
 (use-package spaceline-all-the-icons
   :ensure t
   :init
   (setq spaceline-all-the-icons-slim-render t
 	spaceline-all-the-icons-separator-type 'wave
-	spaceline-all-the-icons-icon-set-sun-time 'sun/moon)
-  :config
-  (progn
-    (when (display-graphic-p)
-      (spaceline-all-the-icons-theme 'input-method 'buffer-encoding-abbrev 'org-pomodoro 'mu4e-alert-segment)
-      (spaceline-all-the-icons--setup-anzu)            ;; Enable anzu searching
-      (spaceline-all-the-icons--setup-package-updates) ;; Enable package update indicator
-      (spaceline-all-the-icons--setup-git-ahead)       ;; Enable # of commits ahead of upstream in git
-      (spaceline-all-the-icons--setup-paradox)         ;; Enable Paradox mode line
-      (spaceline-all-the-icons--setup-neotree)         ;; Enable Neotree mode line
-      )))
+	spaceline-all-the-icons-icon-set-sun-time 'sun/moon))
+
+(defun gsmlg/spaceline-all-the-icons ()
+  "Enable spaceline-all-the-icons"
+  (interactive)
+  (spaceline-all-the-icons--setup-anzu)            ;; Enable anzu searching
+  (spaceline-all-the-icons--setup-package-updates) ;; Enable package update indicator
+  (spaceline-all-the-icons--setup-git-ahead)       ;; Enable # of commits ahead of upstream in git
+  (spaceline-all-the-icons--setup-paradox)         ;; Enable Paradox mode line
+  (spaceline-all-the-icons--setup-neotree)         ;; Enable Neotree mode line
+  (spaceline-all-the-icons-theme
+   'input-method
+   'buffer-encoding-abbrev
+   'org-pomodoro
+   'mu4e-alert-segment))
+
+(defun gsmlg/spaceline-spacemacs ()
+  "Enable spaceline-spacemacs"
+  (interactive)
+  (spaceline-spacemacs-theme))
 
 ;;----------------------------------------------------------------------------
 ;; Stop C-z from minimizing windows under OS X
@@ -87,8 +95,11 @@
 ;;----------------------------------------------------------------------------
 (add-hook 'after-init-hook (lambda ()
 			     (load-theme 'spacemacs-dark)
+                             (if (display-graphic-p)
+                                 (gsmlg/spaceline-all-the-icons)
+                               (gsmlg/spaceline-spacemacs))
 			     (gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20)
-			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)) t)
+			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)))
 
 ;;----------------------------------------------------------------------------
 ;; Modify minor mode by `diminish'

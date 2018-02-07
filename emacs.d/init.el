@@ -1,4 +1,4 @@
-(setq user-emacs-directory "~/.dotfiles/emacs.d")
+(setq user-emacs-directory "~/.dotfiles/emacs.d/")
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
 
@@ -30,3 +30,4 @@
 (when (file-exists-p custom-file)
   (load custom-file))
 
+(put 'set-goal-column 'disabled nil)

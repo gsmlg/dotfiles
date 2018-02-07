@@ -1,3 +1,9 @@
+;;----------------------------------------------------------------------------
+;; Default setting
+;;----------------------------------------------------------------------------
+(setq gsmlg/preferred-indent-level 4
+      gsmlg-cache-directory (expand-file-name ".cache/" user-emacs-directory))
+
 (if (fboundp 'with-eval-after-load)
     (defalias 'after-load 'with-eval-after-load)
   (defmacro after-load (feature &rest body)
@@ -73,11 +79,6 @@
       (browse-url (concat "file://" file-name)))))
 
 ;;; define some function
-
-;; set indent level for all mode
-(setq gsmlg/preferred-indent-level 4
-      gsmlg-cache-directory (expand-file-name ".cache/" user-emacs-directory)
-      )
 
 (defun gsmlg/set-indent (&optional width)
   "set the indent of each language mode,

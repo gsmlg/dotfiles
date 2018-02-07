@@ -6,8 +6,10 @@
   :init
   (setq projectile-enable-idle-timer t
 	projectile-idle-timer-hook '()
+	projectile-cache-file (expand-file-name "projectile.cache" gsmlg-cache-directory)
 	projectile-file-exists-remote-cache-expire (* 10 60)
-	projectile-enable-caching nil)
+	projectile-file-exists-local-cache-expire (* 3 60)
+	projectile-enable-caching t)
   :bind-keymap ("C-c p" . projectile-command-map)
   :ensure t
   :config

@@ -14,9 +14,9 @@
 
 (require 'init-elpa)
 (require 'init-ui)
+(require 'init-setting)
 (require 'init-helm)
 (require 'init-company)
-(require 'init-setting)
 
 ;;; programe
 (require 'init-lisp)

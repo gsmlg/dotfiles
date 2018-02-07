@@ -9,9 +9,7 @@
    ("C-c c" . org-capture)
    :map org-mode-map
    ("C-M-<up>" . org-up-element)
-   ("C-M-<down>" . org-down-element)
-   :map org-agenda-mode-map
-   ("W" . bh/widen))
+   ("C-M-<down>" . org-down-element))
   :config
   (progn
     ;; Various preferences

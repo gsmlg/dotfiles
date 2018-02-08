@@ -1,6 +1,7 @@
 (setq user-emacs-directory "~/.dotfiles/emacs.d/")
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
+(require 'init-benchmarking)
 
 (defconst *spell-check-support-enabled* nil) ;; Enable with t if you prefer
 (defconst *is-a-mac* (eq system-type 'darwin))
@@ -15,14 +16,17 @@
 (require 'init-elpa)
 (require 'init-ui)
 (require 'init-setting)
+(require 'init-ibuffer)
 (require 'init-helm)
 (require 'init-company)
+(require 'init-sessions)
 
 ;;; programe
 (require 'init-lisp)
 (require 'init-javascript)
 (require 'init-yaml)
 
+(require 'init-git)
 (require 'init-project)
 
 ;;; applications

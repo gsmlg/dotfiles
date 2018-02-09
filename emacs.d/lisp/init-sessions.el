@@ -29,13 +29,12 @@
 (add-hook 'after-init-hook 'savehist-mode)
 
 (use-package session
-  :ensure t)
-
-(setq session-save-file (expand-file-name ".session" gsmlg/cache-directory))
-(setq session-name-disable-regexp "\\(?:\\`'/tmp\\|\\.git/[A-Z_]+\\'\\)")
-(setq session-save-file-coding-system 'utf-8)
-
-(add-hook 'after-init-hook 'session-initialize)
+  :ensure t
+  :init (setq session-save-file (expand-file-name ".session" gsmlg/cache-directory)
+              session-name-disable-regexp "\\(?:\\`'/tmp\\|\\.git/[A-Z_]+\\'\\)"
+              session-save-file-coding-system 'utf-8)
+  :config
+  (add-hook 'after-init-hook 'session-initialize))
 
 ;; save a bunch of variables to the desktop file
 ;; for lists specify the len of the maximal saved data also

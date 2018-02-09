@@ -12,7 +12,7 @@
   :ensure t
   :config
   (progn
-    (setq rmh-elfeed-org-files '((expand-file-name "elfeed.org" user-emacs-directory)))
+    (setq rmh-elfeed-org-files `(,(expand-file-name "elfeed.org" user-emacs-directory)))
     (elfeed-org)))
 
 

@@ -16,6 +16,7 @@
 (require 'init-elpa)
 (require 'init-ui)
 (require 'init-setting)
+(require 'init-ibuffer)
 (require 'init-helm)
 (require 'init-company)
 (require 'init-sessions)
@@ -25,6 +26,7 @@
 (require 'init-javascript)
 (require 'init-yaml)
 
+(require 'init-git)
 (require 'init-project)
 (require 'init-git)
 

@@ -1,6 +1,7 @@
 (setq user-emacs-directory "~/.dotfiles/emacs.d/")
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
+(require 'init-benchmarking)
 
 (defconst *spell-check-support-enabled* nil) ;; Enable with t if you prefer
 (defconst *is-a-mac* (eq system-type 'darwin))
@@ -17,6 +18,7 @@
 (require 'init-setting)
 (require 'init-helm)
 (require 'init-company)
+(require 'init-sessions)
 
 ;;; programe
 (require 'init-lisp)
@@ -24,6 +26,7 @@
 (require 'init-yaml)
 
 (require 'init-project)
+(require 'init-git)
 
 ;;; applications
 (require 'init-org)
@@ -33,6 +36,16 @@
 (when *is-a-mac*
   (gsmlg/mac-osx-remap-command))
 
+;;----------------------------------------------------------------------------
+;; Allow access from emacsclient
+;;----------------------------------------------------------------------------
+(require 'server)
+(unless (server-running-p)
+  (server-start))
+
+;;----------------------------------------------------------------------------
+;; Variables configured via the interactive 'customize' interface
+;;----------------------------------------------------------------------------
 (when (file-exists-p custom-file)
   (load custom-file))
 

@@ -84,6 +84,8 @@
  truncate-lines nil
  truncate-partial-width-windows nil)
 
+(fset 'yes-or-no-p 'y-or-n-p)
+
 (add-hook 'after-init-hook 'global-auto-revert-mode)
 (setq global-auto-revert-non-file-buffers t
       auto-revert-verbose nil)

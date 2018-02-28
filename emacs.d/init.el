@@ -28,6 +28,7 @@
 
 (require 'init-git)
 (require 'init-project)
+(require 'init-git)
 
 ;;; applications
 (require 'init-org)
@@ -37,6 +38,16 @@
 (when *is-a-mac*
   (gsmlg/mac-osx-remap-command))
 
+;;----------------------------------------------------------------------------
+;; Allow access from emacsclient
+;;----------------------------------------------------------------------------
+(require 'server)
+(unless (server-running-p)
+  (server-start))
+
+;;----------------------------------------------------------------------------
+;; Variables configured via the interactive 'customize' interface
+;;----------------------------------------------------------------------------
 (when (file-exists-p custom-file)
   (load custom-file))
 

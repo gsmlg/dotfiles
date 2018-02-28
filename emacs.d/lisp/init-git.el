@@ -71,6 +71,8 @@
 (use-package git-messenger
   :ensure t
   :init (setq git-messenger:show-detail t)
+  ;; Though see also vc-annotate's "n" & "p" bindings
+  :requires (vc)
   :bind (:map vc-prefix-map
               ("p" . git-messenger:popup-message)))
 

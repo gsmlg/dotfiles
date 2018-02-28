@@ -299,4 +299,12 @@ With arg N, insert N newlines."
   :diminish ""
   :hook (after-init . which-key-mode))
 
+;;----------------------------------------------------------------------------
+;; Recentf mode
+;;----------------------------------------------------------------------------
+(add-hook 'after-init-hook 'recentf-mode)
+(setq-default
+ recentf-max-saved-items 1000
+ recentf-exclude '("/tmp/" "/ssh:"))
+
 (provide 'init-setting)

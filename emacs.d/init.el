@@ -28,7 +28,6 @@
 
 (require 'init-git)
 (require 'init-project)
-(require 'init-git)
 
 ;;; applications
 (require 'init-org)

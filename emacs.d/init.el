@@ -33,6 +33,8 @@
 (require 'init-org)
 (require 'init-elfeed)
 (require 'init-email)
+(require 'init-music)
+
 
 (when *is-a-mac*
   (gsmlg/mac-osx-remap-command))

@@ -12,6 +12,8 @@
     `(eval-after-load ,feature
        '(progn ,@body))))
 
+(setq max-specpdl-size 32000)
+
 
 ;;----------------------------------------------------------------------------
 ;; Handier way to add modes to auto-mode-alist

@@ -20,11 +20,17 @@
 (require 'init-helm)
 (require 'init-company)
 (require 'init-sessions)
+(require 'init-flycheck)
 
 ;;; programe
 (require 'init-lisp)
 (require 'init-javascript)
+(require 'init-web)
+(require 'init-ruby)
 (require 'init-yaml)
+(require 'init-elixir)
+(require 'init-markdown)
+(require 'init-paredit)
 
 (require 'init-git)
 (require 'init-project)

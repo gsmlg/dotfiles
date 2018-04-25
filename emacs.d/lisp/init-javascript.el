@@ -1,3 +1,26 @@
+
+(defvar add-node-modules-path-debug nil
+  "Enable verbose output when non nil.")
+
+(defun add-node-modules-path ()
+  "Search the current buffer's parent directories for `node_modules/.bin`.
+If it's found, then add it to the `exec-path'."
+  (interactive)
+  (let* ((root (locate-dominating-file
+                (or (buffer-file-name) default-directory)
+                "node_modules"))
+         (path (and root
+                    (expand-file-name "node_modules/.bin/" root))))
+    (if root
+        (progn
+          (make-local-variable 'exec-path)
+          (add-to-list 'exec-path path)
+          (when add-node-modules-path-debug
+            (message (concat "added " path  " to exec-path"))))
+      (when add-node-modules-path-debug
+        (message (concat "node_modules not found in " root))))))
+
+
 (use-package js2-mode
   :mode ("\\.js\\'" . js2-mode)
   :config
@@ -16,6 +39,7 @@
 	      (lambda () (setq-local sgml-basic-offset js2-basic-offset)))
     (add-hook 'js2-mode-hook
 	      (lambda ()
+                (add-node-modules-path)
                 (gsmlg/disable-js2-checks-if-flycheck-active)
 		(setq-local js-switch-indent-offset js2-basic-offset)))))
 

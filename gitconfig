@@ -1,0 +1,27 @@
+[alias]
+    br = branch
+    co = checkout
+    st = status
+    cf = checkout -f
+    cb = checkout -b
+    df = diff --stat -b
+    dh = diff HEAD
+    logger = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit 
+	dw = diff --word-diff -b
+[user]
+	name = gsmlg
+	email = me@gsmlg.org
+[push]
+	default = simple
+[core]
+	editor = vim
+    excludesfile = ~/.gitignore_global
+	autocrlf = input
+	filemode = true
+	quotepath = false
+
+[filter "hawser"]
+	clean = git hawser clean %f
+	smudge = git hawser smudge %f
+	required = true
+

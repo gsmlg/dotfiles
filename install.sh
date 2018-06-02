@@ -12,3 +12,7 @@ cat ~/.dotfiles/vimrc/vimrcs/basic.vim > ~/.vimrc
 # install oh-my-zsh
 #sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
 ln -f -s ~/.dotfiles/oh-my-zsh/zshrc ~/.zshrc
+
+# install git global config
+cp gitconfig ~/.gitconfig
+cp gitignore_global ~/.gitignore_global

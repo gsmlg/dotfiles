@@ -3,6 +3,10 @@
 # install emacs
 ln -f -s ~/.dotfiles/emacs.d/init.el ~/.emacs
 
+# install email config
+ln -f -s ~/.dotfiles/emacs.d/mbsyncrc ~/.mbsyncrc
+ln -f -s ~/.dotfiles/emacs.d/msmtprc ~/.msmtprc
+
 # install vim
 cat ~/.dotfiles/vimrc/vimrcs/basic.vim > ~/.vimrc
 # or
@@ -16,3 +20,5 @@ ln -f -s ~/.dotfiles/oh-my-zsh/zshrc ~/.zshrc
 # install git global config
 cp gitconfig ~/.gitconfig
 cp gitignore_global ~/.gitignore_global
+
+

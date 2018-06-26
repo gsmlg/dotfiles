@@ -65,6 +65,10 @@
   :ensure t)
 (use-package mu4e-maildirs-extension
   :ensure t)
+(use-package mu4e-conversation
+  :ensure t
+  :config
+  (global-mu4e-conversation-mode))
 
 
 (defun mu4e//search-account-by-mail-address (mailto)

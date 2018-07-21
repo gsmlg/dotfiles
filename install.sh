@@ -18,7 +18,6 @@ cat ~/.dotfiles/vimrc/vimrcs/basic.vim > ~/.vimrc
 ln -f -s ~/.dotfiles/oh-my-zsh/zshrc ~/.zshrc
 
 # install git global config
-cp gitconfig ~/.gitconfig
-cp gitignore_global ~/.gitignore_global
-
+cp ~/.dotfiles/gitconfig ~/.gitconfig
+cp ~/.dotfiles/gitignore_global ~/.gitignore_global
 

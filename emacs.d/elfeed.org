@@ -8,3 +8,5 @@
 *** Web Development                                                     :web:
 **** http://blog.atom.io/feed.xml                                               :editor:
 **** http://www.ruanyifeng.com/blog/atom.xml
+*** Books                                                                       :book:
+**** http://finelybook.com/feed/

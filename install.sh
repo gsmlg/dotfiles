@@ -4,8 +4,8 @@
 ln -f -s ~/.dotfiles/emacs.d/init.el ~/.emacs
 
 # install email config
-ln -f -s ~/.dotfiles/emacs.d/mbsyncrc ~/.mbsyncrc
-ln -f -s ~/.dotfiles/emacs.d/msmtprc ~/.msmtprc
+ln -f -s ~/.dotfiles/mbsyncrc ~/.mbsyncrc
+ln -f -s ~/.dotfiles/msmtprc ~/.msmtprc
 
 # install vim
 cat ~/.dotfiles/vimrc/vimrcs/basic.vim > ~/.vimrc

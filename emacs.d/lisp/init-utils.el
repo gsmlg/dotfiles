@@ -83,7 +83,7 @@
 ;;; define some function
 
 ;; set indent level for all mode
-(defcustom gsmlg/preferred-indent-level 4 "Preferred indent level for all modes")
+(defcustom gsmlg/preferred-indent-level 2 "Preferred indent level for all modes")
 
 (defun gsmlg/set-indent (&optional width)
   "set the indent of each language mode,

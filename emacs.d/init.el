@@ -31,6 +31,7 @@
 (require 'init-elixir)
 (require 'init-markdown)
 (require 'init-paredit)
+(require 'init-conf)
 
 (require 'init-git)
 (require 'init-project)

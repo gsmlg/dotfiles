@@ -21,3 +21,4 @@ ln -f -s ~/.dotfiles/oh-my-zsh/zshrc ~/.zshrc
 cp ~/.dotfiles/gitconfig ~/.gitconfig
 cp ~/.dotfiles/gitignore_global ~/.gitignore_global
 
+mkdir -p ~/.dotfiles/oh-my-zsh/cache

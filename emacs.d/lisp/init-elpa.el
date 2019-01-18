@@ -1,11 +1,11 @@
 (require 'package)
 
-;; (setq package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
-;; ("melpa" . "https://melpa.org/packages/")
-;; ("org" . "https://orgmode.org/elpa/")))
-(setq package-archives '(("gnu" . "https://mirrors.gsmlg.org/gnu-elpa/")
-                         ("melpa" . "https://mirrors.gsmlg.org/melpa/")
-                         ("org" . "https://mirrors.gsmlg.org/org-elpa/")))
+(setq package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
+                         ("melpa" . "https://melpa.org/packages/")
+                         ("org" . "https://orgmode.org/elpa/")))
+;; (setq package-archives '(("gnu" . "https://mirrors.gsmlg.org/gnu-elpa/")
+;;                          ("melpa" . "https://mirrors.gsmlg.org/melpa/")
+;;                          ("org" . "https://mirrors.gsmlg.org/org-elpa/")))
 
 
 ;;; Install into separate package dirs for each Emacs version, to prevent bytecode incompatibility

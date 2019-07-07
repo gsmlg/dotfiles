@@ -27,6 +27,7 @@
 (require 'init-javascript)
 (require 'init-web)
 (require 'init-ruby)
+(require 'init-rust)
 (require 'init-yaml)
 (require 'init-elixir)
 (require 'init-markdown)

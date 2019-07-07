@@ -26,6 +26,7 @@
 (require 'init-lisp)
 (require 'init-javascript)
 (require 'init-web)
+(require 'init-go)
 (require 'init-ruby)
 (require 'init-rust)
 (require 'init-yaml)

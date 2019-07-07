@@ -81,6 +81,11 @@ If it's found, then add it to the `exec-path'."
   :config
   (js2r-add-keybindings-with-prefix "C-, r"))
 
+(use-package typescript-mode
+  :ensure t
+  :mode (("\\.ts\\'" . typescript-mode)
+         ("\\.tsx\\'" . typescript-mode)))
+
 ;; TODO: add indium - Javascript development environment
 
 (provide 'init-javascript)

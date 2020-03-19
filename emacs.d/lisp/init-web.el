@@ -45,17 +45,8 @@
 (use-package rainbow-mode
   :ensure t
   :config
-  (dolist (hook '(css-mode-hook html-mode-hook sass-mode-hook))
+  (dolist (hook '(css-mode-hook html-mode-hook))
     (add-hook hook 'rainbow-mode)))
-
-
-;;; SASS and SCSS
-(use-package sass-mode
-  :ensure t)
-(use-package scss-mode
-  :ensure t
-  :config
-  (setq-default scss-compile-at-save nil))
 
 
 ;;; LESS

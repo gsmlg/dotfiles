@@ -69,11 +69,11 @@ If it's found, then add it to the `exec-path'."
   :ensure t
   :hook (js2-mode . tern-mode))
 
-(use-package company-tern
-  :if (executable-find "tern")
-  :ensure t
-  :after (company tern)
-  :hook (js2-mode . (lambda () (add-to-list 'company-backends 'company-tern))))
+;; (use-package company-tern
+;;   :if (executable-find "tern")
+;;   :ensure t
+;;   :after (company tern)
+;;   :hook (js2-mode . (lambda () (add-to-list 'company-backends 'company-tern))))
 
 (use-package js2-refactor
   :ensure t

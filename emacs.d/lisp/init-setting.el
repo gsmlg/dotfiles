@@ -235,10 +235,10 @@
 ;;----------------------------------------------------------------------------
 ;; Cut/copy the current line if no region is active
 ;;----------------------------------------------------------------------------
-(use-package whole-line-or-region
-  :ensure t
-  :diminish ""
-  :hook (after-init . whole-line-or-region-mode))
+;(use-package whole-line-or-region
+;  :ensure t
+;  :diminish ""
+;  :hook (after-init . whole-line-or-region-mode))
 
 (defun suspend-mode-during-cua-rect-selection (mode-name)
   "Add an advice to suspend `MODE-NAME' while selecting a CUA rectangle."

@@ -81,12 +81,12 @@
 ;;----------------------------------------------------------------------------
 ;; Set the monospaced font size when mixed Chinese and English words
 ;;----------------------------------------------------------------------------
-(defun gsmlg//set-monospaced-font (english chinese english-size chinese-size)
-  (set-face-attribute 'default nil :font
-                      (format   "%s:pixelsize=%d"  english english-size))
-  (dolist (charset '(kana han cjk-misc bopomofo))
-    (set-fontset-font (frame-parameter nil 'font) charset
-                      (font-spec :family chinese :size chinese-size))))
+;(defun gsmlg//set-monospaced-font (english chinese english-size chinese-size)
+;  (set-face-attribute 'default nil :font
+;                      (format   "%s:pixelsize=%d"  english english-size))
+;  (dolist (charset '(kana han cjk-misc bopomofo))
+;    (set-fontset-font (frame-parameter nil 'font) charset
+;                      (font-spec :family chinese :size chinese-size))))
 
 
 
@@ -94,11 +94,11 @@
 ;; Apply UI theme after init
 ;;----------------------------------------------------------------------------
 (add-hook 'after-init-hook (lambda ()
-			     (load-theme 'spacemacs-dark)
+			     ;(load-theme 'spacemacs-dark)
                              (if (display-graphic-p)
                                  (gsmlg/spaceline-all-the-icons)
                                (gsmlg/spaceline-spacemacs))
-			     (gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20)
+			     ;(gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20)
 			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)))
 
 ;;----------------------------------------------------------------------------

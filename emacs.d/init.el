@@ -19,7 +19,7 @@
 (require 'init-ibuffer)
 (require 'init-helm)
 (require 'init-company)
-(require 'init-sessions)
+;(require 'init-sessions)
 (require 'init-flycheck)
 
 ;;; programe

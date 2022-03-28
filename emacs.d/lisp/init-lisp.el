@@ -26,10 +26,10 @@
 (after-load 'lisp-mode
   (define-key emacs-lisp-mode-map (kbd "C-x C-e") 'sanityinc/eval-last-sexp-or-region))
 
-(use-package ipretty
-  :ensure t
-  :config
-  (add-hook 'after-init-hook 'ipretty-mode))
+;(use-package ipretty
+;  :ensure t
+;  :config
+;  (add-hook 'after-init-hook 'ipretty-mode))
 
 
 

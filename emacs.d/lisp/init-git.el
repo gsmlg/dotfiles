@@ -2,11 +2,11 @@
 ;; TODO: smerge-mode
 (use-package git-blamed
   :ensure t)
-(use-package gitignore-mode
-  :ensure t)
-(use-package gitconfig-mode
+(use-package git-modes
   :ensure t)
 (use-package git-timemachine
+  :ensure t)
+(use-package git-link
   :ensure t)
 
 (use-package magit

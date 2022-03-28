@@ -1,0 +1,32 @@
+name: CI test emacs
+
+on:
+  pull_request:
+  push:
+    - 'emacs.d/**'
+    paths-ignore:
+    - '**.md'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        emacs_version:
+          - 26.3
+          - 27.1
+          - 27.2
+          - snapshot
+        include:
+          - os: macos-latest
+            emacs_version: 27.2
+    steps:
+    - uses: purcell/setup-emacs@master
+      with:
+        version: ${{ matrix.emacs_version }}
+
+    - uses: actions/checkout@v2
+    - name: Check startup
+      run: ./test-emacs-startup.sh

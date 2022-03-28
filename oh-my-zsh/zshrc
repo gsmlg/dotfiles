@@ -65,6 +65,12 @@ plugins=(
   docker
   docker-compose
   kubectl
+  golang
+  cargo
+  npm
+  yarn
+  mix
+  flutter
 )
 
 source $ZSH/oh-my-zsh.sh

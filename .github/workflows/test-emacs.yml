@@ -3,9 +3,9 @@ name: CI test emacs
 on:
   pull_request:
   push:
+    paths:
     - 'emacs.d/**'
-    paths-ignore:
-    - '**.md'
+    - '!emacs.d/**.md'
 
 jobs:
   build:

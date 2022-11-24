@@ -7,26 +7,22 @@
     df = diff --stat -b
     dh = diff HEAD
     logger = log --color --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%aI) %C(bold blue)<%an>%Creset' --abbrev-commit
-	dw = diff --word-diff -b
+    dw = diff --word-diff -b
+    change-commits = "!f() { VAR=$1; OLD=$2; NEW=$3; shift 3; git filter-branch --env-filter \"if [[ \\\"$`echo $VAR`\\\" = '$OLD' ]]; then export $VAR='$NEW'; fi\" $@; }; f"
 [user]
-	name = gsmlg
-	email = me@gsmlg.org
+    name = Jonathan Gao
+    email = gsmlg.com@gmail.com
 [push]
-	default = simple
+    default = simple
 [core]
-	editor = vim
+    editor = vim
     excludesfile = ~/.gitignore_global
-	autocrlf = input
-	filemode = true
-	quotepath = false
-
-[filter "hawser"]
-	clean = git hawser clean %f
-	smudge = git hawser smudge %f
-	required = true
-
-[filter "lfs"]
-	required = true
-	clean = git-lfs clean -- %f
-	smudge = git-lfs smudge -- %f
-	process = git-lfs filter-process
+    autocrlf = input
+    filemode = true
+    quotepath = false
+    ignorecase = false
+[pull]
+    ff = only
+    rebase = true
+[init]
+    defaultBranch = main

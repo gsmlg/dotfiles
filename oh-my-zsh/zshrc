@@ -7,7 +7,7 @@ export ZSH=$HOME/.dotfiles/oh-my-zsh
 # Set name of the theme to load. Optionally, if you set this to "random"
 # it'll load a random theme each time that oh-my-zsh is loaded.
 # See https://github.com/robbyrussell/oh-my-zsh/wiki/Themes
-ZSH_THEME="jonathan"
+ZSH_THEME="apple"
 
 # Set list of themes to load
 # Setting this variable when ZSH_THEME=random
@@ -61,7 +61,6 @@ DISABLE_AUTO_UPDATE="true"
 # Add wisely, as too many plugins slow down shell startup.
 plugins=(
   git
-  tmux
   docker
   docker-compose
   kubectl
@@ -71,6 +70,8 @@ plugins=(
   yarn
   mix
   flutter
+  asdf
+  node
 )
 
 source $ZSH/oh-my-zsh.sh

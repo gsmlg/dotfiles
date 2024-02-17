@@ -70,7 +70,6 @@ plugins=(
   yarn
   mix
   flutter
-  asdf
   node
 )
 

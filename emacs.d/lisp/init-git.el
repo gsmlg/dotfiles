@@ -22,9 +22,10 @@
   (when *is-a-mac*
     (add-hook 'magit-mode-hook (lambda () (local-unset-key [(meta h)])))))
 
-(use-package git-commit
-  :ensure t
-  :hook (git-commit-mode . goto-address-mode))
+;; git-commit package is currently unavailable, commenting out for now
+;; (use-package git-commit
+;;   :ensure t
+;;   :hook (git-commit-mode . goto-address-mode))
 
 (use-package git-gutter
   :ensure t

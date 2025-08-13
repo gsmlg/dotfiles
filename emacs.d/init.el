@@ -31,6 +31,7 @@
 (require 'init-rust)
 (require 'init-yaml)
 (require 'init-elixir)
+(require 'init-erlang)
 (require 'init-markdown)
 (require 'init-paredit)
 (require 'init-conf)

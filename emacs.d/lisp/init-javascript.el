@@ -49,17 +49,18 @@ If it's found, then add it to the `exec-path'."
   (progn
     (add-hook 'rjsx-mode-hook
 	      (lambda () (setq-local sgml-basic-offset js2-basic-offset)))
-    (defadvice js-jsx-indent-line (after js-jsx-indent-line-after-hack activate)
-      "Workaround `sgml-mode' and follow airbnb component style."
-      (let* ((cur-line (buffer-substring-no-properties
-			(line-beginning-position)
-			(line-end-position))))
-	(if (string-match "^\\( +\\)\/?> *$" cur-line)
-	    (let* ((empty-spaces (match-string 1 cur-line)))
-	      (replace-regexp empty-spaces
-			      (make-string (- (length empty-spaces) sgml-basic-offset) 32)
-			      nil
-			      (line-beginning-position) (line-end-position))))))))
+    (advice-add 'js-jsx-indent-line :after
+                (lambda (&rest _)
+                  "Workaround `sgml-mode' and follow airbnb component style."
+                  (let* ((cur-line (buffer-substring-no-properties
+                                    (line-beginning-position)
+                                    (line-end-position))))
+                    (if (string-match "^\\( +\\)\/?> *$" cur-line)
+                        (let* ((empty-spaces (match-string 1 cur-line)))
+                          (replace-regexp empty-spaces
+                                          (make-string (- (length empty-spaces) sgml-basic-offset) 32)
+                                          nil
+                                          (line-beginning-position) (line-end-position)))))))))
 
 (use-package json-mode
   :ensure t)

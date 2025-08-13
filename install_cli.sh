@@ -34,15 +34,15 @@ case $SYS in
   ;;
 esac
 
-exit
-
 URL=$(curl -s https://api.github.com/repos/gsmlg-dev/gsmlg-cli/releases/latest |grep browser_download_url |grep $FILE |awk '{print $2}' | tr -d \")
 
 FNAME=gsmlg-cli
 
-curl -sSL $URL -o $FNAME
+echo -e "Download from:\n$URL"
 
-chmod +x $FNAME
+curl --progress-bar -sSLf $URL -o /tmp/$FNAME
 
-mv $FNAME /usr/local/bin/$FNAME
+chmod +x /tmp/$FNAME
+
+mv /tmp/$FNAME /usr/local/bin/$FNAME
 

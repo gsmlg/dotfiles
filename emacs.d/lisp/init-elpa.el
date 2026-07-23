@@ -2,13 +2,9 @@
 
 (setq package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
                          ("melpa" . "https://melpa.org/packages/")
-                         ("org" . "https://orgmode.org/elpa/")))
-;; (setq package-archives '(("gnu" . "https://mirrors.gsmlg.org/gnu-elpa/")
-;;                          ("melpa" . "https://mirrors.gsmlg.org/melpa/")
-;;                          ("org" . "https://mirrors.gsmlg.org/org-elpa/")))
+                         ("nongnu" . "https://elpa.nongnu.org/nongnu/")))
 
-
-;;; Install into separate package dirs for each Emacs version, to prevent bytecode incompatibility
+;; Install into separate package dirs for each Emacs version, to prevent bytecode incompatibility
 (let ((versioned-package-dir
        (expand-file-name (format "elpa-%s.%s" emacs-major-version emacs-minor-version)
                          user-emacs-directory)))
@@ -17,11 +13,13 @@
 (setq package-enable-at-startup nil)
 (package-initialize)
 
-;; Bootstrap `use-package'
-(unless (package-installed-p 'use-package)
+;; Bootstrap `use-package' (built-in in Emacs 29+)
+(unless (or (locate-library "use-package") (package-installed-p 'use-package))
   (package-refresh-contents)
   (package-install 'use-package))
 
+(eval-when-compile
+  (require 'use-package))
 (setq use-package-always-ensure t)
 
 (provide 'init-elpa)

@@ -1,7 +1,6 @@
 (when (fboundp 'electric-pair-mode)
   (add-hook 'after-init-hook 'electric-pair-mode))
-(when (eval-when-compile (version< "24.4" emacs-version))
-  (add-hook 'after-init-hook 'electric-indent-mode))
+(add-hook 'after-init-hook 'electric-indent-mode)
 
 (use-package exec-path-from-shell
   :ensure t
@@ -87,7 +86,9 @@
  truncate-lines nil
  truncate-partial-width-windows nil)
 
-(fset 'yes-or-no-p 'y-or-n-p)
+(if (boundp 'use-short-answers)
+    (setq use-short-answers t)
+  (fset 'yes-or-no-p 'y-or-n-p))
 
 (add-hook 'after-init-hook 'global-auto-revert-mode)
 (setq global-auto-revert-non-file-buffers t
@@ -131,7 +132,7 @@
          ("M-p" . browse-kill-ring-previous))
   :config
   (after-load 'page-break-lines
-    (push 'browe-kill-ring-mode page-break-lines-modes)))
+    (push 'browse-kill-ring-mode page-break-lines-modes)))
 
 ;;----------------------------------------------------------------------------
 ;; Don't disable narrowing commands
@@ -241,20 +242,21 @@
 ;  :hook (after-init . whole-line-or-region-mode))
 
 (defun suspend-mode-during-cua-rect-selection (mode-name)
-  "Add an advice to suspend `MODE-NAME' while selecting a CUA rectangle."
-  (let ((flagvar (intern (format "%s-was-active-before-cua-rectangle" mode-name)))
-        (advice-name (intern (format "suspend-%s" mode-name))))
+  "Add advice to suspend `MODE-NAME' while selecting a CUA rectangle."
+  (let ((flagvar (intern (format "%s-was-active-before-cua-rectangle" mode-name))))
     (eval-after-load 'cua-rect
       `(progn
          (defvar ,flagvar nil)
          (make-variable-buffer-local ',flagvar)
-         (defadvice cua--activate-rectangle (after ,advice-name activate)
-           (setq ,flagvar (and (boundp ',mode-name) ,mode-name))
-           (when ,flagvar
-             (,mode-name 0)))
-         (defadvice cua--deactivate-rectangle (after ,advice-name activate)
-           (when ,flagvar
-             (,mode-name 1)))))))
+         (advice-add 'cua--activate-rectangle :after
+                     (lambda (&rest _)
+                       (setq ,flagvar (and (boundp ',mode-name) ,mode-name))
+                       (when ,flagvar
+                         (,mode-name 0))))
+         (advice-add 'cua--deactivate-rectangle :after
+                     (lambda (&rest _)
+                       (when ,flagvar
+                         (,mode-name 1))))))))
 
 (suspend-mode-during-cua-rect-selection 'whole-line-or-region-mode)
 

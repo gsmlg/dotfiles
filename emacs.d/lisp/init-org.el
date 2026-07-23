@@ -1,6 +1,4 @@
-(use-package org-plus-contrib
-  :ensure t
-  :no-require t)
+;; org-mode setup
 
 (use-package org
   :bind
@@ -284,7 +282,7 @@
        (python . t)
        (ruby . t)
        (screen . nil)
-       (,(if (locate-library "ob-sh") 'sh 'shell) . t)
+       (shell . t)
        (sql . nil)
        (sqlite . t)))
     ))

@@ -6,23 +6,23 @@
     (defun my-web-mode-hook ()
       "Hooks for Web mode."
       ;; HTML element offset indentation
-      (setq web-mode-markup-indent-offset preferred-indent-level)
+      (setq web-mode-markup-indent-offset gsmlg/preferred-indent-level)
       ;; CSS offset indentation
-      (setq web-mode-css-indent-offset preferred-indent-level)
+      (setq web-mode-css-indent-offset gsmlg/preferred-indent-level)
       ;; Script/code offset indentation (for JavaScript, Java, PHP, Ruby, VBScript, Python, etc.)
-      (setq web-mode-code-indent-offset preferred-indent-level)
+      (setq web-mode-code-indent-offset gsmlg/preferred-indent-level)
       ;; By default, tag attributes are indented like this:
       ;; <img src="pix.png"
       ;;      class="noborder"/>
       ;; You can force a fixed indentation with web-mode-attr-indent-offset
       ;; <img src="pix.png"
       ;;   class="noborder"/>
-      ;; (setq web-mode-attr-indent-offset preferred-indent-level)
+      ;; (setq web-mode-attr-indent-offset gsmlg/preferred-indent-level)
       ;; Left padding
       ;; For <style> parts
-      (setq web-mode-style-padding preferred-indent-levelp)
+      (setq web-mode-style-padding gsmlg/preferred-indent-level)
       ;; For <script> parts
-      (setq web-mode-script-padding preferred-indent-level)
+      (setq web-mode-script-padding gsmlg/preferred-indent-level)
       ;; For multi-line blocks
       (setq web-mode-block-padding 0)
       ;; Enable / disable features

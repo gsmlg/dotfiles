@@ -1,4 +1,4 @@
-(setq user-emacs-directory "~/.dotfiles/emacs.d/")
+(setq user-emacs-directory (file-name-directory (or load-file-name buffer-file-name (expand-file-name "~/.dotfiles/emacs.d/"))))
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
 ;; (require 'init-benchmarking)

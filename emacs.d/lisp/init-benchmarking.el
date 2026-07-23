@@ -6,17 +6,19 @@
   "A list of (FEATURE LOAD-START-TIME LOAD-DURATION).
 LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
 
-(defadvice require (around sanityinc/build-require-times (feature &optional filename noerror) activate)
+(defun sanityinc/build-require-times (orig-fn feature &optional filename noerror)
   "Note in `sanityinc/require-times' the time taken to require each feature."
   (let* ((already-loaded (memq feature features))
          (require-start-time (and (not already-loaded) (current-time))))
     (prog1
-        ad-do-it
+        (funcall orig-fn feature filename noerror)
       (when (and (not already-loaded) (memq feature features))
         (let ((time (sanityinc/time-subtract-millis (current-time) require-start-time)))
           (add-to-list 'sanityinc/require-times
                        (list feature require-start-time time)
                        t))))))
+
+(advice-add 'require :around #'sanityinc/build-require-times)
 
 
 (define-derived-mode sanityinc/require-times-mode tabulated-list-mode "Require-Times"
@@ -42,7 +44,7 @@ LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
 (defun sanityinc/require-times-tabulated-list-entries ()
   (cl-loop for (feature start-time millis) in sanityinc/require-times
            with order = 0
-           do (incf order)
+           do (cl-incf order)
            collect (list order
                          (vector
                           (format "%.3f" (sanityinc/time-subtract-millis start-time before-init-time))

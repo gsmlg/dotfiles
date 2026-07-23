@@ -1,6 +1,6 @@
 function my_git_prompt() {
   tester=$(git rev-parse --git-dir 2> /dev/null) || return
-  
+
   INDEX=$(git status --porcelain 2> /dev/null)
   STATUS=""
 
@@ -42,7 +42,9 @@ function my_git_prompt() {
 }
 
 function my_current_branch() {
-  echo $(git_current_branch || echo "(no branch)")
+  local branch
+  branch=$(git_current_branch || echo "(no branch)")
+  echo "${branch//\%/%%}"
 }
 
 function ssh_connection() {

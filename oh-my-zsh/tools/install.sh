@@ -25,9 +25,10 @@
 #   BRANCH  - branch to check out immediately after install (default: master)
 #
 # Other options:
-#   CHSH       - 'no' means the installer will not change the default shell (default: yes)
-#   RUNZSH     - 'no' means the installer will not run zsh after the install (default: yes)
-#   KEEP_ZSHRC - 'yes' means the installer will not replace an existing .zshrc (default: no)
+#   CHSH                   - 'no' means the installer will not change the default shell (default: yes)
+#   RUNZSH                 - 'no' means the installer will not run zsh after the install (default: yes)
+#   KEEP_ZSHRC             - 'yes' means the installer will not replace an existing .zshrc (default: no)
+#   OVERWRITE_CONFIRMATION - 'no' means the installer will not ask for confirmation to overwrite the existing .zshrc (default: yes)
 #
 # You can also pass some arguments to the install script to set some these options:
 #   --skip-chsh: has the same behavior as setting CHSH to 'no'
@@ -50,7 +51,7 @@ USER=${USER:-$(id -u -n)}
 # POSIX: https://pubs.opengroup.org/onlinepubs/009696899/basedefs/xbd_chap08.html#tag_08_03
 HOME="${HOME:-$(getent passwd $USER 2>/dev/null | cut -d: -f6)}"
 # macOS does not have getent, but this works even if $HOME is unset
-HOME="${HOME:-$(eval echo ~$USER)}"
+HOME="${HOME:-$(eval echo ~"$USER")}"
 
 
 # Track if $ZSH was provided
@@ -77,6 +78,7 @@ BRANCH=${BRANCH:-master}
 CHSH=${CHSH:-yes}
 RUNZSH=${RUNZSH:-yes}
 KEEP_ZSHRC=${KEEP_ZSHRC:-no}
+OVERWRITE_CONFIRMATION=${OVERWRITE_CONFIRMATION:-yes}
 
 
 command_exists() {
@@ -166,11 +168,16 @@ supports_hyperlinks() {
 
   # If $TERM_PROGRAM is set, these terminals support hyperlinks
   case "$TERM_PROGRAM" in
-  Hyper|iTerm.app|terminology|WezTerm) return 0 ;;
+  Hyper|iTerm.app|terminology|WezTerm|vscode) return 0 ;;
   esac
 
-  # kitty supports hyperlinks
-  if [ "$TERM" = xterm-kitty ]; then
+  # These termcap entries support hyperlinks
+  case "$TERM" in
+  xterm-kitty|alacritty|alacritty-direct) return 0 ;;
+  esac
+
+  # xfce4-terminal supports hyperlinks
+  if [ "$COLORTERM" = "xfce4-terminal" ]; then
     return 0
   fi
 
@@ -336,6 +343,25 @@ setup_zshrc() {
       echo "${FMT_YELLOW}Found ${zdot}/.zshrc.${FMT_RESET} ${FMT_GREEN}Keeping...${FMT_RESET}"
       return
     fi
+    
+    if [ "$OVERWRITE_CONFIRMATION" != "no" ]; then
+      # Ask user for confirmation before backing up and overwriting
+      echo "${FMT_YELLOW}Found ${zdot}/.zshrc."
+      echo "The existing .zshrc will be backed up to .zshrc.pre-oh-my-zsh if overwritten."
+      echo "Make sure your .zshrc contains the following minimal configuration if you choose not to overwrite it:${FMT_RESET}"
+      echo "----------------------------------------"
+      cat "$ZSH/templates/minimal.zshrc"
+      echo "----------------------------------------"
+      printf '%sDo you want to overwrite it with the Oh My Zsh template? [Y/n]%s ' \
+        "$FMT_YELLOW" "$FMT_RESET"
+      read -r opt
+      case $opt in
+        [Yy]*|"") ;;
+        [Nn]*) echo "Overwrite skipped. Existing .zshrc will be kept."; return ;;
+        *) echo "Invalid choice. Overwrite skipped. Existing .zshrc will be kept."; return ;;
+      esac
+    fi
+
     if [ -e "$OLD_ZSHRC" ]; then
       OLD_OLD_ZSHRC="${OLD_ZSHRC}-$(date +%Y-%m-%d_%H-%M-%S)"
       if [ -e "$OLD_OLD_ZSHRC" ]; then
@@ -348,7 +374,7 @@ setup_zshrc() {
       echo "${FMT_YELLOW}Found old .zshrc.pre-oh-my-zsh." \
         "${FMT_GREEN}Backing up to ${OLD_OLD_ZSHRC}${FMT_RESET}"
     fi
-    echo "${FMT_YELLOW}Found ${zdot}/.zshrc.${FMT_RESET} ${FMT_GREEN}Backing up to ${OLD_ZSHRC}${FMT_RESET}"
+    echo "${FMT_GREEN}Backing up to ${OLD_ZSHRC}${FMT_RESET}"
     mv "$zdot/.zshrc" "$OLD_ZSHRC"
   fi
 
@@ -394,8 +420,8 @@ EOF
     "$FMT_YELLOW" "$FMT_RESET"
   read -r opt
   case $opt in
-    y*|Y*|"") ;;
-    n*|N*) echo "Shell change skipped."; return ;;
+    [Yy]*|"") ;;
+    [Nn]*) echo "Shell change skipped."; return ;;
     *) echo "Invalid choice. Shell change skipped."; return ;;
   esac
 
@@ -447,13 +473,16 @@ EOF
   # be prompted for the password either way, so this shouldn't cause any issues.
   #
   if user_can_sudo; then
-    sudo -k chsh -s "$zsh" "$USER"  # -k forces the password prompt
+    sudo -k >/dev/null 2>&1 || true # -k forces the password prompt when supported
+    sudo chsh -s "$zsh" "$USER"
+    chsh_status=$?
   else
     chsh -s "$zsh" "$USER"          # run chsh normally
+    chsh_status=$?
   fi
 
   # Check if the shell change was successful
-  if [ $? -ne 0 ]; then
+  if [ "$chsh_status" -ne 0 ]; then
     fmt_error "chsh command unsuccessful. Change your default shell manually."
   else
     export SHELL="$zsh"
@@ -477,9 +506,9 @@ print_success() {
     "$(fmt_code "$(fmt_link ".zshrc" "file://$zdot/.zshrc" --text)")" \
     "file to select plugins, themes, and options."
   printf '\n'
-  printf '%s\n' "• Follow us on Twitter: $(fmt_link @ohmyzsh https://twitter.com/ohmyzsh)"
+  printf '%s\n' "• Follow us on X: $(fmt_link @ohmyzsh https://x.com/ohmyzsh)"
   printf '%s\n' "• Join our Discord community: $(fmt_link "Discord server" https://discord.gg/ohmyzsh)"
-  printf '%s\n' "• Get stickers, t-shirts, coffee mugs and more: $(fmt_link "Planet Argon Shop" https://shop.planetargon.com/collections/oh-my-zsh)"
+  printf '%s\n' "• Get stickers, t-shirts, coffee mugs and more: $(fmt_link "CommitGoods Shop" https://commitgoods.com/collections/oh-my-zsh)"
   printf '%s\n' $FMT_RESET
 }
 
@@ -488,12 +517,13 @@ main() {
   if [ ! -t 0 ]; then
     RUNZSH=no
     CHSH=no
+    OVERWRITE_CONFIRMATION=no
   fi
 
   # Parse arguments
   while [ $# -gt 0 ]; do
     case $1 in
-      --unattended) RUNZSH=no; CHSH=no ;;
+      --unattended) RUNZSH=no; CHSH=no; OVERWRITE_CONFIRMATION=no ;;
       --skip-chsh) CHSH=no ;;
       --keep-zshrc) KEEP_ZSHRC=yes ;;
     esac

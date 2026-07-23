@@ -9,14 +9,14 @@ function agr() {
 # Update state file if enabled
 function _aws_update_state() {
   if [[ "$AWS_PROFILE_STATE_ENABLED" == true ]]; then
-    test -d $(dirname ${AWS_STATE_FILE}) || exit 1
+    test -d $(dirname ${AWS_STATE_FILE}) || return 1
     echo "${AWS_PROFILE} ${AWS_REGION}" > "${AWS_STATE_FILE}"
   fi
 }
 
 function _aws_clear_state() {
   if [[ "$AWS_PROFILE_STATE_ENABLED" == true ]]; then
-    test -d $(dirname ${AWS_STATE_FILE}) || exit 1
+    test -d $(dirname ${AWS_STATE_FILE}) || return 1
     echo -n > "${AWS_STATE_FILE}"
   fi
 }
@@ -280,7 +280,7 @@ if [[ "$AWS_PROFILE_STATE_ENABLED" == true ]]; then
   test -s "${AWS_STATE_FILE}" || return
 
   aws_state=($(cat $AWS_STATE_FILE))
-  
+
   export AWS_DEFAULT_PROFILE="${aws_state[1]}"
   export AWS_PROFILE="$AWS_DEFAULT_PROFILE"
   export AWS_EB_PROFILE="$AWS_DEFAULT_PROFILE"

@@ -1,26 +1,43 @@
 name: Update dependencies
 on:
   workflow_dispatch: {}
-  # schedule:
-  #   - cron: '34 3 * * */8'
+  schedule:
+    - cron: "0 6 * * 0"
+
+permissions:
+  contents: read
 
 jobs:
   check:
     name: Check for updates
     runs-on: ubuntu-latest
     if: github.repository == 'ohmyzsh/ohmyzsh'
+    permissions:
+      contents: write # this is needed to push commits and branches
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Authenticate as @ohmyzsh
-        id: generate_token
-        uses: ohmyzsh/github-app-token@v2
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
         with:
-          app_id: ${{ secrets.OHMYZSH_APP_ID }}
-          private_key: ${{ secrets.OHMYZSH_APP_PRIVATE_KEY }}
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Authenticate as @ohmyzsh
+        id: generate-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.OHMYZSH_CLIENT_ID }}
+          private-key: ${{ secrets.OHMYZSH_APP_PRIVATE_KEY }}
+      - name: Setup Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
       - name: Process dependencies
         env:
-          GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
           GIT_APP_NAME: ohmyzsh[bot]
           GIT_APP_EMAIL: 54982679+ohmyzsh[bot]@users.noreply.github.com
           TMP_DIR: ${{ runner.temp }}

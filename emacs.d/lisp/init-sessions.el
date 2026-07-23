@@ -3,27 +3,27 @@
       desktop-auto-save-timeout 600)
 (desktop-save-mode 1)
 
-(defun sanityinc/time-desktop-read (orig-fn &rest args)
+(defun gsmlginc/time-desktop-read (orig-fn &rest args)
   (let ((start-time (current-time)))
     (prog1
         (apply orig-fn args)
-      (when (fboundp 'sanityinc/time-subtract-millis)
+      (when (fboundp 'gsmlginc/time-subtract-millis)
         (message "Desktop restored in %.2fms"
-                 (sanityinc/time-subtract-millis (current-time) start-time))))))
+                 (gsmlginc/time-subtract-millis (current-time) start-time))))))
 
-(advice-add 'desktop-read :around #'sanityinc/time-desktop-read)
+(advice-add 'desktop-read :around #'gsmlginc/time-desktop-read)
 
-(defun sanityinc/time-desktop-create-buffer (orig-fn ver &rest args)
+(defun gsmlginc/time-desktop-create-buffer (orig-fn ver &rest args)
   (let ((start-time (current-time))
         (filename (nth 0 args)))
     (prog1
         (apply orig-fn ver args)
-      (when (fboundp 'sanityinc/time-subtract-millis)
+      (when (fboundp 'gsmlginc/time-subtract-millis)
         (message "Desktop: %.2fms to restore %s"
-                 (sanityinc/time-subtract-millis (current-time) start-time)
+                 (gsmlginc/time-subtract-millis (current-time) start-time)
                  (when filename (abbreviate-file-name filename)))))))
 
-(advice-add 'desktop-create-buffer :around #'sanityinc/time-desktop-create-buffer)
+(advice-add 'desktop-create-buffer :around #'gsmlginc/time-desktop-create-buffer)
 
 ;;----------------------------------------------------------------------------
 ;; Restore histories and registers after saving

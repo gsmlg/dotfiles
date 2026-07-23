@@ -1,7 +1,7 @@
 ;;; Set load path
 
 (eval-when-compile (require 'cl-lib))
-(defun sanityinc/add-subdirs-to-load-path (parent-dir)
+(defun gsmlginc/add-subdirs-to-load-path (parent-dir)
   "Adds every non-hidden subdir of PARENT-DIR to `load-path'."
   (let* ((default-directory parent-dir))
     (progn
@@ -12,7 +12,7 @@
               (directory-files (expand-file-name parent-dir) t "^[^\\.]"))
              load-path)))))
 
-(sanityinc/add-subdirs-to-load-path
+(gsmlginc/add-subdirs-to-load-path
  (expand-file-name "site-lisp/" user-emacs-directory))
 
 ;;; Utilities for grabbing upstream libs

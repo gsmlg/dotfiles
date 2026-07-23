@@ -72,10 +72,10 @@ Git gutter:
 ;; (when (maybe-require-package 'magit-svn)
 ;;   (require-package 'magit-svn)
 ;;   (autoload 'magit-svn-enabled "magit-svn")
-;;   (defun sanityinc/maybe-enable-magit-svn-mode ()
+;;   (defun gsmlginc/maybe-enable-magit-svn-mode ()
 ;;     (when (magit-svn-enabled)
 ;;       (magit-svn-mode)))
-;;   (add-hook 'magit-status-mode-hook #'sanityinc/maybe-enable-magit-svn-mode))
+;;   (add-hook 'magit-status-mode-hook #'gsmlginc/maybe-enable-magit-svn-mode))
 
 (after-load 'compile
   (dolist (defn (list '(git-svn-updated "^\t[A-Z]\t\\(.*\\)$" 1 nil nil 0 1)
@@ -87,7 +87,7 @@ Git gutter:
 (defun git-svn--available-commands ()
   (or git-svn--available-commands
       (setq git-svn--available-commands
-            (sanityinc/string-all-matches
+            (gsmlginc/string-all-matches
              "^  \\([a-z\\-]+\\) +"
              (shell-command-to-string "git svn help") 1))))
 

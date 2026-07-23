@@ -106,13 +106,13 @@
 ;;; Newline behaviour
 
 (global-set-key (kbd "RET") 'newline-and-indent)
-(defun sanityinc/newline-at-end-of-line ()
+(defun gsmlginc/newline-at-end-of-line ()
   "Move to end of line, enter a newline, and reindent."
   (interactive)
   (move-end-of-line 1)
   (newline-and-indent))
 
-(global-set-key (kbd "S-<return>") 'sanityinc/newline-at-end-of-line)
+(global-set-key (kbd "S-<return>") 'gsmlginc/newline-at-end-of-line)
 
 
 ;;----------------------------------------------------------------------------
@@ -263,7 +263,7 @@
 
 
 
-(defun sanityinc/open-line-with-reindent (n)
+(defun gsmlginc/open-line-with-reindent (n)
   "A version of `open-line' which reindents the start and end positions.
 If there is a fill prefix and/or a `left-margin', insert them
 on the new line if the line would have been blank.
@@ -290,7 +290,7 @@ With arg N, insert N newlines."
     (end-of-line)
     (indent-according-to-mode)))
 
-(global-set-key (kbd "C-o") 'sanityinc/open-line-with-reindent)
+(global-set-key (kbd "C-o") 'gsmlginc/open-line-with-reindent)
 
 (use-package highlight-escape-sequences
   :ensure t

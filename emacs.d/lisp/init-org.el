@@ -188,15 +188,15 @@
 
     
     ;; Show the clocked-in task - if any - in the header line
-    (defun sanityinc/show-org-clock-in-header-line ()
+    (defun gsmlginc/show-org-clock-in-header-line ()
       (setq-default header-line-format '((" " org-mode-line-string " "))))
 
-    (defun sanityinc/hide-org-clock-from-header-line ()
+    (defun gsmlginc/hide-org-clock-from-header-line ()
       (setq-default header-line-format nil))
 
-    (add-hook 'org-clock-in-hook 'sanityinc/show-org-clock-in-header-line)
-    (add-hook 'org-clock-out-hook 'sanityinc/hide-org-clock-from-header-line)
-    (add-hook 'org-clock-cancel-hook 'sanityinc/hide-org-clock-from-header-line)
+    (add-hook 'org-clock-in-hook 'gsmlginc/show-org-clock-in-header-line)
+    (add-hook 'org-clock-out-hook 'gsmlginc/hide-org-clock-from-header-line)
+    (add-hook 'org-clock-cancel-hook 'gsmlginc/hide-org-clock-from-header-line)
 
     (after-load 'org-clock
       (define-key org-clock-mode-line-map [header-line mouse-2] 'org-clock-goto)

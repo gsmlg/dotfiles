@@ -23,10 +23,6 @@
 (declare-function mu4e-alert-set-default-style "mu4e-alert" (style))
 (declare-function global-mu4e-conversation-mode "mu4e-conversation" (&optional arg))
 
-(let ((brew-mu4e (car (or (file-expand-wildcards "/opt/homebrew/share/emacs/site-lisp/mu4e")
-                          (file-expand-wildcards "/usr/local/share/emacs/site-lisp/mu4e")))))
-  (when (and brew-mu4e (file-directory-p brew-mu4e))
-    (add-to-list 'load-path brew-mu4e)))
 (add-to-list 'load-path (expand-file-name "site-lisp/mu4e" user-emacs-directory))
 
 (use-package mu4e

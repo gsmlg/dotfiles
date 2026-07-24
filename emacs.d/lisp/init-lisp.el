@@ -119,7 +119,8 @@
 ;    (auto-compile-on-load-mode 1)))
 
 (use-package highlight-cl
-  :ensure t
+  :ensure nil
+  :if (package-installed-p 'highlight-cl)
   :hook (emacs-lisp-mode . highlight-cl-add-font-lock-keywords))
 
 ;; ----------------------------------------------------------------------------

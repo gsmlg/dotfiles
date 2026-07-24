@@ -45,26 +45,38 @@
   :init
   (global-git-gutter-mode +1))
 
+(defun gsmlg/git-gutter-first-hunk ()
+  "Move to the first hunk."
+  (interactive)
+  (goto-char (point-min))
+  (git-gutter:next-hunk 1))
+
+(defun gsmlg/git-gutter-last-hunk ()
+  "Move to the last hunk."
+  (interactive)
+  (goto-char (point-min))
+  (git-gutter:previous-hunk 1))
+
+(defun gsmlg/git-gutter-off ()
+  "Turn off `git-gutter-mode'."
+  (interactive)
+  (git-gutter-mode -1)
+  (sit-for 0.1)
+  (git-gutter-mode -1))
+
 (defhydra hydra-git-gutter (:body-pre (git-gutter-mode 1)
                                       :hint nil)
   "Git gutter."
   ("j" git-gutter:next-hunk)
   ("k" git-gutter:previous-hunk)
-  ("h" (progn (goto-char (point-min))
-              (git-gutter:next-hunk 1)))
-  ("l" (progn (goto-char (point-min))
-              (git-gutter:previous-hunk 1)))
+  ("h" gsmlg/git-gutter-first-hunk)
+  ("l" gsmlg/git-gutter-last-hunk)
   ("s" git-gutter:stage-hunk)
   ("r" git-gutter:revert-hunk)
   ("p" git-gutter:popup-hunk)
   ("R" git-gutter:set-start-revision)
   ("q" nil :color blue)
-  ("Q" (progn (git-gutter-mode -1)
-              ;; git-gutter-fringe doesn't seem to
-              ;; clear the markup right away
-              (sit-for 0.1)
-              (git-gutter-mode -1))
-   :color blue))
+  ("Q" gsmlg/git-gutter-off :color blue))
 (global-set-key (kbd "M-g M-g") 'hydra-git-gutter/body)
 
 

@@ -118,10 +118,10 @@
 ;    (auto-compile-on-savel-mode 1)
 ;    (auto-compile-on-load-mode 1)))
 
-(use-package highlight-cl
-  :ensure nil
-  :if (locate-library "highlight-cl")
-  :hook (emacs-lisp-mode . highlight-cl-add-font-lock-keywords))
+(with-eval-after-load 'lisp-mode
+  (when (require 'highlight-cl nil t)
+    (when (fboundp 'highlight-cl-add-font-lock-keywords)
+      (add-hook 'emacs-lisp-mode-hook #'highlight-cl-add-font-lock-keywords))))
 
 ;; ----------------------------------------------------------------------------
 ;; Load .el if newer than corresponding .elc

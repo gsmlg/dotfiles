@@ -295,7 +295,7 @@
        (gnuplot . t)
        (haskell . nil)
        (latex . t)
-       (ledger . t)
+       ,@(when (locate-library "ob-ledger") '((ledger . t)))
        (ocaml . nil)
        (octave . t)
        (plantuml . t)

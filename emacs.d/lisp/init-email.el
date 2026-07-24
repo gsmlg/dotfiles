@@ -84,25 +84,6 @@
 	     (user-full-name "Gao"))))))
 
 
-(use-package mu4e-alert
-  :ensure nil
-  :if (locate-library "mu4e-alert")
-  :after mu4e)
-
-(use-package mu4e-maildirs-extension
-  :ensure nil
-  :if (locate-library "mu4e-maildirs-extension")
-  :after mu4e)
-
-(use-package mu4e-conversation
-  :ensure nil
-  :if (locate-library "mu4e-conversation")
-  :after mu4e
-  :config
-  (when (fboundp 'global-mu4e-conversation-mode)
-    (global-mu4e-conversation-mode)))
-
-
 (defun mu4e//search-account-by-mail-address (mailto)
   "Return the account given an email address in MAILTO."
   (car (cl-rassoc-if (lambda (x)
@@ -157,14 +138,19 @@ address first then fallback to the maildir."
 
 (with-eval-after-load 'mu4e
   (mu4e/mail-account-reset)
-  (when (fboundp 'mu4e-maildirs-extension-load)
-    (mu4e-maildirs-extension-load))
-  (when (fboundp 'mu4e-alert-enable-mode-line-display)
-    (mu4e-alert-enable-mode-line-display))
-  (when (fboundp 'mu4e-alert-enable-notifications)
-    (mu4e-alert-enable-notifications))
-  (when (fboundp 'mu4e-alert-set-default-style)
-    (mu4e-alert-set-default-style 'notifier)))
+  (when (require 'mu4e-maildirs-extension nil t)
+    (when (fboundp 'mu4e-maildirs-extension-load)
+      (mu4e-maildirs-extension-load)))
+  (when (require 'mu4e-alert nil t)
+    (when (fboundp 'mu4e-alert-enable-mode-line-display)
+      (mu4e-alert-enable-mode-line-display))
+    (when (fboundp 'mu4e-alert-enable-notifications)
+      (mu4e-alert-enable-notifications))
+    (when (fboundp 'mu4e-alert-set-default-style)
+      (mu4e-alert-set-default-style 'notifier)))
+  (when (and (display-graphic-p) (require 'mu4e-conversation nil t))
+    (when (fboundp 'global-mu4e-conversation-mode)
+      (global-mu4e-conversation-mode))))
 
 (with-eval-after-load 'org
   (require 'org-mu4e nil 'noerror)

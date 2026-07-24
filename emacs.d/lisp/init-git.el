@@ -47,7 +47,7 @@
 
 (defhydra hydra-git-gutter (:body-pre (git-gutter-mode 1)
                                       :hint nil)
-  "Git gutter commands."
+  "Git gutter."
   ("j" git-gutter:next-hunk)
   ("k" git-gutter:previous-hunk)
   ("h" (progn (goto-char (point-min))

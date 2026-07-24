@@ -120,7 +120,7 @@
 
 (use-package highlight-cl
   :ensure nil
-  :if (package-installed-p 'highlight-cl)
+  :if (fboundp 'highlight-cl-add-font-lock-keywords)
   :hook (emacs-lisp-mode . highlight-cl-add-font-lock-keywords))
 
 ;; ----------------------------------------------------------------------------
@@ -246,6 +246,7 @@
 (advice-add 'revert-buffer :after #'gsmlg/maybe-remove-elc)
 
 (defun gsmlg/with-vc-reverting (orig-fn &rest args)
+  "Call ORIG-FN with ARGS while flagging that vc is reverting."
   (let ((gsmlg/vc-reverting t))
     (apply orig-fn args)))
 

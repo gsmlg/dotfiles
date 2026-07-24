@@ -473,17 +473,17 @@ Also see `mu4e-flags-to-string'.
 \[1\]: http://cr.yp.to/proto/maildir.html"
   (when flags
     (let ((kar (cl-case (car flags)
-                 ('draft     ?D)
-                 ('flagged   ?F)
-                 ('new       ?N)
-                 ('passed    ?P)
-                 ('replied   ?R)
-                 ('seen      ?S)
-                 ('trashed   ?T)
-                 ('attach    ?a)
-                 ('encrypted ?x)
-                 ('signed    ?s)
-                 ('unread    ?u))))
+                 (draft     ?D)
+                 (flagged   ?F)
+                 (new       ?N)
+                 (passed    ?P)
+                 (replied   ?R)
+                 (seen      ?S)
+                 (trashed   ?T)
+                 (attach    ?a)
+                 (encrypted ?x)
+                 (signed    ?s)
+                 (unread    ?u))))
       (concat (and kar (string kar))
               (mu4e~flags-to-string-raw (cdr flags))))))
 
@@ -541,9 +541,9 @@ http://cr.yp.to/proto/maildir.html "
 Or go to the top level if there is none."
   (interactive)
   (info (cl-case major-mode
-          ('mu4e-main-mode "(mu4e)Main view")
-          ('mu4e-headers-mode "(mu4e)Headers view")
-          ('mu4e-view-mode "(mu4e)Message view")
+          (mu4e-main-mode "(mu4e)Main view")
+          (mu4e-headers-mode "(mu4e)Headers view")
+          (mu4e-view-mode "(mu4e)Message view")
           (t               "mu4e"))))
 
 ;;; Misc

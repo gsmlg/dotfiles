@@ -1,4 +1,10 @@
 ;; -*- lexical-binding: t; -*-
+(defvar mu4e-account-alist nil)
+(defvar mu4e-compose-parent-message nil)
+(defvar mu4e-completing-read-function)
+(defvar mu4e-compose-signature-auto-include)
+(defvar mu4e-view-show-addresses)
+
 (use-package mu4e
   :load-path "site-lisp/mu4e/"
   :bind (("C-x m" . mu4e-compose-new)
@@ -6,7 +12,7 @@
   :config
   (progn
     ;; Set up some common mu4e variables
-    (setq mu4e-maildir "~/.Mail"
+    (setq mu4e-root-maildir "~/.Mail"
 	  mu4e-sent-folder "/zdns/Sent Messages"
 	  mu4e-drafts-folder "/zdns/Drafts"
 	  mu4e-get-mail-command "mbsync -a"
@@ -63,11 +69,14 @@
 
 
 (use-package mu4e-alert
-  :ensure t)
+  :ensure t
+  :after mu4e)
 (use-package mu4e-maildirs-extension
-  :ensure t)
+  :ensure t
+  :after mu4e)
 (use-package mu4e-conversation
   :ensure t
+  :after mu4e
   :config
   (global-mu4e-conversation-mode))
 

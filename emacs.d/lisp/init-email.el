@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 (use-package mu4e
   :load-path "site-lisp/mu4e/"
   :bind (("C-x m" . mu4e-compose-new)

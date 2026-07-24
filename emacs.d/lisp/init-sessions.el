@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;; save a list of open files in ~/.emacs.d/.emacs.desktop
 (setq desktop-path (list gsmlg/cache-directory)
       desktop-auto-save-timeout 600)

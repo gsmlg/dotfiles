@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;;; Basic ruby setup
 (use-package ruby-mode
   :ensure t

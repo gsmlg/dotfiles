@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;; org-mode setup
 
 (use-package org
@@ -183,8 +184,8 @@
     (setq org-clock-out-remove-zero-time-clocks t)
 
     ;; Show clock sums as hours and minutes, not "n days" etc.
-    (setq org-time-clocksum-format
-	  '(:hours "%d" :require-hours t :minutes ":%02d" :require-minutes t))
+    (setq org-duration-format
+	  '((special . h:mm)))
 
     
     ;; Show the clocked-in task - if any - in the header line
@@ -221,22 +222,22 @@
     ;; Speed Commands
     ;; Speed commands allow access to frequently used commands when on the beginning of a headline - similar to one-key agenda commands.
     (setq org-use-speed-commands t)
-    (setq org-speed-commands-user (quote (("h" . gsmlg/org-hide-other)
-					  ("k" . org-kill-note-or-show-branches)
-					  ("q" . org-agenda)
-					  ("s" . org-save-all-org-buffers)
-					  ("w" . org-refile)
-					  ("z" . org-add-note)
-                                          ("J" . org-clock-goto)
-                                          ("P" . org-pomodoro)
-					  ("W" . bh/widen))))
+    (setq org-speed-commands (quote (("h" . gsmlg/org-hide-other)
+				     ("k" . org-kill-note-or-show-branches)
+				     ("q" . org-agenda)
+				     ("s" . org-save-all-org-buffers)
+				     ("w" . org-refile)
+				     ("z" . org-add-note)
+                                     ("J" . org-clock-goto)
+                                     ("P" . org-pomodoro)
+				     ("W" . bh/widen))))
     
     (defun gsmlg/org-hide-other ()
       "Org hide other."
       (interactive)
       (save-excursion
 	(org-back-to-heading 'invisible-ok)
-	(hide-other)
+	(outline-hide-other)
 	(org-cycle)
 	(org-cycle)
 	(org-cycle)))

@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;;--------------------------------------------------------------------
 ;; set projectile for manage projects
 ;; projectile.el at https://github.com/bbatsov/projectile
@@ -20,7 +21,7 @@
   :ensure t
   :after projectile
   :config
-  (helm-projectile-on))
+  (helm-projectile-mode 1))
 
 (use-package editorconfig
   :ensure t

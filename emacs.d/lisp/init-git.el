@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 ;; TODO: link commits from vc-log to magit-show-commit
 ;; TODO: smerge-mode
 (use-package git-blamed

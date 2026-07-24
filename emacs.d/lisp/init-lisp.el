@@ -1,3 +1,4 @@
+;; -*- lexical-binding: t; -*-
 (add-hook 'emacs-lisp-mode-hook (lambda () (setq mode-name "ELisp")))
 
 ;; Slime allows very convenient navigation to the symbol at point (using M-.),
@@ -282,7 +283,7 @@
 
 
 (defun gsmlg/cl-libify-next ()
-  "Find next symbol from 'cl and replace it with the 'cl-lib equivalent."
+  "Find next symbol from cl and replace it with the cl-lib equivalent."
   (interactive)
   (let ((case-fold-search nil))
     (re-search-forward
@@ -298,7 +299,7 @@
   (let ((form (match-string 1)))
     (backward-sexp)
     (cond
-     ((string-match "^\\(defun\\|defmacro\\)\\*$")
+     ((string-match "^\\(defun\\|defmacro\\)\\*$" form)
       (kill-sexp)
       (insert (concat "cl-" (match-string 1))))
      (t

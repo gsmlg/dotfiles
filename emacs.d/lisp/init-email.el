@@ -4,6 +4,7 @@
 (defvar mu4e-completing-read-function)
 (defvar mu4e-compose-signature-auto-include)
 (defvar mu4e-view-show-addresses)
+(defvar mu4e-root-maildir)
 
 (use-package mu4e
   :load-path "site-lisp/mu4e/"

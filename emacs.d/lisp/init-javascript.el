@@ -10,7 +10,7 @@
 
 (defun add-node-modules-path ()
   "Search the current buffer's parent directories for `node_modules/.bin`.
-If it's found, then add it to the `exec-path'."
+If it's found, then add it to the `exec-path' variable."
   (interactive)
   (let* ((root (locate-dominating-file
                 (or (buffer-file-name) default-directory)
@@ -30,7 +30,7 @@ If it's found, then add it to the `exec-path'."
 (autoload 'flycheck-get-checker-for-buffer "flycheck")
 
 (defun gsmlg/disable-js2-checks-if-flycheck-active ()
-  "Disable js2 parse error checks if Flycheck is active for current buffer."
+  "Disable js2 parse error check if Flycheck is active for current buffer."
   (unless (flycheck-get-checker-for-buffer)
     (set (make-local-variable 'js2-mode-show-parse-errors) t)
     (set (make-local-variable 'js2-mode-show-strict-warnings) t)))

@@ -17,7 +17,7 @@
 LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
 
 (defun gsmlg/build-require-times (orig-fn feature &optional filename noerror)
-  "Note in `gsmlg/require-times' the time taken by ORIG-FN to require FEATURE."
+  "Note in `gsmlg/require-times' time taken by ORIG-FN for FEATURE (file FILENAME, error NOERROR)."
   (let* ((already-loaded (memq feature features))
          (require-start-time (and (not already-loaded) (current-time))))
     (prog1

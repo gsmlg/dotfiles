@@ -7,13 +7,25 @@
 
 (defvar mu4e-account-alist nil)
 (defvar mu4e-compose-parent-message nil)
-(defvar mu4e-completing-read-function)
-(defvar mu4e-compose-signature-auto-include)
-(defvar mu4e-view-show-addresses)
-(defvar mu4e-root-maildir)
+(defvar mu4e-completing-read-function nil)
+(defvar mu4e-compose-signature-auto-include nil)
+(defvar mu4e-view-show-addresses nil)
+(defvar mu4e-view-show-images nil)
+(defvar mu4e-root-maildir nil)
+(defvar mu4e-sent-folder nil)
+(defvar mu4e-drafts-folder nil)
+(defvar mu4e-get-mail-command nil)
+(defvar mu4e-update-interval nil)
+(defvar mu4e-maildir-shortcuts nil)
+(defvar mu4e-bookmarks nil)
+
+(let ((brew-mu4e (car (or (file-expand-wildcards "/opt/homebrew/share/emacs/site-lisp/mu4e")
+                          (file-expand-wildcards "/usr/local/share/emacs/site-lisp/mu4e")))))
+  (when (and brew-mu4e (file-directory-p brew-mu4e))
+    (add-to-list 'load-path brew-mu4e)))
+(add-to-list 'load-path (expand-file-name "site-lisp/mu4e" user-emacs-directory))
 
 (use-package mu4e
-  :load-path "site-lisp/mu4e/"
   :bind (("C-x m" . mu4e-compose-new)
 	 ("C-c m" . mu4e))
   :config

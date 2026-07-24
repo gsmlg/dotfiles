@@ -15,15 +15,10 @@
   (dolist (hook '(emacs-lisp-mode-hook ielm-mode-hook))
     (add-hook hook 'turn-on-elisp-slime-nav-mode)))
 
-
-
-
-
-
 ;; Make C-x C-e run 'eval-region if the region is active
 
 (defun gsmlg/eval-last-sexp-or-region (prefix)
-  "Eval region from BEG to END if active, otherwise the last sexp."
+  "Eval region from BEG to END if active, otherwise the last sexp using PREFIX."
   (interactive "P")
   (if (and (mark) (use-region-p))
       (eval-region (min (point) (mark)) (max (point) (mark)))
@@ -43,7 +38,7 @@
 
 
 (defun gsmlg/make-pp-read-only (_expression out-buffer-name &rest _)
-  "Enable `view-mode' in the output buffer - if any - so it can be closed with \"q\"."
+  "Enable `view-mode' in OUT-BUFFER-NAME if present."
   (when (get-buffer out-buffer-name)
     (with-current-buffer out-buffer-name
       (view-mode 1))))
@@ -75,6 +70,7 @@
 (defvar gsmlg/repl-switch-function 'switch-to-buffer-other-window)
 
 (defun gsmlg/switch-to-ielm ()
+  "Switch to ielm REPL buffer."
   (interactive)
   (let ((orig-buffer (current-buffer)))
     (if (get-buffer "*ielm*")
@@ -114,12 +110,17 @@
 ;; ----------------------------------------------------------------------------
 ;; Automatic byte compilation
 ;; ----------------------------------------------------------------------------
-(use-package auto-compile
+;; Auto-compile
+;(use-package auto-compile
+;  :ensure t
+;  :config
+;  (progn
+;    (auto-compile-on-savel-mode 1)
+;    (auto-compile-on-load-mode 1)))
+
+(use-package highlight-cl
   :ensure t
-  :config
-  (progn
-    (add-hook 'after-init-hook 'auto-compile-on-save-mode)
-    (add-hook 'after-init-hook 'auto-compile-on-load-mode)))
+  :hook (emacs-lisp-mode . highlight-cl-add-font-lock-keywords))
 
 ;; ----------------------------------------------------------------------------
 ;; Load .el if newer than corresponding .elc
@@ -140,7 +141,7 @@
 ;;; Support byte-compilation in a sub-process, as
 ;;; required by highlight-cl
 (defun gsmlg/byte-compile-file-batch (filename)
-  "Byte-compile FILENAME in batch mode, ie. a clean sub-process."
+  "Byte-compile FILENAME in batch mode, i.e., a clean sub-process."
   (interactive "fFile to byte-compile in batch mode: ")
   (let ((emacs (car command-line-args)))
     (compile
@@ -157,11 +158,14 @@
 ;; ----------------------------------------------------------------------------
 ;; Enable desired features for all lisp modes
 ;; ----------------------------------------------------------------------------
+(declare-function indent-guide-mode "indent-guide")
+
 (defun gsmlg/enable-check-parens-on-save ()
   "Run `check-parens' when the current buffer is saved."
   (add-hook 'after-save-hook #'check-parens nil t))
 
 (defun gsmlg/disable-indent-guide ()
+  "Disable `indent-guide-mode'."
   (when (bound-and-true-p indent-guide-mode)
     (indent-guide-mode -1)))
 

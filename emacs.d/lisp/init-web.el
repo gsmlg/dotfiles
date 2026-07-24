@@ -5,6 +5,8 @@
 
 ;;; Code:
 
+(defvar web-mode-enable-comment-keywords)
+
 (use-package web-mode
   :ensure t
   :config

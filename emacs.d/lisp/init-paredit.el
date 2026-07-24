@@ -13,6 +13,7 @@
   "Interactive commands for which paredit should be enabled in the minibuffer.")
 
 (defun maybe-map-paredit-newline ()
+  "Map RET to `paredit-newline' unless in REPL or minibuffer."
   (unless (or (memq major-mode '(inferior-emacs-lisp-mode cider-repl-mode))
               (minibufferp))
     (local-set-key (kbd "RET") 'paredit-newline)))

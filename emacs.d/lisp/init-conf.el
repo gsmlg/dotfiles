@@ -5,6 +5,8 @@
 
 ;;; Code:
 
+(declare-function company-nginx-keywords "company-nginx")
+
 (use-package dockerfile-mode
   :ensure t)
 

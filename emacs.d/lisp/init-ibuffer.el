@@ -15,6 +15,7 @@
   :ensure t)
 
 (defun ibuffer-set-up-preferred-filters ()
+  "Set up preferred filter groups by version control root for ibuffer."
   (ibuffer-vc-set-filter-groups-by-vc-root)
   (unless (eq ibuffer-sorting-mode 'filename/process)
     (ibuffer-do-sort-by-filename/process)))

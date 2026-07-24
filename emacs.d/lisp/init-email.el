@@ -30,6 +30,7 @@
 (add-to-list 'load-path (expand-file-name "site-lisp/mu4e" user-emacs-directory))
 
 (use-package mu4e
+  :ensure nil
   :bind (("C-x m" . mu4e-compose-new)
 	 ("C-c m" . mu4e))
   :config
@@ -88,7 +89,7 @@
 
 
 (use-package mu4e-alert
-  :ensure t
+  :ensure nil
   :after mu4e)
 
 (use-package mu4e-maildirs-extension

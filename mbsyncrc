@@ -4,8 +4,8 @@ Host imap.exmail.qq.com
 User gaoshiming@zdns.cn
 PassCmd "security find-generic-password -s mbsync-zdns-password -w"
 AuthMechs LOGIN
-SSLType IMAPS
-SSLVersions TLSv1.2
+TLSType IMAPS
+TLSVersions +1.2
 
 IMAPStore zdns-remote
 Account zdns
@@ -16,8 +16,8 @@ Inbox ~/.Mail/zdns/INBOX
 Trash Trash
 
 Channel zdns-folders
-Master :zdns-remote:
-Slave :zdns-local:
+Far :zdns-remote:
+Near :zdns-local:
 Patterns "INBOX" "Sent*" "Drafts" "Archives" "Junk*" "sendmail"
 Create Both
 Expunge Both
@@ -32,8 +32,8 @@ Host imap.qq.com
 User gsmlg@qq.com
 PassCmd "security find-generic-password -s mbsync-qq-password -w"
 AuthMechs LOGIN
-SSLType IMAPS
-SSLVersions TLSv1.2
+TLSType IMAPS
+TLSVersions +1.2
 
 IMAPStore qq-remote
 Account qq
@@ -44,8 +44,8 @@ Inbox ~/.Mail/qq/INBOX
 Trash Trash
 
 Channel qq-folders
-Master :qq-remote:
-Slave :qq-local:
+Far :qq-remote:
+Near :qq-local:
 Patterns "INBOX" "Sent*" "Drafts" "Archives/" "Junk*" "Delete*"
 Create Both
 Expunge Both
@@ -60,8 +60,8 @@ Host imap-mail.outlook.com
 User gaoshiming@live.com
 PassCmd "security find-generic-password -s mbsync-live-password -w"
 AuthMechs LOGIN
-SSLType IMAPS
-SSLVersions TLSv1.2
+TLSType IMAPS
+TLSVersions +1.2
 
 IMAPStore live-remote
 Account live
@@ -72,8 +72,8 @@ Inbox ~/.Mail/live/INBOX
 Trash Trash
 
 Channel live-folders
-Master :live-remote:
-Slave :live-local:
+Far :live-remote:
+Near :live-local:
 Patterns "INBOX" "Sent*" "Drafts" "Archives/" "Junk*" "Trash" "Delete*"
 Create Both
 Expunge Both
@@ -81,4 +81,3 @@ SyncState *
 
 Group live
 Channel live-folders
-

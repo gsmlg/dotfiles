@@ -11,8 +11,8 @@ IMAPStore zdns-remote
 Account zdns
 
 MaildirStore zdns-local
-Path ~/.Mail/zdns/
-Inbox ~/.Mail/zdns/INBOX
+Path ~/.local/share/mail/zdns/
+Inbox ~/.local/share/mail/zdns/INBOX
 Trash Trash
 
 Channel zdns-folders
@@ -39,8 +39,8 @@ IMAPStore qq-remote
 Account qq
 
 MaildirStore qq-local
-Path ~/.Mail/qq/
-Inbox ~/.Mail/qq/INBOX
+Path ~/.local/share/mail/qq/
+Inbox ~/.local/share/mail/qq/INBOX
 Trash Trash
 
 Channel qq-folders
@@ -67,8 +67,8 @@ IMAPStore live-remote
 Account live
 
 MaildirStore live-local
-Path ~/.Mail/live/
-Inbox ~/.Mail/live/INBOX
+Path ~/.local/share/mail/live/
+Inbox ~/.local/share/mail/live/INBOX
 Trash Trash
 
 Channel live-folders

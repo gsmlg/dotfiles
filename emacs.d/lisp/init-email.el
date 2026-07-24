@@ -8,9 +8,6 @@
 (defvar mu4e-account-alist nil)
 (defvar mu4e-compose-parent-message nil)
 (defvar mu4e-completing-read-function nil)
-(defvar mu4e-compose-signature-auto-include nil)
-(defvar mu4e-view-show-addresses nil)
-(defvar mu4e-view-show-images nil)
 (defvar mu4e-root-maildir nil)
 (defvar mu4e-sent-folder nil)
 (defvar mu4e-drafts-folder nil)
@@ -18,6 +15,13 @@
 (defvar mu4e-update-interval nil)
 (defvar mu4e-maildir-shortcuts nil)
 (defvar mu4e-bookmarks nil)
+
+(declare-function mu4e-message-field "mu4e-message" (msg field))
+(declare-function mu4e-maildirs-extension-load "mu4e-maildirs-extension" ())
+(declare-function mu4e-alert-enable-mode-line-display "mu4e-alert" ())
+(declare-function mu4e-alert-enable-notifications "mu4e-alert" ())
+(declare-function mu4e-alert-set-default-style "mu4e-alert" (style))
+(declare-function global-mu4e-conversation-mode "mu4e-conversation" (&optional arg))
 
 (let ((brew-mu4e (car (or (file-expand-wildcards "/opt/homebrew/share/emacs/site-lisp/mu4e")
                           (file-expand-wildcards "/usr/local/share/emacs/site-lisp/mu4e")))))
@@ -35,10 +39,7 @@
 	  mu4e-sent-folder "/zdns/Sent Messages"
 	  mu4e-drafts-folder "/zdns/Drafts"
 	  mu4e-get-mail-command "mbsync -a"
-	  mu4e-update-interval 300
-	  mu4e-compose-signature-auto-include nil
-	  mu4e-view-show-images t
-	  mu4e-view-show-addresses t)
+	  mu4e-update-interval 300)
 
     ;; Mail directory shortcuts
     (setq mu4e-maildir-shortcuts
@@ -83,33 +84,35 @@
 	     (mu4e-drafts-folder "/live/Drafts")
 	     (mu4e-get-mail-command "mbsync live")
 	     (user-mail-address "gaoshiming@live.com")
-	     (user-full-name "Gao"))))
-    ))
+	     (user-full-name "Gao"))))))
 
 
 (use-package mu4e-alert
   :ensure t
   :after mu4e)
+
 (use-package mu4e-maildirs-extension
-  :ensure t
+  :ensure nil
   :after mu4e)
+
 (use-package mu4e-conversation
-  :ensure t
+  :ensure nil
   :after mu4e
   :config
-  (global-mu4e-conversation-mode))
+  (when (fboundp 'global-mu4e-conversation-mode)
+    (global-mu4e-conversation-mode)))
 
 
 (defun mu4e//search-account-by-mail-address (mailto)
   "Return the account given an email address in MAILTO."
-  (car (rassoc-if (lambda (x)
-                    (equal (cadr (assoc 'user-mail-address x)) (car mailto)))
-                  mu4e-account-alist)))
+  (car (cl-rassoc-if (lambda (x)
+                       (equal (cadr (assoc 'user-mail-address x)) (car mailto)))
+                     mu4e-account-alist)))
 
 (defun mu4e/set-account ()
   "Set the account for composing a message.
-This function tries to guess the correct account from the email address first
-then fallback to the maildir."
+This function tries to guess the correct account from the email
+address first then fallback to the maildir."
   (let* ((account
           (if mu4e-compose-parent-message
               (let* ((mailtos
@@ -154,10 +157,14 @@ then fallback to the maildir."
 
 (with-eval-after-load 'mu4e
   (mu4e/mail-account-reset)
-  (mu4e-maildirs-extension-load)
-  (mu4e-alert-enable-mode-line-display)
-  (mu4e-alert-enable-notifications)
-  (mu4e-alert-set-default-style 'notifier))
+  (when (fboundp 'mu4e-maildirs-extension-load)
+    (mu4e-maildirs-extension-load))
+  (when (fboundp 'mu4e-alert-enable-mode-line-display)
+    (mu4e-alert-enable-mode-line-display))
+  (when (fboundp 'mu4e-alert-enable-notifications)
+    (mu4e-alert-enable-notifications))
+  (when (fboundp 'mu4e-alert-set-default-style)
+    (mu4e-alert-set-default-style 'notifier)))
 
 (with-eval-after-load 'org
   (require 'org-mu4e nil 'noerror)

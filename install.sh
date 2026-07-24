@@ -1,24 +1,37 @@
 #!/bin/bash
+set -e
 
-# install emacs
-ln -f -s ~/.dotfiles/emacs.d/init.el ~/.emacs
+DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"
 
-# install email config
-ln -f -s ~/.dotfiles/mbsyncrc ~/.mbsyncrc
-ln -f -s ~/.dotfiles/msmtprc ~/.msmtprc
+echo "=== Installing Dotfiles Configuration ==="
 
-# install vim
-cat ~/.dotfiles/vimrc/vimrcs/basic.vim > ~/.vimrc
-# or
-#git clone --depth=1 https://github.com/amix/vimrc.git ~/.vim_runtime
-#sh ~/.vim_runtime/install_basic_vimrc.sh
+# Step 1: Emacs configuration
+echo "[1/5] Installing Emacs configuration..."
+ln -sf "$DOTFILES_DIR/emacs.d/init.el" "$HOME/.emacs"
+echo "  ✓ Symlinked ~/.emacs -> $DOTFILES_DIR/emacs.d/init.el"
 
-# install oh-my-zsh
-#sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
-ln -f -s ~/.dotfiles/oh-my-zsh/zshrc ~/.zshrc
+# Step 2: Email configuration
+echo "[2/5] Installing Email configurations (mbsync & msmtp)..."
+ln -sf "$DOTFILES_DIR/mbsyncrc" "$HOME/.mbsyncrc"
+ln -sf "$DOTFILES_DIR/msmtprc" "$HOME/.msmtprc"
+echo "  ✓ Symlinked ~/.mbsyncrc and ~/.msmtprc"
 
-# install git global config
-cp ~/.dotfiles/gitconfig ~/.gitconfig
-cp ~/.dotfiles/gitignore_global ~/.gitignore_global
+# Step 3: Vim configuration
+echo "[3/5] Installing Vim configuration..."
+cat "$DOTFILES_DIR/vimrc/vimrcs/basic.vim" > "$HOME/.vimrc"
+echo "  ✓ Generated ~/.vimrc"
 
-mkdir -p ~/.dotfiles/oh-my-zsh/cache
+# Step 4: Oh-My-Zsh configuration
+echo "[4/5] Installing Oh-My-Zsh configuration..."
+ln -sf "$DOTFILES_DIR/oh-my-zsh/zshrc" "$HOME/.zshrc"
+mkdir -p "$DOTFILES_DIR/oh-my-zsh/cache"
+echo "  ✓ Symlinked ~/.zshrc and created cache directory"
+
+# Step 5: Git global configuration
+echo "[5/5] Installing Git global configuration..."
+cp "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
+cp "$DOTFILES_DIR/gitignore_global" "$HOME/.gitignore_global"
+echo "  ✓ Copied ~/.gitconfig and ~/.gitignore_global"
+
+echo ""
+echo "=== Dotfiles Installation Complete ==="

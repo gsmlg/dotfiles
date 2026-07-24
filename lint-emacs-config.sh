@@ -13,13 +13,22 @@ ${EMACS:=emacs} -nw --batch \
             (setq byte-compile-error-on-warn nil)
             (load-file \"$EMACS_DIR/init.el\"))" \
   --eval "(progn
+            (require 'checkdoc)
             (let ((files (directory-files-recursively \"$EMACS_DIR/lisp\" \"\\\\.el$\")))
               (push \"$EMACS_DIR/init.el\" files)
               (dolist (file files)
-                (message \"Linting %s...\" (file-relative-name file \"$SCRIPT_DIR\"))
-                (byte-compile-file file))))"
+                (message \"\n--- Linting %s ---\" (file-relative-name file \"$SCRIPT_DIR\"))
+                (byte-compile-file file)
+                (let ((checkdoc-diagnostic-buffer \"*checkdoc-diagnostics*\"))
+                  (when (get-buffer checkdoc-diagnostic-buffer)
+                    (kill-buffer checkdoc-diagnostic-buffer))
+                  (checkdoc-file file)
+                  (when (get-buffer checkdoc-diagnostic-buffer)
+                    (with-current-buffer checkdoc-diagnostic-buffer
+                      (message \"%s\" (buffer-string))))))))"
 
 # Clean up temporary byte-compiled .elc files created during lint check
 rm -f "$EMACS_DIR"/*.elc "$EMACS_DIR"/lisp/*.elc
 
+echo ""
 echo "=== Lint Check Completed ==="

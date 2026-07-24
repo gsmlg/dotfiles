@@ -1,5 +1,9 @@
-;; -*- lexical-binding: t; -*-
+;;; init-lsp.el --- Configuration for init-lsp -*- lexical-binding: t; -*-
 
+;;; Commentary:
+;; Configuration module init-lsp.
+
+;;; Code:
 
 (use-package lsp-mode
   :hook ((js2-mode . lsp-deferred)
@@ -21,3 +25,4 @@
   :commands helm-lsp-workspace-symbol)
 
 (provide 'init-lsp)
+;;; init-lsp.el ends here

@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init.el --- Configuration for init -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init.
+
+;;; Code:
+
 (setq gc-cons-threshold (* 100 1024 1024))
 (add-hook 'after-init-hook (lambda () (setq gc-cons-threshold (* 8 1024 1024))))
 
@@ -68,3 +74,6 @@
   (load custom-file))
 
 (put 'set-goal-column 'disabled nil)
+
+(provide 'init)
+;;; init.el ends here

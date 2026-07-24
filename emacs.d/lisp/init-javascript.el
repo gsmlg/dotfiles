@@ -1,4 +1,9 @@
-;; -*- lexical-binding: t; -*-
+;;; init-javascript.el --- Configuration for init-javascript -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-javascript.
+
+;;; Code:
 
 (defvar add-node-modules-path-debug nil
   "Enable verbose output when non nil.")
@@ -22,6 +27,14 @@ If it's found, then add it to the `exec-path'."
         (message (concat "node_modules not found in " root))))))
 
 
+(autoload 'flycheck-get-checker-for-buffer "flycheck")
+
+(defun gsmlg/disable-js2-checks-if-flycheck-active ()
+  "Disable js2 parse error checks if Flycheck is active for current buffer."
+  (unless (flycheck-get-checker-for-buffer)
+    (set (make-local-variable 'js2-mode-show-parse-errors) t)
+    (set (make-local-variable 'js2-mode-show-strict-warnings) t)))
+
 (use-package js2-mode
   :mode ("\\.js\\'" . js2-mode)
   :config
@@ -30,12 +43,6 @@ If it's found, then add it to the `exec-path'."
     (setq-default js2-mode-show-parse-errors nil
                   js2-mode-show-strict-warnings nil
                   js2-skip-preprocessor-directives t)
-    ;; ... but enable it if flycheck can't handle javascript
-    (autoload 'flycheck-get-checker-for-buffer "flycheck")
-    (defun gsmlg/disable-js2-checks-if-flycheck-active ()
-      (unless (flycheck-get-checker-for-buffer)
-        (set (make-local-variable 'js2-mode-show-parse-errors) t)
-        (set (make-local-variable 'js2-mode-show-strict-warnings) t)))
     (add-hook 'js2-jsx-mode-hook
 	      (lambda () (setq-local sgml-basic-offset js2-basic-offset)))
     (add-hook 'js2-mode-hook
@@ -91,3 +98,4 @@ If it's found, then add it to the `exec-path'."
 ;; TODO: add indium - Javascript development environment
 
 (provide 'init-javascript)
+;;; init-javascript.el ends here

@@ -1,10 +1,21 @@
-;; -*- lexical-binding: t; -*-
+;;; init-sessions.el --- Configuration for init-sessions -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-sessions.
+
+;;; Code:
+
+(defvar desktop-path)
+(defvar desktop-auto-save-timeout)
+(defvar desktop-globals-to-save)
+
 ;; save a list of open files in ~/.emacs.d/.emacs.desktop
 (setq desktop-path (list gsmlg/cache-directory)
       desktop-auto-save-timeout 600)
 (desktop-save-mode 1)
 
 (defun gsmlg/time-desktop-read (orig-fn &rest args)
+  "Time the execution of ORIG-FN with ARGS when reading desktop."
   (let ((start-time (current-time)))
     (prog1
         (apply orig-fn args)
@@ -15,6 +26,7 @@
 (advice-add 'desktop-read :around #'gsmlg/time-desktop-read)
 
 (defun gsmlg/time-desktop-create-buffer (orig-fn ver &rest args)
+  "Time buffer creation by ORIG-FN for VER and ARGS."
   (let ((start-time (current-time))
         (filename (nth 0 args)))
     (prog1
@@ -72,5 +84,5 @@
                 tags-file-name
                 tags-table-list)))
 
-
 (provide 'init-sessions)
+;;; init-sessions.el ends here

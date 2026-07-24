@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-web.el --- Configuration for init-web -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-web.
+
+;;; Code:
+
 (use-package web-mode
   :ensure t
   :config
@@ -41,7 +47,8 @@
       (setq web-mode-enable-heredoc-fontification t))
     (add-hook 'web-mode-hook  'my-web-mode-hook)))
 
-
+
+
 ;;; Colourise CSS colour literals
 (use-package rainbow-mode
   :ensure t
@@ -49,7 +56,8 @@
   (dolist (hook '(css-mode-hook html-mode-hook))
     (add-hook hook 'rainbow-mode)))
 
-
+
+
 ;;; LESS
 (use-package less-css-mode
   :ensure t
@@ -59,13 +67,15 @@
   :ensure t
   :hook (less-css-mode . skewer-less-mode))
 
-
+
+
 ;; Skewer CSS
 (use-package skewer-mode
   :ensure t
   :hook (css-mode . skewer-css-mode))
 
-
+
+
 ;;; Use eldoc for syntax hints
 (use-package css-eldoc
   :ensure t
@@ -73,7 +83,8 @@
   :config
   (autoload 'turn-on-css-eldoc "css-eldoc"))
 
-
+
+
 
 (use-package httprepl
   :ensure t
@@ -89,5 +100,5 @@
       (restclient-mode)
       (pop-to-buffer (current-buffer)))))
 
-
 (provide 'init-web)
+;;; init-web.el ends here

@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-helm.el --- Configuration for init-helm -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-helm.
+
+;;; Code:
+
 (use-package helm
   :ensure t
   :bind (("M-x" . helm-M-x)
@@ -26,14 +32,14 @@
 
 ;; Define safe wrapper functions that prefer helm-swoop if present
 (defun my/helm-swoop-or-occur ()
-  "Call helm-swoop if available, otherwise helm-occur."
+  "Call `helm-swoop' if available, otherwise `helm-occur'."
   (interactive)
   (if (fboundp 'helm-swoop)
       (call-interactively 'helm-swoop)
     (call-interactively 'helm-occur)))
 
 (defun my/helm-swoop-back-or-resume ()
-  "Call helm-swoop-back-to-last-point if available, otherwise helm-resume."
+  "Call `helm-swoop-back-to-last-point' if available, else `helm-resume'."
   (interactive)
   (cond
    ((fboundp 'helm-swoop-back-to-last-point) (call-interactively 'helm-swoop-back-to-last-point))
@@ -41,7 +47,7 @@
    (t (message "No helm resume/back command available"))))
 
 (defun my/helm-multi-swoop-or-multi-occur ()
-  "Call helm-multi-swoop if available, otherwise try helm-multi-occur or helm-occur."
+  "Call `helm-multi-swoop' if available, else `helm-occur'."
   (interactive)
   (cond
    ((fboundp 'helm-multi-swoop) (call-interactively 'helm-multi-swoop))
@@ -49,7 +55,7 @@
    (t (call-interactively 'helm-occur))))
 
 (defun my/helm-swoop-from-isearch-or-occur ()
-  "From isearch, exit and call helm-swoop-from-isearch if available, otherwise helm-occur."
+  "Exit isearch and call `helm-swoop-from-isearch' or `helm-occur'."
   (interactive)
   (let ((pattern (if (and (boundp 'isearch-string) isearch-mode) isearch-string nil)))
     (when isearch-mode (isearch-exit))
@@ -67,3 +73,4 @@
 (define-key isearch-mode-map (kbd "M-i") 'my/helm-swoop-from-isearch-or-occur)
 
 (provide 'init-helm)
+;;; init-helm.el ends here

@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-elpa.el --- Configuration for init-elpa -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-elpa.
+
+;;; Code:
+
 (require 'package)
 
 (setq package-archives '(("gnu" . "https://elpa.gnu.org/packages/")
@@ -24,3 +30,4 @@
 (setq use-package-always-ensure t)
 
 (provide 'init-elpa)
+;;; init-elpa.el ends here

@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-setting.el --- Configuration for init-setting -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-setting.
+
+;;; Code:
+
 (when (fboundp 'electric-pair-mode)
   (add-hook 'after-init-hook 'electric-pair-mode))
 (add-hook 'after-init-hook 'electric-indent-mode)
@@ -242,27 +248,24 @@
 ;  :diminish ""
 ;  :hook (after-init . whole-line-or-region-mode))
 
-(defun suspend-mode-during-cua-rect-selection (mode-name)
-  "Add advice to suspend `MODE-NAME' while selecting a CUA rectangle."
-  (let ((flagvar (intern (format "%s-was-active-before-cua-rectangle" mode-name))))
+(defun suspend-mode-during-cua-rect-selection (target-mode-name)
+  "Add advice to suspend `TARGET-MODE-NAME' while selecting a CUA rectangle."
+  (let ((flagvar (intern (format "%s-was-active-before-cua-rectangle" target-mode-name))))
     (eval-after-load 'cua-rect
       `(progn
-         (defvar ,flagvar nil)
-         (make-variable-buffer-local ',flagvar)
-         (advice-add 'cua--activate-rectangle :after
+         (advice-add 'cua--init-rectangles :before
                      (lambda (&rest _)
-                       (setq ,flagvar (and (boundp ',mode-name) ,mode-name))
-                       (when ,flagvar
-                         (,mode-name 0))))
-         (advice-add 'cua--deactivate-rectangle :after
+                       (setq ,flagvar (and (boundp ',target-mode-name) ,target-mode-name))
+                       (when ,flagvar (,target-mode-name 0))))
+         (advice-add 'cua--dedeactivate-rectangle :after
                      (lambda (&rest _)
-                       (when ,flagvar
-                         (,mode-name 1))))))))
+                       (when ,flagvar (,target-mode-name 1))))))))
 
 (suspend-mode-during-cua-rect-selection 'whole-line-or-region-mode)
 
 
-
+
+
 
 (defun gsmlg/open-line-with-reindent (n)
   "A version of `open-line' which reindents the start and end positions.
@@ -314,3 +317,4 @@ With arg N, insert N newlines."
  recentf-exclude '("/tmp/" "/ssh:"))
 
 (provide 'init-setting)
+;;; init-setting.el ends here

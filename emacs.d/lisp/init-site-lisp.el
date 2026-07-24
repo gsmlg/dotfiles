@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-site-lisp.el --- Configuration for init-site-lisp -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-site-lisp.
+
+;;; Code:
+
 ;;; Set load path
 
 (eval-when-compile (require 'cl-lib))
@@ -16,7 +22,8 @@
 (gsmlg/add-subdirs-to-load-path
  (expand-file-name "site-lisp/" user-emacs-directory))
 
-;;; Utilities for grabbing upstream libs
+
+;;; Utilities for grabbing upstream libs
 
 (defun site-lisp-dir-for (name)
   (expand-file-name (format "site-lisp/%s" name) user-emacs-directory))
@@ -44,5 +51,5 @@ source file under ~/.emacs.d/site-lisp/name/"
   (let ((f (locate-library (symbol-name name))))
     (and f (string-prefix-p (file-name-as-directory (site-lisp-dir-for name)) f))))
 
-
 (provide 'init-site-lisp)
+;;; init-site-lisp.el ends here

@@ -1,6 +1,14 @@
-;; -*- lexical-binding: t; -*-
+;;; init-git.el --- Configuration for init-git -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-git.
+
+;;; Code:
+
 ;; TODO: link commits from vc-log to magit-show-commit
 ;; TODO: smerge-mode
+(defvar *is-a-mac*)
+
 (use-package git-blamed
   :ensure t
   :commands git-blamed-mode)
@@ -39,14 +47,7 @@
 
 (defhydra hydra-git-gutter (:body-pre (git-gutter-mode 1)
                                       :hint nil)
-  "
-Git gutter:
-  _j_: next hunk        _s_tage hunk     _q_uit
-  _k_: previous hunk    _r_evert hunk    _Q_uit and deactivate git-gutter
-  ^ ^                   _p_opup hunk
-  _h_: first hunk
-  _l_: last hunk        set start _R_evision
-"
+  "Git gutter commands."
   ("j" git-gutter:next-hunk)
   ("k" git-gutter:previous-hunk)
   ("h" (progn (goto-char (point-min))
@@ -62,16 +63,18 @@ Git gutter:
               ;; git-gutter-fringe doesn't seem to
               ;; clear the markup right away
               (sit-for 0.1)
-              (git-gutter:clear))
+              (git-gutter-mode -1))
    :color blue))
 (global-set-key (kbd "M-g M-g") 'hydra-git-gutter/body)
-
+
+
 ;; Convenient binding for vc-git-grep
 (after-load 'vc
   (define-key vc-prefix-map (kbd "f") 'vc-git-grep))
 
 
-
+
+
 ;;; git-svn support
 
 ;; (when (maybe-require-package 'magit-svn)
@@ -88,8 +91,9 @@ Git gutter:
     (add-to-list 'compilation-error-regexp-alist-alist defn)
     (add-to-list 'compilation-error-regexp-alist (car defn))))
 
-(defvar git-svn--available-commands nil "Cached list of git svn subcommands")
+(defvar git-svn--available-commands nil "Cached list of git svn subcommands.")
 (defun git-svn--available-commands ()
+  "Get available git svn commands."
   (or git-svn--available-commands
       (setq git-svn--available-commands
             (gsmlg/string-all-matches
@@ -99,14 +103,15 @@ Git gutter:
 (autoload 'vc-git-root "vc-git")
 
 (defun git-svn (dir command)
-  "Run a git svn subcommand in DIR."
+  "Run a git svn subcommand COMMAND in DIR."
   (interactive (list (read-directory-name "Directory: ")
                      (completing-read "git-svn command: " (git-svn--available-commands) nil t nil nil (git-svn--available-commands))))
   (let* ((default-directory (vc-git-root dir))
-         (compilation-buffer-name-function (lambda (major-mode-name) "*git-svn*")))
+         (compilation-buffer-name-function (lambda (_major-mode-name) "*git-svn*")))
     (compile (concat "git svn " command))))
 
-
+
+
 (use-package git-messenger
   :ensure t
   :init (setq git-messenger:show-detail t)
@@ -115,5 +120,5 @@ Git gutter:
   :bind (:map vc-prefix-map
               ("p" . git-messenger:popup-message)))
 
-
 (provide 'init-git)
+;;; init-git.el ends here

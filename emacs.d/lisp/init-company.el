@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-company.el --- Configuration for init-company -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-company.
+
+;;; Code:
+
 (use-package company
   :ensure t
   :init
@@ -21,16 +27,15 @@
 
 ;; Suspend page-break-lines-mode while company menu is active
 ;; (see https://github.com/company-mode/company-mode/issues/416)
+(defvar-local gsmlg/page-break-lines-on-p nil)
+
 (after-load 'company
   (after-load 'page-break-lines
-    (defvar gsmlg/page-break-lines-on-p nil)
-    (make-variable-buffer-local 'gsmlg/page-break-lines-on-p)
-
-    (defun gsmlg/page-break-lines-disable (&rest ignore)
+    (defun gsmlg/page-break-lines-disable (&rest _ignore)
       (when (setq gsmlg/page-break-lines-on-p (bound-and-true-p page-break-lines-mode))
         (page-break-lines-mode -1)))
 
-    (defun gsmlg/page-break-lines-maybe-reenable (&rest ignore)
+    (defun gsmlg/page-break-lines-maybe-reenable (&rest _ignore)
       (when gsmlg/page-break-lines-on-p
         (page-break-lines-mode 1)))
 
@@ -38,5 +43,5 @@
     (add-hook 'company-completion-finished-hook 'gsmlg/page-break-lines-maybe-reenable)
     (add-hook 'company-completion-cancelled-hook 'gsmlg/page-break-lines-maybe-reenable)))
 
-
 (provide 'init-company)
+;;; init-company.el ends here

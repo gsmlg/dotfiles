@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-lisp.el --- Configuration for init-lisp -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-lisp.
+
+;;; Code:
+
 (add-hook 'emacs-lisp-mode-hook (lambda () (setq mode-name "ELisp")))
 
 ;; Slime allows very convenient navigation to the symbol at point (using M-.),
@@ -9,9 +15,10 @@
   (dolist (hook '(emacs-lisp-mode-hook ielm-mode-hook))
     (add-hook hook 'turn-on-elisp-slime-nav-mode)))
 
-(provide 'init-lisp)
 
-
+
+
+
 
 ;; Make C-x C-e run 'eval-region if the region is active
 
@@ -32,7 +39,8 @@
 ;  :config
 ;  (add-hook 'after-init-hook 'ipretty-mode))
 
-
+
+
 
 (defun gsmlg/make-pp-read-only (_expression out-buffer-name &rest _)
   "Enable `view-mode' in the output buffer - if any - so it can be closed with \"q\"."
@@ -42,7 +50,8 @@
 
 (advice-add 'pp-display-expression :after #'gsmlg/make-pp-read-only)
 
-
+
+
 
 (defun gsmlg/maybe-set-bundled-elisp-readonly ()
   "If this elisp appears to be part of Emacs, then disallow editing."
@@ -53,7 +62,8 @@
 
 (add-hook 'emacs-lisp-mode-hook 'gsmlg/maybe-set-bundled-elisp-readonly)
 
-
+
+
 
 ;; Use C-c C-z to toggle between elisp files and an ielm session
 ;; I might generalise this to ruby etc., or even just adopt the repl-toggle package.
@@ -79,12 +89,16 @@
       (funcall gsmlg/repl-switch-function gsmlg/repl-original-buffer)
     (error "No original buffer")))
 
+(defvar ielm-map)
+(defvar ert-results-mode-map)
+
 (after-load 'elisp-mode
   (define-key emacs-lisp-mode-map (kbd "C-c C-z") 'gsmlg/switch-to-ielm))
 (after-load 'ielm
   (define-key ielm-map (kbd "C-c C-z") 'gsmlg/repl-switch-back))
 
-
+
+
 
 ;; ----------------------------------------------------------------------------
 ;; Hippie-expand
@@ -112,14 +126,16 @@
 ;; ----------------------------------------------------------------------------
 (setq load-prefer-newer t)
 
-
+
+
 
 (use-package immortal-scratch
   :ensure t
   :config
   (add-hook 'after-init-hook 'immortal-scratch-mode))
 
-
+
+
 
 ;;; Support byte-compilation in a sub-process, as
 ;;; required by highlight-cl
@@ -135,7 +151,8 @@
        (list "-Q" "-batch" "-f" "batch-byte-compile" filename)
        " ")))))
 
-
+
+
 
 ;; ----------------------------------------------------------------------------
 ;; Enable desired features for all lisp modes
@@ -231,18 +248,21 @@
 (advice-add 'vc-revert-buffer-internal :around #'gsmlg/with-vc-reverting)
 
 
-
+
+
 (use-package macrostep)
 
 (after-load 'lisp-mode
   (define-key emacs-lisp-mode-map (kbd "C-c e") 'macrostep-expand))
 
-
+
+
 
 ;; A quick way to jump to the definition of a function given its key binding
 (global-set-key (kbd "<f1> K") 'find-function-on-key)
 
-
+
+
 
 ;; Extras for theme editing
 
@@ -264,24 +284,28 @@
 ;;   ;; Can be prohibitively slow with very long forms
 ;;   (add-to-list 'gsmlg/theme-mode-hook (lambda () (aggressive-indent-mode -1)) t))
 
-
+
+
 
 ;; (when (maybe-require-package 'highlight-quoted)
 ;;   (add-hook 'emacs-lisp-mode-hook 'highlight-quoted-mode))
 
-
+
+
 ;; (when (maybe-require-package 'flycheck)
 ;;   (require-package 'flycheck-package)
 ;;   (after-load 'flycheck
 ;;     (flycheck-package-setup)))
 
 
-
+
+
 ;; ERT
 (after-load 'ert
   (define-key ert-results-mode-map (kbd "g") 'ert-results-rerun-all-tests))
 
-
+
+
 (defun gsmlg/cl-libify-next ()
   "Find next symbol from cl and replace it with the cl-lib equivalent."
   (interactive)
@@ -310,6 +334,5 @@
 
 ;; (maybe-require-package 'cask-mode)
 
-
-
 (provide 'init-lisp)
+;;; init-lisp.el ends here

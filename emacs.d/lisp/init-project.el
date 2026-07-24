@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-project.el --- Configuration for init-project -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-project.
+
+;;; Code:
+
 ;;--------------------------------------------------------------------
 ;; set projectile for manage projects
 ;; projectile.el at https://github.com/bbatsov/projectile
@@ -30,3 +36,4 @@
   (editorconfig-mode 1))
 
 (provide 'init-project)
+;;; init-project.el ends here

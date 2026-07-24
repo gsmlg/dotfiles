@@ -5,3 +5,5 @@ CVS
 .cvsignore
 .*.lock
 \#*
+lint-messages.txt
+

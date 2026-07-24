@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-ibuffer.el --- Configuration for init-ibuffer -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-ibuffer.
+
+;;; Code:
+
 ;; TODO: enhance ibuffer-fontification-alist
 ;;   See http://www.reddit.com/r/emacs/comments/21fjpn/fontifying_buffer_list_for_emacs_243/
 
@@ -59,3 +65,4 @@
 (global-set-key (kbd "C-x C-b") 'ibuffer)
 
 (provide 'init-ibuffer)
+;;; init-ibuffer.el ends here

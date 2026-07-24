@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-ui.el --- Configuration for init-ui -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-ui.
+
+;;; Code:
+
 ;;----------------------------------------------------------------------------
 ;; Suppress GUI features
 ;;----------------------------------------------------------------------------
@@ -25,6 +31,9 @@
   :ensure t
   :config
   (dimmer-mode))
+
+(defvar neo-theme)
+(defvar *is-a-mac*)
 
 ;;------------------------------------------------------------------------------
 ;; add all the icons packages for file icon
@@ -60,7 +69,7 @@
 	spaceline-all-the-icons-icon-set-sun-time 'sun/moon))
 
 (defun gsmlg/spaceline-all-the-icons ()
-  "Enable spaceline-all-the-icons"
+  "Enable `spaceline-all-the-icons' mode line theme."
   (interactive)
   (spaceline-all-the-icons--setup-anzu)            ;; Enable anzu searching
   (spaceline-all-the-icons--setup-package-updates) ;; Enable package update indicator
@@ -74,7 +83,7 @@
    'mu4e-alert-segment))
 
 (defun gsmlg/spaceline-spacemacs ()
-  "Enable spaceline-spacemacs"
+  "Enable `spaceline-spacemacs' mode line theme."
   (interactive)
   (spaceline-spacemacs-theme))
 
@@ -82,6 +91,7 @@
 ;; Stop C-z from minimizing windows under OS X
 ;;----------------------------------------------------------------------------
 (defun gsmlg/maybe-suspend-frame ()
+  "Suspend frame unless running in GUI mode on macOS."
   (interactive)
   (unless (and *is-a-mac* window-system)
     (suspend-frame)))
@@ -90,6 +100,7 @@
 ;; Set the monospaced font size when mixed Chinese and English words
 ;;----------------------------------------------------------------------------
 (defun gsmlg/set-monospaced-font (english chinese english-size chinese-size)
+  "Set ENGLISH and CHINESE fonts with ENGLISH-SIZE and CHINESE-SIZE."
   (when (display-graphic-p)
     (set-face-attribute 'default nil :font
                         (format "%s:pixelsize=%d" english english-size))
@@ -97,7 +108,8 @@
       (set-fontset-font (frame-parameter nil 'font) charset
                         (font-spec :family chinese :size chinese-size)))))
 
-
+
+
 
 ;;----------------------------------------------------------------------------
 ;; Apply UI theme after init
@@ -118,5 +130,5 @@
 (use-package scratch
   :ensure t)
 
-
 (provide 'init-ui)
+;;; init-ui.el ends here

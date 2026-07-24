@@ -1,5 +1,14 @@
-;; -*- lexical-binding: t; -*-
+;;; init-benchmarking.el --- Configuration for init-benchmarking -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-benchmarking.
+
+;;; Code:
+
+(declare-function tablist-minor-mode "tablist")
+
 (defun gsmlg/time-subtract-millis (b a)
+  "Calculate time difference between B and A in milliseconds."
   (* 1000.0 (float-time (time-subtract b a))))
 
 
@@ -8,7 +17,7 @@
 LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
 
 (defun gsmlg/build-require-times (orig-fn feature &optional filename noerror)
-  "Note in `gsmlg/require-times' the time taken to require each feature."
+  "Note in `gsmlg/require-times' the time taken by ORIG-FN to require FEATURE."
   (let* ((already-loaded (memq feature features))
          (require-start-time (and (not already-loaded) (current-time))))
     (prog1
@@ -21,7 +30,7 @@ LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
 
 (advice-add 'require :around #'gsmlg/build-require-times)
 
-
+
 (define-derived-mode gsmlg/require-times-mode tabulated-list-mode "Require-Times"
   "Show times taken to `require' packages."
   (setq tabulated-list-format
@@ -32,17 +41,21 @@ LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
   ;; (setq tabulated-list-padding 2)
   (setq tabulated-list-entries #'gsmlg/require-times-tabulated-list-entries)
   (tabulated-list-init-header)
-  (tablist-minor-mode))
+  (when (fboundp 'tablist-minor-mode)
+    (tablist-minor-mode)))
 
 (defun gsmlg/require-times-sort-by-start-time-pred (entry1 entry2)
+  "Sort predicate for ENTRY1 and ENTRY2 by start time."
   (< (string-to-number (elt (nth 1 entry1) 0))
      (string-to-number (elt (nth 1 entry2) 0))))
 
 (defun gsmlg/require-times-sort-by-load-time-pred (entry1 entry2)
+  "Sort predicate for ENTRY1 and ENTRY2 by load time."
   (> (string-to-number (elt (nth 1 entry1) 2))
      (string-to-number (elt (nth 1 entry2) 2))))
 
 (defun gsmlg/require-times-tabulated-list-entries ()
+  "Generate entries for `gsmlg/require-times-mode'."
   (cl-loop for (feature start-time millis) in gsmlg/require-times
            with order = 0
            do (cl-incf order)
@@ -60,14 +73,13 @@ LOAD-DURATION is the time taken in milliseconds to load FEATURE.")
     (tabulated-list-revert)
     (display-buffer (current-buffer))))
 
-
-
 
 (defun gsmlg/show-init-time ()
+  "Report total init completion time."
   (message "init completed in %.2fms"
            (gsmlg/time-subtract-millis after-init-time before-init-time)))
 
 (add-hook 'after-init-hook 'gsmlg/show-init-time)
 
-
 (provide 'init-benchmarking)
+;;; init-benchmarking.el ends here

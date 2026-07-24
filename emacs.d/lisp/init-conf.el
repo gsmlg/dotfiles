@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-conf.el --- Configuration for init-conf -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-conf.
+
+;;; Code:
+
 (use-package dockerfile-mode
   :ensure t)
 
@@ -16,3 +22,4 @@
   )
 
 (provide 'init-conf)
+;;; init-conf.el ends here

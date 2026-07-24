@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-elfeed.el --- Configuration for init-elfeed -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-elfeed.
+
+;;; Code:
+
 (use-package elfeed
   :ensure t
   :commands elfeed
@@ -18,5 +24,5 @@
   (setq rmh-elfeed-org-files (list (expand-file-name "elfeed.org" user-emacs-directory)))
   (elfeed-org))
 
-
 (provide 'init-elfeed)
+;;; init-elfeed.el ends here

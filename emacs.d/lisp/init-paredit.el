@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-paredit.el --- Configuration for init-paredit -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-paredit.
+
+;;; Code:
+
 (defvar paredit-minibuffer-commands '(eval-expression
                                       pp-eval-expression
                                       eval-expression-with-eldoc
@@ -43,3 +49,4 @@
   (define-key paredit-everywhere-mode-map (kbd "M-s") nil))
 
 (provide 'init-paredit)
+;;; init-paredit.el ends here

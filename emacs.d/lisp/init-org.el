@@ -1,4 +1,14 @@
-;; -*- lexical-binding: t; -*-
+;;; init-org.el --- Configuration for init-org -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-org.
+
+;;; Code:
+
+(defvar org-agenda-after-show-hook)
+(declare-function org-agenda-remove-restriction-lock "org-agenda")
+(declare-function org-agenda-redo "org-agenda")
+
 ;; org-mode setup
 
 (use-package org
@@ -35,7 +45,8 @@
 	     "* %? \n%U\n" :clock-resume t)
 	    ))
 
-    
+    
+
     ;; Refiling
 
     (setq org-refile-use-cache nil)
@@ -54,7 +65,8 @@
     ;; Allow refile to create parent tasks with confirmation
     (setq org-refile-allow-creating-parent-nodes 'confirm)
 
-    
+    
+
     ;; To-do settings
 
     (setq org-todo-keywords
@@ -75,7 +87,8 @@
 		  ("MEETING" :foreground "forest green" :weight bold)
 		  ("PHONE" :foreground "forest green" :weight bold))))
 
-    
+    
+
     ;; Agenda views
 
     (setq-default org-agenda-clockreport-parameter-plist '(:link t :maxlevel 3))
@@ -167,7 +180,8 @@
 
     (add-hook 'org-agenda-mode-hook 'hl-line-mode)
 
-    
+    
+
     ;; Org clock
 
     ;; Save the running clock and all clock history when exiting Emacs, load it on startup
@@ -187,7 +201,8 @@
     (setq org-duration-format
 	  '((special . h:mm)))
 
-    
+    
+
     ;; Show the clocked-in task - if any - in the header line
     (defun gsmlg/show-org-clock-in-header-line ()
       (setq-default header-line-format '((" " org-mode-line-string " "))))
@@ -203,22 +218,26 @@
       (define-key org-clock-mode-line-map [header-line mouse-2] 'org-clock-goto)
       (define-key org-clock-mode-line-map [header-line mouse-1] 'org-clock-menu))
 
-    
+    
+
     ;; org mobile
     (setq org-mobile-directory "/Volumes/org.gsmlg.org/"
           org-mobile-inbox-for-pull (expand-file-name "from-mobile.org" org-directory))
 
-    
+    
+
     ;; Archiving
 
     (setq org-archive-mark-done nil)
     (setq org-archive-location "%s_archive::* Archive")
 
-    
+    
+
     ;; org-protocol
     (require 'org-protocol)
 
-    
+    
+
     ;; Speed Commands
     ;; Speed commands allow access to frequently used commands when on the beginning of a headline - similar to one-key agenda commands.
     (setq org-use-speed-commands t)
@@ -300,3 +319,4 @@
   :hook (org-mode . org-bullets-mode))
 
 (provide 'init-org)
+;;; init-org.el ends here

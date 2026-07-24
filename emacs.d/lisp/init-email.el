@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-email.el --- Configuration for init-email -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-email.
+
+;;; Code:
+
 (defvar mu4e-account-alist nil)
 (defvar mu4e-compose-parent-message nil)
 (defvar mu4e-completing-read-function)
@@ -145,5 +151,5 @@ then fallback to the maildir."
   (require 'org-mu4e nil 'noerror)
   (require 'org-notmuch nil 'noerror))
 
-
 (provide 'init-email)
+;;; init-email.el ends here

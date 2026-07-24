@@ -1,4 +1,9 @@
-;;; init-erlang.el --- Erlang language support configuration -*- lexical-binding: t; -*-
+;;; init-erlang.el --- Configuration for init-erlang -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-erlang.
+
+;;; Code:
 
 (use-package erlang
   :ensure t

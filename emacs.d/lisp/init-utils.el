@@ -1,9 +1,21 @@
-;; -*- lexical-binding: t; -*-
+;;; init-utils.el --- Configuration for init-utils -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-utils.
+
+;;; Code:
+
+(defgroup gsmlg nil
+  "GSMLG Emacs customizations."
+  :group 'convenience)
+
 ;;----------------------------------------------------------------------------
 ;; Custom setting
 ;;----------------------------------------------------------------------------
 (defcustom gsmlg/cache-directory (expand-file-name ".cache/" user-emacs-directory)
-  "Defind the default cache directory")
+  "Default cache directory."
+  :type 'directory
+  :group 'gsmlg)
 
 (if (fboundp 'with-eval-after-load)
     (defalias 'after-load 'with-eval-after-load)
@@ -12,8 +24,6 @@
     (declare (indent defun))
     `(eval-after-load ,feature
        '(progn ,@body))))
-
-(setq max-specpdl-size 32000)
 
 
 ;;----------------------------------------------------------------------------
@@ -29,7 +39,7 @@
 ;; String utilities missing from core emacs
 ;;----------------------------------------------------------------------------
 (defun gsmlg/string-all-matches (regex str &optional group)
-  "Find all matches for `REGEX' within `STR', returning the full match string or group `GROUP'."
+  "Find all matches for REGEX within STR, returning match string or GROUP."
   (let ((result nil)
         (pos 0)
         (group (or group 0)))
@@ -83,13 +93,19 @@
 
 ;;; define some function
 
+(defvar coffee-tab-width)
+(defvar css-indent-offset)
+(defvar yaml-indent-offset)
+(defvar nxml-mode-map)
+
 ;; set indent level for all mode
-(defcustom gsmlg/preferred-indent-level 2 "Preferred indent level for all modes")
+(defcustom gsmlg/preferred-indent-level 2
+  "Preferred indent level for all modes."
+  :type 'integer
+  :group 'gsmlg)
 
 (defun gsmlg/set-indent (&optional width)
-  "set the indent of each language mode,
-now in js js2 coffeescript sgml(html,xml) sh(shell) c ruby css
-should be set as same width"
+  "Set the indent of each language mode to WIDTH or `gsmlg/preferred-indent-level'."
   (interactive)
   (let ((indent-width (or width gsmlg/preferred-indent-level)))
     (setq js2-basic-offset indent-width
@@ -101,11 +117,11 @@ should be set as same width"
           c-basic-offset indent-width
           ruby-indent-level indent-width
           css-indent-offset indent-width
-          yaml-indent-offset indent-width
-          )))
+          yaml-indent-offset indent-width)))
 
 ;; remap Command key binding when use macOS keyboard
 (defun gsmlg/mac-osx-remap-command ()
+  "Remap macOS Command modifier keys."
   (interactive)
   (progn
     (setq mac-command-modifier 'meta)
@@ -123,11 +139,11 @@ should be set as same width"
     (global-set-key (kbd "M-˙") 'ns-do-hide-others)
     (after-load 'nxml-mode
       (define-key nxml-mode-map (kbd "M-h") nil))
-    (global-set-key (kbd "M-ˍ") 'ns-do-hide-others) ;; what describe-key reports for cmd-option-h
-    ))
+    (global-set-key (kbd "M-ˍ") 'ns-do-hide-others)))
 
 ;; remap Command key binding when use normal keyboard in macOS
 (defun gsmlg/mac-osx-unremap-command ()
+  "Unremap macOS Command modifier keys for PC keyboard."
   (interactive)
   (progn
     (setq mac-command-modifier 'super)
@@ -145,8 +161,7 @@ should be set as same width"
     (global-set-key (kbd "s-˙") 'ns-do-hide-others)
     (after-load 'nxml-mode
       (define-key nxml-mode-map (kbd "s-h") nil))
-    (global-set-key (kbd "s-ˍ") 'ns-do-hide-others) ;; what describe-key reports for cmd-option-h
-    ))
-
+    (global-set-key (kbd "s-ˍ") 'ns-do-hide-others)))
 
 (provide 'init-utils)
+;;; init-utils.el ends here

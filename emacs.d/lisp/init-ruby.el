@@ -1,4 +1,10 @@
-;; -*- lexical-binding: t; -*-
+;;; init-ruby.el --- Configuration for init-ruby -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Configuration module init-ruby.
+
+;;; Code:
+
 ;;; Basic ruby setup
 (use-package ruby-mode
   :ensure t
@@ -18,5 +24,5 @@
 
 (add-auto-mode 'conf-mode "Gemfile\\.lock\\'")
 
-
 (provide 'init-ruby)
+;;; init-ruby.el ends here

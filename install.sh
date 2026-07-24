@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 DOTFILES_DIR="${DOTFILES_DIR:-$HOME/.dotfiles}"

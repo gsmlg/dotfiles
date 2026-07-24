@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 curl -sL https://github.com/ohmyzsh/ohmyzsh/archive/refs/heads/master.zip -o /tmp/omz.zip
 

@@ -1,4 +1,5 @@
-#!/bin/sh -e
+#!/usr/bin/env bash
+set -e
 echo "Attempting startup..."
 ${EMACS:=emacs} -nw --batch \
                 --eval '(progn

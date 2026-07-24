@@ -6,4 +6,15 @@ CVS
 .*.lock
 \#*
 lint-messages.txt
-
+\.tern-port
+\#*\#
+\.\#*
+\.*un~
+\.DS_Store
+\.claude/*
+\.opencode/*
+\.loki
+\.playwright-mcp/
+\.agents/*
+\.codex/*
+\.cursor/*

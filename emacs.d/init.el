@@ -44,6 +44,9 @@
 (require 'init-erlang)
 (require 'init-markdown)
 (require 'init-paredit)
+(require 'init-python)
+(require 'init-zig)
+(require 'init-nix)
 (require 'init-conf)
 
 (require 'init-git)

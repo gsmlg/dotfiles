@@ -86,14 +86,17 @@
 
 (use-package mu4e-alert
   :ensure nil
+  :if (locate-library "mu4e-alert")
   :after mu4e)
 
 (use-package mu4e-maildirs-extension
   :ensure nil
+  :if (locate-library "mu4e-maildirs-extension")
   :after mu4e)
 
 (use-package mu4e-conversation
   :ensure nil
+  :if (locate-library "mu4e-conversation")
   :after mu4e
   :config
   (when (fboundp 'global-mu4e-conversation-mode)

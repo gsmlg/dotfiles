@@ -120,7 +120,7 @@
 
 (use-package highlight-cl
   :ensure nil
-  :if (fboundp 'highlight-cl-add-font-lock-keywords)
+  :if (locate-library "highlight-cl")
   :hook (emacs-lisp-mode . highlight-cl-add-font-lock-keywords))
 
 ;; ----------------------------------------------------------------------------

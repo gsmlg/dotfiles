@@ -12,16 +12,15 @@
 	projectile-file-exists-local-cache-expire (* 3 60)
 	projectile-enable-caching t)
   :bind-keymap ("C-c p" . projectile-command-map)
+  :hook (after-init . projectile-mode)
   :config
-  (progn
-    (projectile-mode)
-    (add-hook 'projectile-after-switch-project-hook 'editorconfig-apply)))
+  (add-hook 'projectile-after-switch-project-hook 'editorconfig-apply))
 
 (use-package helm-projectile
   :ensure t
+  :after projectile
   :config
-  (progn
-    (helm-projectile-on)))
+  (helm-projectile-on))
 
 (use-package editorconfig
   :ensure t

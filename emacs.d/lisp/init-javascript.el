@@ -57,10 +57,10 @@ If it's found, then add it to the `exec-path'."
                                     (line-end-position))))
                     (if (string-match "^\\( +\\)\/?> *$" cur-line)
                         (let* ((empty-spaces (match-string 1 cur-line)))
-                          (replace-regexp empty-spaces
-                                          (make-string (- (length empty-spaces) sgml-basic-offset) 32)
-                                          nil
-                                          (line-beginning-position) (line-end-position)))))))))
+                          (save-excursion
+                            (goto-char (line-beginning-position))
+                            (when (search-forward empty-spaces (line-end-position) t)
+                              (replace-match (make-string (- (length empty-spaces) sgml-basic-offset) ?\s) nil t))))))))))
 
 (use-package json-mode
   :ensure t)

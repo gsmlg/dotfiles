@@ -22,20 +22,20 @@
 ;; (see https://github.com/company-mode/company-mode/issues/416)
 (after-load 'company
   (after-load 'page-break-lines
-    (defvar gsmlginc/page-break-lines-on-p nil)
-    (make-variable-buffer-local 'gsmlginc/page-break-lines-on-p)
+    (defvar gsmlg/page-break-lines-on-p nil)
+    (make-variable-buffer-local 'gsmlg/page-break-lines-on-p)
 
-    (defun gsmlginc/page-break-lines-disable (&rest ignore)
-      (when (setq gsmlginc/page-break-lines-on-p (bound-and-true-p page-break-lines-mode))
+    (defun gsmlg/page-break-lines-disable (&rest ignore)
+      (when (setq gsmlg/page-break-lines-on-p (bound-and-true-p page-break-lines-mode))
         (page-break-lines-mode -1)))
 
-    (defun gsmlginc/page-break-lines-maybe-reenable (&rest ignore)
-      (when gsmlginc/page-break-lines-on-p
+    (defun gsmlg/page-break-lines-maybe-reenable (&rest ignore)
+      (when gsmlg/page-break-lines-on-p
         (page-break-lines-mode 1)))
 
-    (add-hook 'company-completion-started-hook 'gsmlginc/page-break-lines-disable)
-    (add-hook 'company-completion-finished-hook 'gsmlginc/page-break-lines-maybe-reenable)
-    (add-hook 'company-completion-cancelled-hook 'gsmlginc/page-break-lines-maybe-reenable)))
+    (add-hook 'company-completion-started-hook 'gsmlg/page-break-lines-disable)
+    (add-hook 'company-completion-finished-hook 'gsmlg/page-break-lines-maybe-reenable)
+    (add-hook 'company-completion-cancelled-hook 'gsmlg/page-break-lines-maybe-reenable)))
 
 
 (provide 'init-company)

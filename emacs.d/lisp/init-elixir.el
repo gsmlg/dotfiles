@@ -3,6 +3,7 @@
   :mode ("\\.ex\\'" "\\.exs\\'" "\\.heex\\'"))
 
 (use-package alchemist
-  :ensure t)
+  :ensure t
+  :defer t)
 
 (provide 'init-elixir)

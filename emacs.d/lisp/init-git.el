@@ -1,13 +1,17 @@
 ;; TODO: link commits from vc-log to magit-show-commit
 ;; TODO: smerge-mode
 (use-package git-blamed
-  :ensure t)
+  :ensure t
+  :commands git-blamed-mode)
 (use-package git-modes
-  :ensure t)
+  :ensure t
+  :defer t)
 (use-package git-timemachine
-  :ensure t)
+  :ensure t
+  :commands git-timemachine)
 (use-package git-link
-  :ensure t)
+  :ensure t
+  :commands git-link)
 
 (use-package magit
   :ensure t
@@ -72,10 +76,10 @@ Git gutter:
 ;; (when (maybe-require-package 'magit-svn)
 ;;   (require-package 'magit-svn)
 ;;   (autoload 'magit-svn-enabled "magit-svn")
-;;   (defun gsmlginc/maybe-enable-magit-svn-mode ()
+;;   (defun gsmlg/maybe-enable-magit-svn-mode ()
 ;;     (when (magit-svn-enabled)
 ;;       (magit-svn-mode)))
-;;   (add-hook 'magit-status-mode-hook #'gsmlginc/maybe-enable-magit-svn-mode))
+;;   (add-hook 'magit-status-mode-hook #'gsmlg/maybe-enable-magit-svn-mode))
 
 (after-load 'compile
   (dolist (defn (list '(git-svn-updated "^\t[A-Z]\t\\(.*\\)$" 1 nil nil 0 1)
@@ -87,7 +91,7 @@ Git gutter:
 (defun git-svn--available-commands ()
   (or git-svn--available-commands
       (setq git-svn--available-commands
-            (gsmlginc/string-all-matches
+            (gsmlg/string-all-matches
              "^  \\([a-z\\-]+\\) +"
              (shell-command-to-string "git svn help") 1))))
 
@@ -106,7 +110,7 @@ Git gutter:
   :ensure t
   :init (setq git-messenger:show-detail t)
   ;; Though see also vc-annotate's "n" & "p" bindings
-  :requires (vc)
+  :after vc
   :bind (:map vc-prefix-map
               ("p" . git-messenger:popup-message)))
 

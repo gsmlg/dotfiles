@@ -12,6 +12,13 @@
   (tool-bar-mode -1))
 (when (fboundp 'set-scroll-bar-mode)
   (set-scroll-bar-mode nil))
+
+;; Line numbers in programming modes
+(add-hook 'prog-mode-hook 'display-line-numbers-mode)
+
+;; Smooth pixel scrolling in modern Emacs 29+
+(when (fboundp 'pixel-scroll-precision-mode)
+  (pixel-scroll-precision-mode 1))
 ;; highlight window
 (use-package dimmer
   :ensure t
@@ -81,12 +88,13 @@
 ;;----------------------------------------------------------------------------
 ;; Set the monospaced font size when mixed Chinese and English words
 ;;----------------------------------------------------------------------------
-;(defun gsmlg//set-monospaced-font (english chinese english-size chinese-size)
-;  (set-face-attribute 'default nil :font
-;                      (format   "%s:pixelsize=%d"  english english-size))
-;  (dolist (charset '(kana han cjk-misc bopomofo))
-;    (set-fontset-font (frame-parameter nil 'font) charset
-;                      (font-spec :family chinese :size chinese-size))))
+(defun gsmlg/set-monospaced-font (english chinese english-size chinese-size)
+  (when (display-graphic-p)
+    (set-face-attribute 'default nil :font
+                        (format "%s:pixelsize=%d" english english-size))
+    (dolist (charset '(kana han cjk-misc bopomofo))
+      (set-fontset-font (frame-parameter nil 'font) charset
+                        (font-spec :family chinese :size chinese-size)))))
 
 
 
@@ -94,12 +102,12 @@
 ;; Apply UI theme after init
 ;;----------------------------------------------------------------------------
 (add-hook 'after-init-hook (lambda ()
-			     ;(load-theme 'spacemacs-dark)
                              (if (display-graphic-p)
-                                 (gsmlg/spaceline-all-the-icons)
+                                 (progn
+                                   (gsmlg/spaceline-all-the-icons)
+                                   (gsmlg/set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20))
                                (gsmlg/spaceline-spacemacs))
-			     ;(gsmlg//set-monospaced-font "Source Code Pro" "Hiragino Sans GB" 16 20)
-			     (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)))
+                             (global-set-key (kbd "C-z") 'gsmlg/maybe-suspend-frame)))
 
 ;;----------------------------------------------------------------------------
 ;; Modify minor mode by `diminish'

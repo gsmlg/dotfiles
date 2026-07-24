@@ -51,7 +51,9 @@
 
 ;;; LESS
 (use-package less-css-mode
-  :ensure t)
+  :ensure t
+  :mode "\\.less\\'")
+
 (use-package skewer-less
   :ensure t
   :hook (less-css-mode . skewer-less-mode))
@@ -73,10 +75,12 @@
 
 
 (use-package httprepl
-  :ensure t)
+  :ensure t
+  :commands httprepl)
 
 (use-package restclient
   :ensure t
+  :commands (restclient-mode gsmlg/rest-client)
   :config
   (defun gsmlg/rest-client ()
     (interactive)

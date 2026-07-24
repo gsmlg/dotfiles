@@ -14,7 +14,7 @@
 
 ;; Make C-x C-e run 'eval-region if the region is active
 
-(defun gsmlginc/eval-last-sexp-or-region (prefix)
+(defun gsmlg/eval-last-sexp-or-region (prefix)
   "Eval region from BEG to END if active, otherwise the last sexp."
   (interactive "P")
   (if (and (mark) (use-region-p))
@@ -24,7 +24,7 @@
 (global-set-key [remap eval-expression] 'pp-eval-expression)
 
 (after-load 'lisp-mode
-  (define-key emacs-lisp-mode-map (kbd "C-x C-e") 'gsmlginc/eval-last-sexp-or-region))
+  (define-key emacs-lisp-mode-map (kbd "C-x C-e") 'gsmlg/eval-last-sexp-or-region))
 
 ;(use-package ipretty
 ;  :ensure t
@@ -33,55 +33,55 @@
 
 
 
-(defun gsmlginc/make-pp-read-only (_expression out-buffer-name &rest _)
+(defun gsmlg/make-pp-read-only (_expression out-buffer-name &rest _)
   "Enable `view-mode' in the output buffer - if any - so it can be closed with \"q\"."
   (when (get-buffer out-buffer-name)
     (with-current-buffer out-buffer-name
       (view-mode 1))))
 
-(advice-add 'pp-display-expression :after #'gsmlginc/make-pp-read-only)
+(advice-add 'pp-display-expression :after #'gsmlg/make-pp-read-only)
 
 
 
-(defun gsmlginc/maybe-set-bundled-elisp-readonly ()
+(defun gsmlg/maybe-set-bundled-elisp-readonly ()
   "If this elisp appears to be part of Emacs, then disallow editing."
   (when (and (buffer-file-name)
              (string-match-p "\\.el\\.gz\\'" (buffer-file-name)))
     (setq buffer-read-only t)
     (view-mode 1)))
 
-(add-hook 'emacs-lisp-mode-hook 'gsmlginc/maybe-set-bundled-elisp-readonly)
+(add-hook 'emacs-lisp-mode-hook 'gsmlg/maybe-set-bundled-elisp-readonly)
 
 
 
 ;; Use C-c C-z to toggle between elisp files and an ielm session
 ;; I might generalise this to ruby etc., or even just adopt the repl-toggle package.
 
-(defvar gsmlginc/repl-original-buffer nil
+(defvar gsmlg/repl-original-buffer nil
   "Buffer from which we jumped to this REPL.")
-(make-variable-buffer-local 'gsmlginc/repl-original-buffer)
+(make-variable-buffer-local 'gsmlg/repl-original-buffer)
 
-(defvar gsmlginc/repl-switch-function 'switch-to-buffer-other-window)
+(defvar gsmlg/repl-switch-function 'switch-to-buffer-other-window)
 
-(defun gsmlginc/switch-to-ielm ()
+(defun gsmlg/switch-to-ielm ()
   (interactive)
   (let ((orig-buffer (current-buffer)))
     (if (get-buffer "*ielm*")
-        (funcall gsmlginc/repl-switch-function "*ielm*")
+        (funcall gsmlg/repl-switch-function "*ielm*")
       (ielm))
-    (setq gsmlginc/repl-original-buffer orig-buffer)))
+    (setq gsmlg/repl-original-buffer orig-buffer)))
 
-(defun gsmlginc/repl-switch-back ()
+(defun gsmlg/repl-switch-back ()
   "Switch back to the buffer from which we reached this REPL."
   (interactive)
-  (if gsmlginc/repl-original-buffer
-      (funcall gsmlginc/repl-switch-function gsmlginc/repl-original-buffer)
+  (if gsmlg/repl-original-buffer
+      (funcall gsmlg/repl-switch-function gsmlg/repl-original-buffer)
     (error "No original buffer")))
 
 (after-load 'elisp-mode
-  (define-key emacs-lisp-mode-map (kbd "C-c C-z") 'gsmlginc/switch-to-ielm))
+  (define-key emacs-lisp-mode-map (kbd "C-c C-z") 'gsmlg/switch-to-ielm))
 (after-load 'ielm
-  (define-key ielm-map (kbd "C-c C-z") 'gsmlginc/repl-switch-back))
+  (define-key ielm-map (kbd "C-c C-z") 'gsmlg/repl-switch-back))
 
 
 
@@ -122,7 +122,7 @@
 
 ;;; Support byte-compilation in a sub-process, as
 ;;; required by highlight-cl
-(defun gsmlginc/byte-compile-file-batch (filename)
+(defun gsmlg/byte-compile-file-batch (filename)
   "Byte-compile FILENAME in batch mode, ie. a clean sub-process."
   (interactive "fFile to byte-compile in batch mode: ")
   (let ((emacs (car command-line-args)))
@@ -139,50 +139,50 @@
 ;; ----------------------------------------------------------------------------
 ;; Enable desired features for all lisp modes
 ;; ----------------------------------------------------------------------------
-(defun gsmlginc/enable-check-parens-on-save ()
+(defun gsmlg/enable-check-parens-on-save ()
   "Run `check-parens' when the current buffer is saved."
   (add-hook 'after-save-hook #'check-parens nil t))
 
-(defun gsmlginc/disable-indent-guide ()
+(defun gsmlg/disable-indent-guide ()
   (when (bound-and-true-p indent-guide-mode)
     (indent-guide-mode -1)))
 
-(defvar gsmlginc/lispy-modes-hook
+(defvar gsmlg/lispy-modes-hook
   '(
     ;; enable-paredit-mode
     turn-on-eldoc-mode
-    gsmlginc/disable-indent-guide
-    gsmlginc/enable-check-parens-on-save)
+    gsmlg/disable-indent-guide
+    gsmlg/enable-check-parens-on-save)
   "Hook run in all Lisp modes.")
 
 (use-package aggressive-indent
   :config
-  (add-to-list 'gsmlginc/lispy-modes-hook 'aggressive-indent-mode))
+  (add-to-list 'gsmlg/lispy-modes-hook 'aggressive-indent-mode))
 
-(defun gsmlginc/lisp-setup ()
+(defun gsmlg/lisp-setup ()
   "Enable features useful in any Lisp mode."
-  (run-hooks 'gsmlginc/lispy-modes-hook))
+  (run-hooks 'gsmlg/lispy-modes-hook))
 
-(defun gsmlginc/emacs-lisp-setup ()
+(defun gsmlg/emacs-lisp-setup ()
   "Enable features useful when working with elisp."
   (set-up-hippie-expand-for-elisp))
 
-(defconst gsmlginc/elispy-modes
+(defconst gsmlg/elispy-modes
   '(emacs-lisp-mode ielm-mode)
   "Major modes relating to elisp.")
 
-(defconst gsmlginc/lispy-modes
-  (append gsmlginc/elispy-modes
+(defconst gsmlg/lispy-modes
+  (append gsmlg/elispy-modes
           '(lisp-mode inferior-lisp-mode lisp-interaction-mode))
   "All lispy major modes.")
 
 (require 'derived)
 
-(dolist (hook (mapcar #'derived-mode-hook-name gsmlginc/lispy-modes))
-  (add-hook hook 'gsmlginc/lisp-setup))
+(dolist (hook (mapcar #'derived-mode-hook-name gsmlg/lispy-modes))
+  (add-hook hook 'gsmlg/lisp-setup))
 
-(dolist (hook (mapcar #'derived-mode-hook-name gsmlginc/elispy-modes))
-  (add-hook hook 'gsmlginc/emacs-lisp-setup))
+(dolist (hook (mapcar #'derived-mode-hook-name gsmlg/elispy-modes))
+  (add-hook hook 'gsmlg/emacs-lisp-setup))
 
 (if (boundp 'eval-expression-minibuffer-setup-hook)
     (add-hook 'eval-expression-minibuffer-setup-hook #'eldoc-mode)
@@ -206,12 +206,12 @@
 ;; their .elc counterparts removed - VC hooks would be necessary for
 ;; that.
 
-(defvar gsmlginc/vc-reverting nil
+(defvar gsmlg/vc-reverting nil
   "Whether or not VC or Magit is currently reverting buffers.")
 
-(defun gsmlginc/maybe-remove-elc (&rest _)
+(defun gsmlg/maybe-remove-elc (&rest _)
   "If reverting from VC, delete any .elc file that will now be out of sync."
-  (when gsmlginc/vc-reverting
+  (when gsmlg/vc-reverting
     (when (and (eq 'emacs-lisp-mode major-mode)
                buffer-file-name
                (string= "el" (file-name-extension buffer-file-name)))
@@ -220,14 +220,14 @@
           (message "Removing out-of-sync elc file %s" (file-name-nondirectory elc))
           (delete-file elc))))))
 
-(advice-add 'revert-buffer :after #'gsmlginc/maybe-remove-elc)
+(advice-add 'revert-buffer :after #'gsmlg/maybe-remove-elc)
 
-(defun gsmlginc/with-vc-reverting (orig-fn &rest args)
-  (let ((gsmlginc/vc-reverting t))
+(defun gsmlg/with-vc-reverting (orig-fn &rest args)
+  (let ((gsmlg/vc-reverting t))
     (apply orig-fn args)))
 
-(advice-add 'magit-revert-buffers :around #'gsmlginc/with-vc-reverting)
-(advice-add 'vc-revert-buffer-internal :around #'gsmlginc/with-vc-reverting)
+(advice-add 'magit-revert-buffers :around #'gsmlg/with-vc-reverting)
+(advice-add 'vc-revert-buffer-internal :around #'gsmlg/with-vc-reverting)
 
 
 
@@ -245,23 +245,23 @@
 
 ;; Extras for theme editing
 
-(defvar gsmlginc/theme-mode-hook nil
+(defvar gsmlg/theme-mode-hook nil
   "Hook triggered when editing a theme file.")
 
-(defun gsmlginc/run-theme-mode-hooks-if-theme ()
-  "Run `gsmlginc/theme-mode-hook' if this appears to a theme."
+(defun gsmlg/run-theme-mode-hooks-if-theme ()
+  "Run `gsmlg/theme-mode-hook' if this appears to a theme."
   (when (string-match "\\(color-theme-\\|-theme\\.el\\)" (buffer-name))
-    (run-hooks 'gsmlginc/theme-mode-hook)))
+    (run-hooks 'gsmlg/theme-mode-hook)))
 
-(add-hook 'emacs-lisp-mode-hook 'gsmlginc/run-theme-mode-hooks-if-theme t)
+(add-hook 'emacs-lisp-mode-hook 'gsmlg/run-theme-mode-hooks-if-theme t)
 
 ;; (when (maybe-require-package 'rainbow-mode)
-;;   (add-hook 'gsmlginc/theme-mode-hook 'rainbow-mode)
+;;   (add-hook 'gsmlg/theme-mode-hook 'rainbow-mode)
 ;;   (add-hook 'help-mode-hook 'rainbow-mode))
 
 ;; (when (maybe-require-package 'aggressive-indent)
 ;;   ;; Can be prohibitively slow with very long forms
-;;   (add-to-list 'gsmlginc/theme-mode-hook (lambda () (aggressive-indent-mode -1)) t))
+;;   (add-to-list 'gsmlg/theme-mode-hook (lambda () (aggressive-indent-mode -1)) t))
 
 
 
@@ -281,7 +281,7 @@
   (define-key ert-results-mode-map (kbd "g") 'ert-results-rerun-all-tests))
 
 
-(defun gsmlginc/cl-libify-next ()
+(defun gsmlg/cl-libify-next ()
   "Find next symbol from 'cl and replace it with the 'cl-lib equivalent."
   (interactive)
   (let ((case-fold-search nil))

@@ -1,6 +1,6 @@
 ;;; mu4e-speedbar --- Speedbar support for mu4e -*- lexical-binding: t -*-
 
-;; Copyright (C) 2012-2020 Antono Vasiljev, Dirk-Jan C. Binnema
+;; Copyright (C) 2012-2021 Antono Vasiljev, Dirk-Jan C. Binnema
 
 ;; Author: Antono Vasiljev <self@antono.info>
 ;; Version: 0.1
@@ -35,7 +35,7 @@
 (require 'mu4e-vars)
 (require 'mu4e-headers)
 (require 'mu4e-context)
-(require 'mu4e-utils)
+(require 'mu4e-bookmarks)
 
 (defvar mu4e-main-speedbar-key-map nil
   "Keymap used when in mu4e display mode.")
@@ -55,11 +55,7 @@
 (defun mu4e-speedbar-install-variables ()
   "Install those variables used by speedbar to enhance mu4e."
   (add-hook 'mu4e-context-changed-hook
-            (lambda()
-              (when (buffer-live-p speedbar-buffer)
-                (with-current-buffer speedbar-buffer
-                  (let ((inhibit-read-only t))
-                    (mu4e-speedbar-buttons))))))
+            #'mu4e~speedbar-context-changed-hook-fn)
   (dolist (keymap
            '( mu4e-main-speedbar-key-map
               mu4e-headers-speedbar-key-map
@@ -69,10 +65,14 @@
       (define-key keymap "RET" 'speedbar-edit-line)
       (define-key keymap "e" 'speedbar-edit-line))))
 
-;; Make sure our special speedbar major mode is loaded
-(if (featurep 'speedbar)
-    (mu4e-speedbar-install-variables)
-  (add-hook 'speedbar-load-hook 'mu4e-speedbar-install-variables))
+(defun mu4e~speedbar-context-changed-hook-fn ()
+  (when (buffer-live-p speedbar-buffer)
+    (with-current-buffer speedbar-buffer
+      (let ((inhibit-read-only t))
+        (mu4e-speedbar-buttons)))))
+
+(with-eval-after-load 'speedbar
+  (mu4e-speedbar-install-variables))
 
 (defun mu4e~speedbar-render-maildir-list ()
   "Insert the list of maildirs in the speedbar."
@@ -91,8 +91,7 @@
 (defun mu4e~speedbar-maildir (&optional _text token _ident)
   "Jump to maildir TOKEN. TEXT and INDENT are not used."
   (dframe-with-attached-buffer
-   (mu4e-headers-search (concat "\"maildir:" token "\"")
-                        current-prefix-arg)))
+   (mu4e-search (concat "\"maildir:" token "\"") current-prefix-arg)))
 
 (defun mu4e~speedbar-render-bookmark-list ()
   "Insert the list of bookmarks in the speedbar"
@@ -110,7 +109,7 @@
 (defun mu4e~speedbar-bookmark (&optional _text token _ident)
   "Run bookmarked query TOKEN. TEXT and INDENT are not used."
   (dframe-with-attached-buffer
-   (mu4e-headers-search token current-prefix-arg)))
+   (mu4e-search token current-prefix-arg)))
 
 ;;;###autoload
 (defun mu4e-speedbar-buttons (&optional _buffer)

@@ -1,0 +1,712 @@
+;;; mu4e-mime-parts.el --- Dealing with MIME-parts & URLs -*- lexical-binding: t -*-
+
+;; Copyright (C) 2023-2026 Dirk-Jan C. Binnema
+
+;; Author: Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
+;; Maintainer: Dirk-Jan C. Binnema <djcb@djcbsoftware.nl>
+
+;; This file is not part of GNU Emacs.
+
+;; mu4e is free software: you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation, either version 3 of the License, or
+;; (at your option) any later version.
+
+;; mu4e is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with mu4e.  If not, see <http://www.gnu.org/licenses/>.
+
+;;; Commentary:
+
+;; Implements functions and variables for dealing with MIME-parts and URLs.
+
+;;; TODO:
+;; [~] mime part candidate sorting -> is his even possible generally?
+;; [ ] URL support
+
+;;; Code:
+(require 'mu4e-vars)
+(require 'mu4e-folders)
+(require 'mu4e-message)
+(require 'mu4e-contacts)
+(require 'gnus-art)
+(require 'crm)
+
+(defcustom mu4e-view-open-program
+  (pcase system-type
+    ('darwin "open")
+    ('cygwin "cygstart")
+    (_ "xdg-open"))
+  "Tool to open the correct program for a given file or MIME-type.
+May also be a function of a single argument, the file to be
+opened.
+
+In the function-valued case a likely candidate is
+`mailcap-view-file' although note that there was an Emacs bug up
+to Emacs 29 which prevented opening a file if `mailcap-mime-data'
+specified a function as viewer."
+  :type '(choice string function)
+  :group 'mu4e-view)
+
+(defcustom mu4e-uniquify-save-file-name-function 'mu4e--uniquify-file-name
+  "Function to create a unique, not-yet-existing file name.
+
+Takes one parameter, a file-name path, and returns a file-name
+path that does not yet exist. This can be the same, or some
+variation.
+
+See `mu4e--uniquify-file-name' for an example."
+  :type 'function
+  :group 'mu4e-view)
+
+;; remember the mime-handles, so we can clean them up when
+;; we quit this buffer.
+
+(defvar-local mu4e--view-gnus-article-mime-handles nil
+  "MIME handles for the message in this buffer.")
+(put 'mu4e--view-gnus-article-mime-handles 'permanent-local t)
+
+(defvar-local mu4e--view-temp-files nil
+  "Temporary files.")
+(put 'mu4e--view-temp-files 'permanent-local t)
+
+(defun mu4e--view-buffer-cleanup ()
+  "Clean-up some internals when killing the view buffer."
+  ;; Kill cached MIME-handles, if any.
+  (when mu4e--view-gnus-article-mime-handles
+    (mm-destroy-parts mu4e--view-gnus-article-mime-handles)
+    (setq mu4e--view-gnus-article-mime-handles nil))
+  ;; Delete temp files created for opening MIME-parts externally.
+  (dolist (file mu4e--view-temp-files)
+    (ignore-errors (delete-file file)))
+  (setq mu4e--view-temp-files nil))
+
+;;; MIME-parts
+(defvar-local mu4e--view-mime-parts nil
+  "Cached MIME parts for this message.")
+
+(defun mu4e--mime-part-encoded-size (handle)
+  "Size in bytes of MIME-part HANDLE as it appears in the message.
+This is the raw, still-encoded size (e.g. including base64 overhead)."
+  (with-current-buffer (mm-handle-buffer handle)
+    (- (point-max) (point-min))))
+
+(defun mu4e--mime-part-decoded-size-approx (handle)
+  "Approximate decoded size in bytes of MIME-part HANDLE.
+
+Computed from the encoded size *without* actually decoding the
+part. For base64 the result is 3/4 of the encoded size; for other
+encodings the encoded size is used as-is, which is accurate for
+identity encodings (7bit/8bit/binary) and a reasonable
+approximation for quoted-printable."
+  (let ((encoded-size (mu4e--mime-part-encoded-size handle))
+        (encoding (mm-handle-encoding handle)))
+    (pcase (and encoding (downcase (format "%s" encoding)))
+      ("base64" (/ (* encoded-size 3) 4))
+      (_ encoded-size))))
+
+(defun mu4e-view-mime-parts()
+  "Get the list of MIME parts for this message.
+The list is a list of plists, one for each MIME-part.
+
+The plists have the properties:
+
+    :part-index         : Gnus index number
+    :mime-type          : MIME-type (string) or nil
+    :encoding           : Content encoding (string) or nil
+    :disposition        : Content disposition (\"attachment\" or \"inline\")
+                          or nil
+    :filename           : The file name if it has one, or an invented one
+                          otherwise
+    :encoded-size       : Size in bytes of the part as it appears in the
+                          message (still encoded)
+    :decoded-size-approx: Approximate decoded size in bytes, computed from
+                          the encoded size without actually decoding the
+                          part (see `mu4e--mime-part-decoded-size-approx')
+
+There are some internal fields as well, e.g. ; subject to change:
+
+    :target-dir      : Target directory for saving
+    :attachment-like : When it has a filename, we can save it
+    :handle          : Gnus handle.
+
+This uses `gnus-article-mime-handle-alist'."
+  (or mu4e--view-mime-parts
+      (setq
+       mu4e--view-mime-parts
+       (let ((parts))
+         (dolist (entry gnus-article-mime-handle-alist)
+           (let* ((index (car entry))
+                  (handle (cdr entry)))
+             (when (and (numberp index) (listp handle)
+                        (bufferp (car-safe handle)))
+               (let* ((disp (mm-handle-disposition handle))
+                      (fname (mm-handle-filename handle))
+                      (fname (and fname
+                                  (gnus-map-function
+                                   mm-file-name-rewrite-functions
+                                   (file-name-nondirectory fname))))
+                      (mime-type (mm-handle-media-type handle)))
+                 (push `(:part-index  ,index
+                         :mime-type   ,mime-type
+                         :encoding    ,(mm-handle-encoding handle)
+                         :disposition ,(car-safe disp)
+                         ;; if there's no file-name, invent one
+                         ;; XXX perhaps guess extension based on mime-type
+                         :filename    ,(or fname
+                                           (format "mime-part-%02d" index))
+                         :encoded-size ,(mu4e--mime-part-encoded-size handle)
+                         :decoded-size-approx
+                         ,(mu4e--mime-part-decoded-size-approx handle)
+                         :target-dir  ,(mu4e-determine-attachment-dir
+                                        fname mime-type)
+                          ;; 'attachment-like' just means it has its own
+                         ;; filename an we thus we can save it through
+                         ;; `mu4e-view-save-attachments', even if it has an
+                         ;; 'inline' disposition.
+                         :attachment-like ,(if fname t nil)
+                         :handle      ,handle)
+                       parts)))))
+         (seq-sort (lambda (p1 p2) (< (plist-get p1 :part-index)
+                                      (plist-get p2 :part-index))) parts)))))
+
+;; https://emacs.stackexchange.com/questions/74547/completing-read-search-also-in-annotations
+
+(defun mu4e--uniquify-file-name (fname)
+  "Return a not-yet-existing filename based on FNAME.
+
+If FNAME does not yet exist, return it unchanged.
+Otherwise, return a file with a unique number appended to the base-name."
+  (let ((num 1) (orig-name fname))
+    (while (file-exists-p fname)
+      (setq fname (format "%s(%d)%s%s"
+                          (file-name-sans-extension orig-name)
+                          num
+                          (if (file-name-extension orig-name) "." "")
+                          (file-name-extension orig-name)))
+      (cl-incf num)))
+  fname)
+
+(defvar mu4e--completions-table nil)
+
+(defun mu4e-view-complete-all ()
+  "Pick all current candidates.
+Note: this is not compatible with `helm-mode'."
+  (interactive)
+  (if (bound-and-true-p helm-mode)
+      (mu4e-warn "Not supported with helm")
+    (when mu4e--completions-table
+        (insert (string-join
+                 (seq-map #'car mu4e--completions-table) ", ")))))
+
+(defvar mu4e-view-completion-minor-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-a") #'mu4e-view-complete-all)
+    ;; XXX perhaps a binding for clearing all?
+    map)
+  "Keybindings for mu4e-view completion.")
+
+(define-minor-mode mu4e-view-completion-minor-mode
+  "Minor-mode for completing mu4e mime parts."
+  :global nil
+  :init-value nil ;; disabled by default
+  :group 'mu4e
+  :lighter ""
+  :keymap mu4e-view-completion-minor-mode-map)
+
+(defun mu4e--part-affixation (candidates-alist type longest-filename completions)
+  "Calculate the affixation for COMPLETIONS.
+I.e., `:affixation-function' (see `completion-extra-properties').
+
+Returns a list of (CANDIDATE PREFIX SUFFIX) triples.
+
+CANDIDATES-ALIST is the full alist of candidates (id . part).
+TYPE is what to annotate, a symbol, either ATTACHMENT or MIME-PART.
+LONGEST-FILENAME is the length of the longest filename; used for alignment.
+COMPLETIONS is the list of completion strings to affixate."
+  (mapcar
+   (lambda (candidate)
+     (let* ((part (cdr-safe (assoc candidate candidates-alist)))
+            (raw-filename (or (plist-get part :filename) ""))
+            (filename (propertize raw-filename
+                                 'face 'mu4e-header-key-face))
+            (mimetype (propertize (or (plist-get part :mime-type) "")
+                                 'face 'mu4e-header-value-face))
+            (size (propertize
+                   (file-size-human-readable
+                    (or (plist-get part :decoded-size-approx) 0))
+                   'face 'mu4e-system-face))
+            (target (propertize (or (plist-get part :target-dir) "")
+                                'face 'mu4e-system-face))
+            (icon (or (and (not (string-empty-p raw-filename))
+                           (mu4e-file-name-to-icon raw-filename))
+                      (mu4e-mime-type-to-icon
+                       (plist-get part :mime-type))))
+            (prefix (if icon (concat icon " ") ""))
+            ;; For 'attachment the candidate itself is the filename; for
+            ;; 'mime-part the candidate is a numeric part-id, so prepend
+            ;; the filename here. Either way, pad to align the columns
+            ;; that follow.
+            (filename-col
+             (pcase type
+               ('attachment
+                (make-string (- (+ longest-filename 2)
+                                (length (format "%s" candidate))) ?\s))
+               ('mime-part
+                (concat "  " filename
+                        (make-string (- (+ longest-filename 2)
+                                        (length filename)) ?\s)))
+               (_ (mu4e-error "Unsupported annotation type %s" type))))
+            (suffix
+             (concat filename-col
+                     (format "%20s" mimetype) "  "
+                     (format "%8s" size) "   "
+                     "-> " target)))
+       (list candidate prefix suffix)))
+   completions))
+
+(defvar helm-comp-read-use-marked)
+(defun mu4e--completing-read-real (prompt candidates multi)
+  "Call the appropriate completion-read function.
+- PROMPT is a string informing the user what to complete
+- CANDIDATES is an alist of candidates of the form
+    (id . part)
+- MULTI if t, allow for completing _multiple_ candidates."
+  (cond
+   ((bound-and-true-p helm-mode)
+    ;; tweaks for "helm"; it's not nice to have to special-case for
+    ;; completion frameworks, but this has been supported for while.
+    ;; basically, with helm, helm-comp-read-use-marked + completing-read
+    ;; is preferred over completing-read-multiple
+    (let ((helm-comp-read-use-marked t))
+      (completing-read prompt candidates)))
+   (multi
+    (completing-read-multiple prompt candidates))
+   (t
+    (completing-read prompt candidates))))
+
+(defun mu4e--completing-read (prompt candidates type &optional multi)
+  "Read the part-id of some MIME-type in this message.
+
+Presents the user with completions for the MIME-parts in
+the current message.
+
+- PROMPT is a string informing the user what to complete
+- CANDIDATES is an alist of candidates of the form
+    (id . part)
+- TYPE is the annotation type to use as per `mu4e--part-affixation'.
+Optionally,
+- MULTI if t, allow for completing _multiple_ candidates."
+  (cl-assert candidates)
+  (let* ((longest-filename (seq-max
+                            (seq-map (lambda (c)
+                                       (length (plist-get (cdr c) :filename)))
+                                     candidates)))
+         (affixation-func (lambda (completions)
+                            (mu4e--part-affixation candidates type
+                                                   longest-filename
+                                                   completions)))
+         (table (lambda (string pred action)
+                  (if (eq action 'metadata)
+                      `(metadata
+                        (category . mime-part)
+                        (affixation-function . ,affixation-func))
+                    (complete-with-action action candidates string pred))))
+         (completion-extra-properties
+          `(:exit-function (lambda (_a _b) (setq mu4e--completions-table nil)))))
+    (setq mu4e--completions-table candidates)
+    (minibuffer-with-setup-hook
+        (lambda ()
+          (mu4e-view-completion-minor-mode))
+      (mu4e--completing-read-real prompt table multi))))
+
+(defun mu4e-view-save-attachments (&optional ask-dir)
+  "Save files from the current view buffer.
+
+Save the attachments that are selected. If none are explicitly
+selected then *all* attachments will be saved. For using subset,
+there is \\[mu4e-view-complete-all] to select all attachments.
+
+Note all MIME-parts that are \"attachment-like\" (have a
+filename) will be considered a file, regardless of their
+disposition.
+
+With ASK-DIR is non-nil, user can specify the target-directory; otherwise
+one is determined using `mu4e-attachment-dir'.
+
+This command assumes unique filenames for the attachments, since
+that is how the underlying completion mechanism works. If there
+are duplicates, only one is recognized.
+
+Furthermore, file-names that match `crm-separator' (by default, a
+comma and some optional whitespace) are not supported (see
+`completing-read-multiple' for further details). Hence, when we
+detect that, the function bails out and advises to use
+`mu4e-view-mime-part-action' instead, which does support such
+files."
+  (interactive "P")
+  (let* ((parts (mu4e-view-mime-parts))
+         (candidates  (seq-map
+                       (lambda (fpart)
+                         (let ((fname (plist-get fpart :filename)))
+                           (when (and crm-separator
+                                      (string-match-p crm-separator fname))
+                             (mu4e-warn
+                              (concat
+                               "File(s) match `crm-separator'; "
+                               "use mu4e-view-mime-part-action instead")))
+                           ;; (filename . annotation)
+                           (cons fname fpart)))
+                       (seq-filter
+                        (lambda (part) (plist-get part :attachment-like))
+                        parts)))
+         (candidates (or candidates
+                         (mu4e-warn "No attachments for this message")))
+         (files (or (mu4e--completing-read
+                     "Save attachments (default: save all): " candidates
+                     'attachment 'multi)
+                    (mapcar #'car-safe candidates)))
+         (custom-dir (when ask-dir (read-directory-name
+                                    "Save to directory: "))))
+    ;; we have determined what files to save, and where.
+    (seq-do (lambda (fname)
+              (let* ((part (cdr (assoc fname candidates)))
+                     (path (funcall mu4e-uniquify-save-file-name-function
+                            (mu4e-join-paths
+                             (or custom-dir (plist-get part :target-dir))
+                             (plist-get part :filename))))
+                     (handle (plist-get part :handle)))
+                (when handle ;; completion may fail, and no handle.
+                  (mm-save-part-to-file handle path))))
+            files)))
+
+(defvar mu4e-view-mime-part-actions
+  '(
+    ;;
+    ;; some basic ones
+    ;;
+
+    ;; save MIME-part to a file
+    (:name "save"  :handler mm-save-part :receives handle)
+    ;; pipe MIME-part to some arbitrary shell command
+    (:name "|pipe" :handler mm-pipe-part :receives handle)
+    ;; open with the default handler, if any
+    (:name "open" :handler mu4e--view-open-file :receives temp)
+    ;; open with some custom file.
+    (:name "wopen-with" :handler (lambda (file)(mu4e--view-open-file file t))
+           :receives temp)
+
+    ;;
+    ;; some more examples
+    ;;
+
+    ;; import GPG key
+    (:name "gpg" :handler epa-import-keys :receives temp)
+    ;; open in this emacs instance; tries to use the attachment name,
+    ;; so emacs can use specific modes etc.
+    (:name "emacs" :handler find-file-read-only :receives temp)
+    ;; open in this emacs instance, "raw"
+    (:name "raw" :handler (lambda (str)
+                            (let ((tmpbuf
+                                   (get-buffer-create " *mu4e-raw-mime*")))
+                              (with-current-buffer tmpbuf
+                                (insert str)
+                                (view-mode)
+                                (goto-char (point-min)))
+                              (display-buffer tmpbuf))) :receives pipe))
+
+  "Specifies actions for MIME-parts.
+
+Each of the actions is a plist with keys
+`(:name <name>         ;; name of the action; shortcut is first letter of name
+
+  :handler             ;; one of:
+                       ;; - a function receiving the index/temp/pipe
+                       ;; - a string, which is taken as a shell command
+
+  :receives            ;;  a symbol specifying what the handler receives
+                       ;; - handle: the Gnus MIME handle for the part
+                       ;; - index: the index number of the mime part (default)
+                       ;; - temp: the full path to the mime part in a
+                       ;;         temporary file, which is deleted immediately
+                       ;;         after the handler returns
+                       ;; - pipe:  the attachment is piped to some shell command
+                       ;;          or as a string parameter to a function
+).")
+
+(defun mu4e--view-mime-part-to-temp-file (handle)
+  "Write MIME-part HANDLE to a temporary file and return the file name.
+
+The filename is deduced from the MIME-part's filename, or
+otherwise random; the result is placed in a temporary directory
+with a unique name. Returns the full path for the file created.
+
+The file is registered for cleanup when the current view
+buffer is killed."
+  (let* ((fname (mm-handle-filename handle))
+         (fname (and fname
+                     (gnus-map-function mm-file-name-rewrite-functions
+                                        (file-name-nondirectory fname))))
+         (fname (if fname
+                    (mu4e--uniquify-file-name
+                     (mu4e-join-paths
+                      mu4e--temp-dir
+                      (replace-regexp-in-string "/" "-" fname)))
+                  (let ((temporary-file-directory mu4e--temp-dir))
+                    (make-temp-file "mime-part-")))))
+    (mm-save-part-to-file handle fname)
+    (push fname mu4e--view-temp-files)
+    fname))
+
+(defun mu4e--view-open-file (file &optional force-ask)
+  "Open FILE with default handler, if any.
+Otherwise, or if FORCE-ASK is set, ask user for the shell command
+to open with."
+  (if (and (not force-ask)
+           (functionp mu4e-view-open-program))
+      (funcall mu4e-view-open-program file)
+    (let ((opener
+           (or (and (not force-ask) mu4e-view-open-program
+                    (executable-find mu4e-view-open-program))
+               (read-shell-command "Open MIME-part with shell command: "))))
+      (call-process opener nil 0 nil file))))
+
+(defun mu4e-view-mime-part-action (&optional n)
+  "Apply some action to MIME-part N in the current message.
+If N is not specified, ask for it. For instance, '3 A o' opens
+the third MIME-part."
+  ;; (interactive
+  ;;  (list (read-number "Number of MIME-part: ")))
+  (interactive "P")
+  (let* ((parts (mu4e-view-mime-parts))
+         (candidates (seq-map
+                      (lambda (part)
+                        (cons (number-to-string
+                               (plist-get part :part-index)) part))
+                      parts))
+         (candidates (or candidates
+                         (mu4e-warn "No MIME-parts for this message")))
+         (ids (seq-map #'string-to-number
+                       (if n (list (number-to-string n))
+                           (mu4e--completing-read "MIME-part(s) to operate on: "
+                                                  candidates
+                                                  'mime-part 'multi))))
+         (options
+          (mapcar (lambda (action) `(,(plist-get action :name) . ,action))
+                  mu4e-view-mime-part-actions))
+         (action
+          (or (and options (mu4e-read-option "Action: " options))
+              (mu4e-error "No such action")))
+         (handler
+          (or (plist-get action :handler)
+              (mu4e-error "No :handler item found for action %S" action)))
+         (receives
+          (or (plist-get action :receives)
+              (mu4e-error "No :receives item found for action %S" action))))
+
+    ;; Apply the action to all selected MIME-parts
+    (seq-do (lambda (id)
+              (cl-assert (numberp id))
+              (let* ((part (or (cdr-safe (assoc (number-to-string id) candidates))
+                               (mu4e-error "No part found for id %s" id)))
+                     (handle (plist-get part :handle)))
+                (save-excursion
+                  (cond
+                   ((functionp handler)
+                    (cond
+                     ((eq receives 'handle) (funcall handler handle))
+                     ((eq receives 'index) (funcall handler id))
+                     ((eq receives 'pipe)
+                      (funcall handler (mm-with-unibyte-buffer
+                                         (mm-insert-part handle)
+                                         (buffer-string))))
+                     ((eq receives 'temp)
+                      (funcall handler
+                               (mu4e--view-mime-part-to-temp-file handle)))
+                     (t (mu4e-error "Invalid :receive for %S" action))))
+                   ((stringp handler)
+                    (cond
+                     ((eq receives 'index)
+                      (shell-command
+                       (concat handler " " id)))
+                     ((eq receives 'pipe)
+                      (progn
+                        (mm-pipe-part handle handler)))
+                     ((eq receives 'temp)
+                      (shell-command
+                       (concat
+                        handler " "
+                        (shell-quote-argument
+                         (mu4e--view-mime-part-to-temp-file handle)))))
+                     (t (mu4e-error "Invalid action %S" action))))))))
+            ids)))
+
+(defun mu4e-process-file-through-pipe (path pipecmd)
+  "Process file at PATH through a pipe with PIPECMD."
+  (let ((buf (get-buffer-create "*mu4e-output")))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (call-process-shell-command pipecmd path t t)
+        (view-mode)))
+    (display-buffer buf)))
+
+;;; Message as HTML
+
+(defconst mu4e--view-plain-text-html-template
+  (concat "<html><head><meta charset=\"utf-8\"/></head>"
+          "<body><pre style=\"white-space:pre-wrap\">%s"
+          "</pre></body></html>")
+  "HTML template for wrapping a plain-text message body.
+The %s is replaced by the HTML-escaped text.")
+
+(defun mu4e--view-mime-part (handles media-type)
+  "Find the first MIME part with MEDIA-TYPE in HANDLES.
+HANDLES is a MIME handle or handle tree, as produced by
+`mm-dissect-buffer'.
+
+Return the handle, or nil."
+  (cond
+   ((not (listp handles)) nil)
+   ;; leaf: check media type
+   ((bufferp (car handles))
+    (when (equal (mm-handle-media-type handles) media-type)
+      handles))
+   ;; composite: recurse through sub-handles
+   (t (seq-some (lambda (handle)
+                  (mu4e--view-mime-part handle media-type))
+                (cdr handles)))))
+
+(defun mu4e--view-cid-parts (handles)
+  "Collect all MIME parts in HANDLES that have a Content-ID.
+Return an alist of (CID . HANDLE) pairs."
+  (cond
+   ((not (listp handles)) nil)
+   ((bufferp (car handles))
+    (when-let* ((id (mm-handle-id handles)))
+      ;; strip the angle brackets from the content-id
+      (list (cons (replace-regexp-in-string
+                   (rx (or (seq bos "<") (seq ">" eos))) "" id)
+                  handles))))
+   (t (seq-mapcat #'mu4e--view-cid-parts (cdr handles)))))
+
+(defun mu4e--view-resolve-cids (html cid-parts)
+  "Replace \"cid:\" references in HTML with data:-URIs.
+CID-PARTS is an alist of (CID . HANDLE) pairs, as per
+`mu4e--view-cid-parts'. Return the updated HTML."
+  (dolist (part cid-parts html)
+    (let* ((handle (cdr part))
+           (data-uri (format "data:%s;base64,%s"
+                             (mm-handle-media-type handle)
+                             (base64-encode-string
+                              (mm-get-part handle) t))))
+      (setq html (replace-regexp-in-string
+                  (regexp-quote (concat "cid:" (car part)))
+                  data-uri html t t)))))
+
+(defun mu4e--view-html-escape (text)
+  "Escape TEXT for inclusion in HTML."
+  (seq-reduce (lambda (text pair)
+                (replace-regexp-in-string (car pair) (cdr pair) text t t))
+              '(("&" . "&amp;") ("<" . "&lt;") (">" . "&gt;"))
+              text))
+
+(defconst mu4e--view-url-regexp
+  (rx "http" (? "s") "://"
+      (* (any "-a-zA-Z0-9._~%#?&=/+:;@!$*(),'"))
+      (any "-a-zA-Z0-9_~%#&=/+@$'"))
+  "Regexp matching URLs in text.
+The final character class excludes punctuation, so that e.g. a
+full-stop after the URL is not included.")
+
+(defconst mu4e--view-email-regexp
+  (rx (any "a-zA-Z0-9") (* (any "-a-zA-Z0-9._%+"))
+      "@" (+ (any "-a-zA-Z0-9.")) "." (>= 2 alpha))
+  "Regexp matching e-mail addresses.")
+
+(defconst mu4e--view-linkable-regexp
+  (rx (or (regexp mu4e--view-url-regexp)
+          (regexp mu4e--view-email-regexp)))
+  "Regexp matching linkable things: URLs and e-mail addresses.")
+
+(defun mu4e--view-linkable-url (match)
+  "Return the URL for MATCH."
+  (if (string-match-p (rx bos (regexp mu4e--view-email-regexp) eos)
+                      match)
+      (concat "mailto:" match)
+    match))
+
+(defun mu4e--view-linkify-html (text)
+  "Turn URLs/e-mail addresses in escaped TEXT into HTML links."
+  (replace-regexp-in-string
+   mu4e--view-linkable-regexp
+   (lambda (match)
+     (format "<a href=\"%s\">%s</a>"
+             (mu4e--view-linkable-url match) match))
+   text t t))
+
+(defun mu4e--view-mime-part-string (handle)
+  "Return MIME part HANDLE as a decoded string."
+  (let* ((charset (mail-content-type-get (mm-handle-type handle) 'charset))
+         (coding (and charset (mm-charset-to-coding-system charset)))
+         (coding (if (memq coding '(nil ascii)) 'utf-8 coding)))
+    (decode-coding-string (mm-get-part handle) coding)))
+
+(defconst mu4e--view-html-headers-html-pre
+  (concat "<div style=\"font-family:sans-serif;padding-bottom:8px;"
+          "border-bottom:1px solid #ccc;margin-bottom:8px\">\n")
+  "HTML fragment that opens the message-headers block.")
+
+(defconst mu4e--view-html-headers-html-post
+  ;; the empty paragraph is invisible in external browsers but a nice empty line
+  ;; in shr.
+  "</div>\n<p style=\"margin:0\"></p>\n"
+  "HTML fragment that closes the message-headers block.")
+
+(defun mu4e--view-html-headers (msg)
+  "Create an HTML block for the headers of message MSG."
+  (concat
+   mu4e--view-html-headers-html-pre
+   (mapconcat
+    (lambda (field)
+      (if-let* ((val (mu4e-message-field-raw msg field))
+                (val (pcase field
+                       ((or :from :to :cc)
+                        (mapconcat #'mu4e-contact-full val ", "))
+                       (:date (message-make-date val))
+                       (_ val))))
+          (format "<b>%s:</b> %s<br>\n"
+                  (capitalize (substring (symbol-name field) 1))
+                  (mu4e--view-html-escape val))
+        ""))
+    '(:from :to :cc :date :subject) "")
+   mu4e--view-html-headers-html-post))
+
+(defun mu4e--view-html-prepend-headers (html headers)
+  "Insert the HEADERS block at the beginning of the body of HTML."
+  (let ((case-fold-search t))
+    (cond
+     ((string-match (rx "<body" (* (not (any ">"))) ">") html)
+      (replace-match (concat (match-string 0 html) headers) t t html))
+     ((string-match (rx "</head" (* (not (any ">"))) ">") html)
+      (replace-match (concat (match-string 0 html) headers) t t html))
+     (t (concat headers html)))))
+
+(defun mu4e--view-extract-html (handles)
+  "Extract an HTML body string from MIME HANDLES, or nil.
+Prefer text/html part; otherwise construct HTML from a
+text/plain part, if any."
+  (if-let* ((handle (mu4e--view-mime-part handles "text/html")))
+      (mu4e--view-mime-part-string handle)
+    (when-let* ((handle (mu4e--view-mime-part handles "text/plain")))
+      (format mu4e--view-plain-text-html-template
+              (mu4e--view-linkify-html
+               (mu4e--view-html-escape
+                (mu4e--view-mime-part-string handle)))))))
+
+(provide 'mu4e-mime-parts)
+;;; mu4e-mime-parts.el ends here

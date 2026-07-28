@@ -58,6 +58,7 @@
 ;;; applications
 (require 'init-org)
 (require 'init-elfeed)
+(require 'init-agent-editor-mcp)
 ;; (require 'init-email)
 ;; (require 'init-music)
 

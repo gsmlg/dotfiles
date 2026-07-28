@@ -3,6 +3,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EMACS_DIR="$SCRIPT_DIR/emacs.d"
+AGENT_EDITOR_DIR="$EMACS_DIR/site-lisp/agent-editor-mcp"
 
 echo "=== Linting Emacs Configuration Files ==="
 
@@ -16,6 +17,10 @@ ${EMACS:=emacs} -nw --batch \
             (require 'checkdoc)
             (let ((files (directory-files-recursively \"$EMACS_DIR/lisp\" \"\\\\.el$\")))
               (push \"$EMACS_DIR/init.el\" files)
+              (setq files
+                    (append
+                     (directory-files \"$AGENT_EDITOR_DIR\" t \"\\\\.el$\")
+                     files))
               (dolist (file files)
                 (message \"\n--- Linting %s ---\" (file-relative-name file \"$SCRIPT_DIR\"))
                 (byte-compile-file file)
@@ -28,7 +33,7 @@ ${EMACS:=emacs} -nw --batch \
                       (message \"%s\" (buffer-string))))))))"
 
 # Clean up temporary byte-compiled .elc files created during lint check
-rm -f "$EMACS_DIR"/*.elc "$EMACS_DIR"/lisp/*.elc
+rm -f "$EMACS_DIR"/*.elc "$EMACS_DIR"/lisp/*.elc "$AGENT_EDITOR_DIR"/*.elc
 
 echo ""
 echo "=== Lint Check Completed ==="

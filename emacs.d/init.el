@@ -8,7 +8,9 @@
 (setq gc-cons-threshold (* 100 1024 1024))
 (add-hook 'after-init-hook (lambda () (setq gc-cons-threshold (* 8 1024 1024))))
 
-(setq user-emacs-directory (file-name-directory (or load-file-name buffer-file-name (expand-file-name "~/.dotfiles/emacs.d/"))))
+(setq user-emacs-directory
+      (file-name-directory
+       (file-truename (or load-file-name buffer-file-name (expand-file-name "~/.dotfiles/emacs.d/init.el")))))
 (setq custom-file (expand-file-name "custom.el" user-emacs-directory))
 (add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
 ;; (require 'init-benchmarking)

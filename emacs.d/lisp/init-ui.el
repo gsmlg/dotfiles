@@ -66,7 +66,8 @@
   :ensure t
   :init
   (setq spaceline-all-the-icons-slim-render t
-	spaceline-all-the-icons-separator-type 'wave
+	spaceline-all-the-icons-separator-type 'slant
+	spaceline-all-the-icons-separator-scale 1.0
 	spaceline-all-the-icons-icon-set-sun-time 'sun/moon))
 
 (defun gsmlg/spaceline-all-the-icons ()

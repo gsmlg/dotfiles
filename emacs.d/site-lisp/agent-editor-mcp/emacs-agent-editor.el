@@ -3,7 +3,7 @@
 ;; Copyright (C) 2026 Gao
 
 ;; Author: Gao
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: tools, convenience
 
@@ -24,8 +24,12 @@
 (require 'emacs-agent-policy)
 (require 'emacs-agent-document)
 (require 'emacs-agent-edit)
+(require 'emacs-agent-transform)
+(require 'emacs-agent-transaction)
 (require 'emacs-agent-workspace)
 (require 'emacs-agent-search)
+(require 'emacs-agent-diagnostics)
+(require 'emacs-agent-semantic)
 (require 'emacs-agent-changeset)
 (require 'emacs-agent-journal)
 (require 'emacs-agent-ui)
@@ -70,8 +74,17 @@ is a member of this list."
   "Default workspace save policy."
   :type '(choice (const immediate) (const manual) (const explicit-per-call)))
 
+(defcustom emacs-agent-editor-token-authentication-enabled nil
+  "Whether MCP requests require bearer-token authentication.
+Authentication is disabled by default because the server is restricted to the
+IPv4 loopback interface.  Enable this option when other local processes should
+not be allowed to access the MCP endpoint."
+  :type 'boolean)
+
 (defcustom emacs-agent-editor-bearer-token nil
-  "Explicit bearer token, or nil to generate a new token at server start."
+  "Bearer token used when token authentication is enabled.
+A nil value generates a new token at server start.  This option is ignored
+when `emacs-agent-editor-token-authentication-enabled' is nil."
   :type '(choice (const :tag "Generate token" nil) string))
 
 (defvar emacs-agent-editor--http-server nil
@@ -89,8 +102,22 @@ is a member of this list."
 (defvar emacs-agent-editor--request-context nil
   "Dynamically bound request context for change-set attribution.")
 
+(defvar emacs-agent-editor--operation-name "document_apply_edits"
+  "Dynamically bound public operation name for single-document writes.")
+
 (defvar emacs-agent-editor--diff-cursors (make-hash-table :test #'equal)
   "Opaque pagination cursors for diff results.")
+
+(defconst emacs-agent-editor-position-semantics
+  '((lineBase . 1)
+    (columnBase . 0)
+    (unit . "emacs_character")
+    (range . "half_open")
+    (tabWidth . 1)
+    (editsRelativeTo . "expected_revision")
+    (applicationOrder . "descending")
+    (samePositionInserts . "rejected"))
+  "Public position contract retained for compatibility.")
 
 (defun emacs-agent-editor--daemon-name ()
   "Return a filesystem-safe name for this Emacs instance."
@@ -115,22 +142,25 @@ is a member of this list."
    emacs-agent-editor-state-directory))
 
 (defun emacs-agent-editor--write-connection-file (workspace port token)
-  "Publish private connection metadata for WORKSPACE, PORT, and TOKEN."
+  "Publish private connection metadata for WORKSPACE, PORT, and TOKEN.
+TOKEN is omitted from the metadata when authentication is disabled."
   (let* ((directory (emacs-agent-editor--instance-state-directory))
          (target (expand-file-name "connection.json" directory))
          (temporary nil)
          (metadata
-          `((schema_version . 1)
-            (daemon . ,(emacs-agent-editor--daemon-name))
-            (pid . ,(emacs-pid))
-            (workspace . ,(emacs-agent-workspace-root workspace))
-            (endpoint . ,(format "http://%s:%d%s"
-                                 emacs-agent-editor-host
-                                 port
-                                 emacs-agent-editor-endpoint))
-            (token . ,token)
-            (protocol_versions . ["2026-07-28" "2025-11-25"])
-            (started_at . ,(format-time-string "%FT%TZ" nil t)))))
+          (append
+           `((schema_version . 1)
+             (daemon . ,(emacs-agent-editor--daemon-name))
+             (pid . ,(emacs-pid))
+             (workspace . ,(emacs-agent-workspace-root workspace))
+             (endpoint . ,(format "http://%s:%d%s"
+                                  emacs-agent-editor-host
+                                  port
+                                  emacs-agent-editor-endpoint))
+             (token_authentication . ,(if token t :false)))
+           (when token `((token . ,token)))
+           `((protocol_versions . ["2026-07-28" "2025-11-25"])
+             (started_at . ,(format-time-string "%FT%TZ" nil t))))))
     (make-directory directory t)
     (set-file-modes directory #o700)
     (setq temporary (make-temp-file (expand-file-name ".connection-" directory)))
@@ -209,13 +239,62 @@ is a member of this list."
     (nreverse result)))
 
 (defun emacs-agent-editor--tool-error (code &rest details)
-  "Signal a structured tool error with CODE and DETAILS."
-  (signal 'emacs-agent-tool-error
-          (list
-           (append `((code . ,(if (symbolp code)
-                                  (symbol-name code)
-                                code)))
-                   (emacs-agent-editor--plist-to-alist details)))))
+  "Signal a structured public tool error for internal CODE and DETAILS."
+  (let* ((legacy
+          (if (symbolp code) (symbol-name code) code))
+         (public
+          (or
+           (cdr
+            (assoc
+             legacy
+             '(("revision_conflict" . "REVISION_MISMATCH")
+               ("expected_text_mismatch" . "EXPECTED_TEXT_MISMATCH")
+               ("occurrence_count_mismatch" . "EXPECTED_TEXT_MISMATCH")
+               ("ambiguous_text_match" . "MATCH_NOT_UNIQUE")
+               ("invalid_patch" . "PATCH_INVALID")
+               ("patch_path_mismatch" . "PATCH_INVALID")
+               ("patch_conflict" . "PATCH_CONTEXT_MISMATCH")
+               ("overlapping_edits" . "OVERLAPPING_EDITS")
+               ("invalid_position" . "POSITION_OUT_OF_RANGE")
+               ("external_change_conflict" . "EXTERNAL_CHANGE_CONFLICT")
+               ("path_outside_root" . "WORKSPACE_BOUNDARY_VIOLATION")
+               ("path_denied" . "WORKSPACE_BOUNDARY_VIOLATION")
+               ("approval_required" . "APPROVAL_REQUIRED")
+               ("checkpoint_failed" . "CHECKPOINT_FAILED")
+               ("save_failed" . "CHECKPOINT_FAILED")
+               ("capability_unavailable" . "CAPABILITY_UNAVAILABLE")
+               ("rollback_conflict" . "CHANGESET_NOT_ROLLBACKABLE"))))
+           (upcase legacy)))
+         (message
+          (or (plist-get details :message)
+              (replace-regexp-in-string "_" " " public)))
+         (retryable
+          (if (member
+               public
+               '("REVISION_MISMATCH" "EXTERNAL_CHANGE_CONFLICT"
+                 "DIAGNOSTICS_TIMEOUT" "APPROVAL_EXPIRED"
+                 "CHECKPOINT_FAILED"))
+              t :false))
+         (detail-plist (copy-sequence details)))
+    (when (plist-member detail-plist :message)
+      (setq detail-plist
+            (plist-put detail-plist :message nil))
+      (setq detail-plist
+            (cl-loop for (key value) on detail-plist by #'cddr
+                     unless (eq key :message)
+                     append (list key value))))
+    (let ((detail-alist
+           (emacs-agent-editor--plist-to-alist detail-plist)))
+      (signal
+       'emacs-agent-tool-error
+       (list
+        (append
+         `((code . ,public)
+           (legacy_code . ,legacy)
+           (message . ,message)
+           (retryable . ,retryable))
+         detail-alist
+         `((details . ,detail-alist))))))))
 
 (defun emacs-agent-editor--call (function)
   "Call FUNCTION and translate editor conditions into tool errors."
@@ -296,7 +375,9 @@ NEW-REVISION identifies the resulting content."
            (and emacs-agent-editor--request-context
                 (emacs-agent-request-client-info
                  emacs-agent-editor--request-context))
-           :operations (list (list :type 'edit :path path))
+           :operations
+           (list (list :type (intern emacs-agent-editor--operation-name)
+                       :path path))
            :touched-documents (list path)
            :base-revisions (list (cons path previous-revision))
            :final-revisions (list (cons path new-revision))
@@ -307,10 +388,71 @@ NEW-REVISION identifies the resulting content."
           (emacs-agent-changeset-changeset-id changeset))
     (emacs-agent-journal-write
      workspace
-     (list :tool "document_apply_edits" :status "completed"
+     (list :tool emacs-agent-editor--operation-name :status "completed"
            :changeset_id (emacs-agent-changeset-changeset-id changeset)
            :paths (list path)))
     (emacs-agent-changeset-changeset-id changeset)))
+
+(defun emacs-agent-editor--observe-tool (name status duration payload)
+  "Record bounded metadata for tool NAME, STATUS, DURATION, and PAYLOAD."
+  (when (emacs-agent-workspace-p emacs-agent-editor--workspace)
+    (let* ((changeset-id
+            (and (listp payload)
+                 (alist-get 'changeset_id payload)))
+           (path
+            (and (listp payload) (alist-get 'path payload)))
+           (documents
+            (and (listp payload) (alist-get 'documents payload)))
+           (code
+            (and (listp payload) (alist-get 'code payload)))
+           (write-p
+            (member
+             name
+             '("emacs_agent_document_apply_edits"
+               "emacs_agent_document_replace"
+               "emacs_agent_document_apply_patch"
+               "emacs_agent_document_create"
+               "emacs_agent_document_move"
+               "emacs_agent_document_delete"
+               "emacs_agent_workspace_apply_edits"
+               "emacs_agent_workspace_checkpoint"
+               "emacs_agent_changeset_rollback"
+               "emacs_agent_symbol_rename"
+               "emacs_agent_code_actions"
+               "emacs_agent_format_document"
+               "emacs_agent_format_range")))
+           (file-count
+            (if (not write-p)
+                0
+              (cond
+             ((vectorp documents) (length documents))
+             ((listp documents) (length documents))
+             (path 1)
+             (t 0))))
+           (event
+            (append
+             (list
+              :tool name :status status :duration duration
+              :workspace_id
+              (emacs-agent-workspace-workspace-id
+               emacs-agent-editor--workspace)
+              :modified_file_count file-count)
+             (when changeset-id (list :changeset_id changeset-id))
+             (when path (list :path path))
+             (when code
+               (list
+                :code code
+                :revision_mismatch_count
+                (if (equal code "REVISION_MISMATCH") 1 0)
+                :conflict_count
+                (if (member
+                     code
+                     '("REVISION_MISMATCH" "EXTERNAL_CHANGE_CONFLICT"
+                       "PATCH_CONTEXT_MISMATCH"))
+                    1 0))))))
+      (emacs-agent-workspace-record-activity
+       emacs-agent-editor--workspace event)
+      (emacs-agent-journal-write emacs-agent-editor--workspace event))))
 
 (defun emacs-agent-editor--workspace-info (_arguments _context)
   "Implement `emacs_agent_workspace_info'."
@@ -325,9 +467,32 @@ NEW-REVISION identifies the resulting content."
       (health
        . ,(symbol-name (emacs-agent-workspace-health-state workspace)))
       (protocol_versions . ["2026-07-28" "2025-11-25"])
+      (authentication
+       . ((type . ,(if emacs-agent-editor--token "bearer" "none"))))
       (capabilities
        . ["read" "edit" "create" "files" "search" "move" "delete"
-          "checkpoint" "sync" "diff" "rollback"]))))
+          "checkpoint" "sync" "diff" "rollback" "replace" "patch"
+          "workspace_transactions" "diagnostics" "changeset_query"
+          "document_status" "symbols" "xref" "editor_context"
+          "semantic_rename" "code_actions" "trusted_formatting"
+          "format_range" "approval_status"])
+      (position_semantics
+       . ,emacs-agent-editor-position-semantics)
+      (feature_capabilities
+       . ((dryRun . t)
+          (writeDiff . t)
+          (diffPagination . t)
+          (changesetPersistence . "daemon_memory")
+          (bufferAwareSearch . t)
+          (diagnostics . t)
+          (currentContext . t)
+          (semanticRename . "eglot")
+          (codeActions . "eglot_safe_edits_only")
+          (approvalStatus . t)
+          (trustedFormatting
+           . ,(if (functionp emacs-agent-semantic-format-function)
+                  t :false))
+          (semanticBackends . ["imenu" "xref"]))))))
 
 (defun emacs-agent-editor--document-read (arguments _context)
   "Implement `emacs_agent_document_read' with ARGUMENTS."
@@ -348,25 +513,163 @@ NEW-REVISION identifies the resulting content."
   (emacs-agent-editor--call
    (lambda ()
      (let* ((workspace (emacs-agent-workspace-current))
+            (path (emacs-agent-editor--argument arguments 'path))
+            (expected-revision
+             (emacs-agent-editor--argument arguments 'expected_revision))
+            (edits (emacs-agent-editor--argument arguments 'edits))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
             (checkpoint
              (emacs-agent-editor--checkpoint-p
               workspace
               (emacs-agent-editor--argument arguments 'checkpoint)))
             (emacs-agent-editor--request-context context)
+            (emacs-agent-editor--operation-name
+             "document_apply_edits")
             (result
-             (emacs-agent-workspace-enqueue-mutation
-              workspace
-              (lambda ()
-                (emacs-agent-edit-apply
-                 workspace
-                 (emacs-agent-editor--argument arguments 'path)
-                 (emacs-agent-editor--argument arguments 'expected_revision)
-                 (emacs-agent-editor--argument arguments 'edits)
-                 checkpoint)))))
+             (if dry-run
+                 (let* ((document
+                         (emacs-agent-document-open workspace path))
+                        (_ (emacs-agent-document-reconcile document))
+                        (revision
+                         (emacs-agent-document-revision document))
+                        (buffer (emacs-agent-document-buffer document))
+                        ranges before after)
+                   (unless (equal revision expected-revision)
+                     (emacs-agent-signal
+                      'revision_conflict :path path
+                      :expected_revision expected-revision
+                      :current_revision revision :requires_reread t))
+                   (with-current-buffer buffer
+                     (save-restriction
+                       (widen)
+                       (setq ranges
+                             (emacs-agent-edit--validate-ranges
+                              document edits)
+                             before
+                             (buffer-substring-no-properties
+                              (point-min) (point-max)))))
+                   (setq after
+                         (with-temp-buffer
+                           (insert before)
+                           (emacs-agent-edit--apply-ranges ranges)
+                           (buffer-string)))
+                   (list
+                    :path path :changeset_id nil
+                    :previous_revision revision
+                    :new_revision revision
+                    :checkpointed nil :edit_count (length ranges)
+                    :old_revision revision :applied nil
+                    :modified (not (equal before after))
+                    :diff
+                    (emacs-agent-changeset--diff-text path before after)
+                    :truncated nil :diff_truncated nil
+                    :diagnostics_state "not_requested"))
+               (emacs-agent-workspace-enqueue-mutation
+                workspace
+                (lambda ()
+                  (emacs-agent-edit-apply
+                   workspace path expected-revision edits checkpoint))))))
+       (unless dry-run
+         (setq result
+               (append
+                result
+                (list
+                 :old_revision (plist-get result :previous_revision)
+                 :applied t
+                 :modified t
+                 :diff
+                 (emacs-agent-changeset-diff
+                  workspace (plist-get result :changeset_id))
+                 :truncated nil
+                 :diff_truncated nil))))
        (emacs-agent-editor--plist-to-alist
         (cl-loop for (key value) on result by #'cddr
                  unless (memq key '(:before_content :after_content))
                  append (list key value)))))))
+
+(defun emacs-agent-editor--document-replace (arguments context)
+  "Implement `emacs_agent_document_replace' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
+            (checkpoint
+             (emacs-agent-editor--checkpoint-p
+              workspace
+              (emacs-agent-editor--argument arguments 'checkpoint)))
+            (emacs-agent-editor--request-context context)
+            (emacs-agent-editor--operation-name "document_replace")
+            (operation
+             (lambda ()
+               (emacs-agent-transform-replace
+                workspace
+                (emacs-agent-editor--argument arguments 'path)
+                (emacs-agent-editor--argument arguments 'expected_revision)
+                (emacs-agent-editor--argument arguments 'old_text)
+                (emacs-agent-editor--argument arguments 'new_text)
+                :replace-all
+                (eq (emacs-agent-editor--argument arguments 'replace_all) t)
+                :expected-occurrences
+                (emacs-agent-editor--argument
+                 arguments 'expected_occurrences)
+                :dry-run dry-run :checkpoint checkpoint)))
+            (result
+             (if dry-run
+                 (funcall operation)
+               (emacs-agent-workspace-enqueue-mutation
+                workspace operation))))
+       (emacs-agent-editor--plist-to-alist result)))))
+
+(defun emacs-agent-editor--document-apply-patch (arguments context)
+  "Implement `emacs_agent_document_apply_patch' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
+            (checkpoint
+             (emacs-agent-editor--checkpoint-p
+              workspace
+              (emacs-agent-editor--argument arguments 'checkpoint)))
+            (emacs-agent-editor--request-context context)
+            (emacs-agent-editor--operation-name "document_apply_patch")
+            (operation
+             (lambda ()
+               (emacs-agent-transform-apply-patch
+                workspace
+                (emacs-agent-editor--argument arguments 'path)
+                (emacs-agent-editor--argument arguments 'expected_revision)
+                (emacs-agent-editor--argument arguments 'patch)
+                :fuzz
+                (or (emacs-agent-editor--argument arguments 'fuzz) 0)
+                :dry-run dry-run :checkpoint checkpoint)))
+            (result
+             (if dry-run
+                 (funcall operation)
+               (emacs-agent-workspace-enqueue-mutation
+                workspace operation))))
+       (emacs-agent-editor--plist-to-alist result)))))
+
+(defun emacs-agent-editor--workspace-apply-edits (arguments context)
+  "Implement `emacs_agent_workspace_apply_edits' with ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (plan
+             (emacs-agent-transaction-plan
+              workspace
+              (emacs-agent-editor--argument arguments 'documents)))
+            (result
+             (emacs-agent-transaction-apply
+              plan
+              (eq (emacs-agent-editor--argument arguments 'dry_run) t)
+              (emacs-agent-editor--checkpoint-p
+               workspace
+               (emacs-agent-editor--argument arguments 'checkpoint))
+              context)))
+       (emacs-agent-editor--plist-to-alist result)))))
 
 (defun emacs-agent-editor--record-lifecycle
     (workspace operation paths before base final checkpointed)
@@ -398,6 +701,8 @@ NEW-REVISION identifies the resulting content."
      (let* ((workspace (emacs-agent-workspace-current))
             (path (emacs-agent-editor--argument arguments 'path))
             (content (emacs-agent-editor--argument arguments 'content))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
             (checkpoint
              (emacs-agent-editor--checkpoint-p
               workspace
@@ -413,7 +718,19 @@ NEW-REVISION identifies the resulting content."
        (when (file-exists-p absolute)
          (emacs-agent-editor--tool-error
           'document_already_exists :path path))
-       (emacs-agent-workspace-enqueue-mutation
+       (if dry-run
+           `((path . ,path)
+             (old_revision . :false)
+             (new_revision . :false)
+             (changeset_id . :false)
+             (applied . :false)
+             (modified . t)
+             (checkpointed . :false)
+             (diff
+              . ,(emacs-agent-changeset--diff-text path "" content))
+             (truncated . :false)
+             (diff_truncated . :false))
+         (emacs-agent-workspace-enqueue-mutation
         workspace
         (lambda ()
           (let* ((checked-absolute
@@ -442,6 +759,10 @@ NEW-REVISION identifies the resulting content."
                 :message (error-message-string error-data)
                 :reconciliation_required t
                 :filesystem_rollback_guaranteed nil)))
+            (when checkpoint
+              (setf
+               (emacs-agent-document-disk-fingerprint document)
+               (emacs-agent-document--disk-fingerprint checked-absolute)))
             (let* ((revision (emacs-agent-document-revision document))
                    (changeset-id
                     (emacs-agent-editor--record-lifecycle
@@ -453,10 +774,17 @@ NEW-REVISION identifies the resulting content."
                      (list (cons path revision))
                      checkpoint)))
               `((path . ,path)
+                (old_revision . :false)
                 (changeset_id . ,changeset-id)
                 (new_revision . ,revision)
+                (applied . t)
+                (modified . t)
                 (checkpointed
-                 . ,(if checkpoint t :false)))))))))))
+                 . ,(if checkpoint t :false))
+                (diff
+                 . ,(emacs-agent-changeset-diff workspace changeset-id))
+                (truncated . :false)
+                (diff_truncated . :false)))))))))))
 
 (defun emacs-agent-editor--workspace-files (arguments _context)
   "Implement `emacs_agent_workspace_files' for ARGUMENTS."
@@ -549,9 +877,13 @@ NEW-REVISION identifies the resulting content."
             (new-absolute
              (emacs-agent-policy-resolve workspace new-path t))
             (registry (emacs-agent-workspace-document-registry workspace))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
             (emacs-agent-editor--request-context context))
-       (emacs-agent-editor--authorize workspace "document_move" arguments)
-       (emacs-agent-editor--require-lifecycle-checkpoint workspace arguments)
+       (unless dry-run
+         (emacs-agent-editor--authorize workspace "document_move" arguments)
+         (emacs-agent-editor--require-lifecycle-checkpoint
+          workspace arguments))
        (emacs-agent-document-reconcile document)
        (when (file-exists-p new-absolute)
          (emacs-agent-editor--tool-error
@@ -569,7 +901,23 @@ NEW-REVISION identifies the resulting content."
                    (buffer-substring-no-properties
                     (point-min) (point-max)))))
               (base (emacs-agent-document-revision document)))
-         (emacs-agent-workspace-enqueue-mutation
+         (if dry-run
+             `((path . ,path) (new_path . ,new-path)
+               (old_revision . ,base)
+               (new_revision . ,base)
+               (changeset_id . :false)
+               (applied . :false)
+               (modified . t)
+               (checkpointed . :false)
+               (diff
+                . ,(concat
+                    (emacs-agent-changeset--diff-text
+                     path before "")
+                    (emacs-agent-changeset--diff-text
+                     new-path "" before)))
+               (truncated . :false)
+               (diff_truncated . :false))
+           (emacs-agent-workspace-enqueue-mutation
           workspace
           (lambda ()
             (setq old-absolute
@@ -624,9 +972,15 @@ NEW-REVISION identifies the resulting content."
                      (list (cons path nil) (cons new-path revision))
                      t)))
               `((path . ,path) (new_path . ,new-path)
+                (old_revision . ,base)
                 (changeset_id . ,changeset-id)
                 (new_revision . ,revision)
-                (checkpointed . t))))))))))
+                (applied . t) (modified . t)
+                (checkpointed . t)
+                (diff
+                 . ,(emacs-agent-changeset-diff workspace changeset-id))
+                (truncated . :false)
+                (diff_truncated . :false)))))))))))
 
 (defun emacs-agent-editor--document-delete (arguments context)
   "Implement `emacs_agent_document_delete' for ARGUMENTS and CONTEXT."
@@ -636,9 +990,13 @@ NEW-REVISION identifies the resulting content."
             (path (emacs-agent-editor--argument arguments 'path))
             (document (emacs-agent-document-open workspace path))
             (revision (emacs-agent-document-revision document))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t))
             (emacs-agent-editor--request-context context))
-       (emacs-agent-editor--authorize workspace "document_delete" arguments)
-       (emacs-agent-editor--require-lifecycle-checkpoint workspace arguments)
+       (unless dry-run
+         (emacs-agent-editor--authorize workspace "document_delete" arguments)
+         (emacs-agent-editor--require-lifecycle-checkpoint
+          workspace arguments))
        (emacs-agent-document-reconcile document)
        (setq revision (emacs-agent-document-revision document))
        (unless
@@ -654,7 +1012,21 @@ NEW-REVISION identifies the resulting content."
                    (widen)
                    (buffer-substring-no-properties
                     (point-min) (point-max))))))
-         (emacs-agent-workspace-enqueue-mutation
+         (if dry-run
+             `((path . ,path)
+               (old_revision . ,revision)
+               (new_revision . :false)
+               (changeset_id . :false)
+               (deleted . :false)
+               (applied . :false)
+               (modified . t)
+               (checkpointed . :false)
+               (diff
+                . ,(emacs-agent-changeset--diff-text
+                    path content ""))
+               (truncated . :false)
+               (diff_truncated . :false))
+           (emacs-agent-workspace-enqueue-mutation
           workspace
           (lambda ()
             (setq absolute
@@ -678,7 +1050,13 @@ NEW-REVISION identifies the resulting content."
                     (list (cons path revision))
                     (list (cons path nil)) t)))
               `((path . ,path) (changeset_id . ,changeset-id)
-                (deleted . t) (checkpointed . t))))))))))
+                (old_revision . ,revision) (new_revision . :false)
+                (deleted . t) (applied . t) (modified . t)
+                (checkpointed . t)
+                (diff
+                 . ,(emacs-agent-changeset-diff workspace changeset-id))
+                (truncated . :false)
+                (diff_truncated . :false)))))))))))
 
 (defun emacs-agent-editor--workspace-checkpoint (arguments context)
   "Implement `emacs_agent_workspace_checkpoint' for ARGUMENTS and CONTEXT."
@@ -822,6 +1200,310 @@ NEW-REVISION identifies the resulting content."
             (setf (emacs-agent-workspace-health-state workspace) 'healthy))
           `((documents . ,(vconcat (nreverse results))))))))))
 
+(defun emacs-agent-editor--document-status (arguments _context)
+  "Implement `emacs_agent_document_status' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-document-status
+       (emacs-agent-workspace-current)
+       (emacs-agent-editor--argument arguments 'path))))))
+
+(defun emacs-agent-editor--workspace-modified-documents
+    (_arguments _context)
+  "Implement `emacs_agent_workspace_modified_documents'."
+  (emacs-agent-editor--call
+   (lambda ()
+     `((documents
+        . ,(vconcat
+            (mapcar
+             #'emacs-agent-editor--plist-to-alist
+             (emacs-agent-workspace-modified-documents
+              (emacs-agent-workspace-current)))))))))
+
+(defun emacs-agent-editor--changeset-list (arguments _context)
+  "Implement `emacs_agent_changeset_list' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-changeset-query
+       (emacs-agent-workspace-current)
+       :path (emacs-agent-editor--argument arguments 'path)
+       :statuses
+       (mapcar
+        #'intern
+        (append
+         (emacs-agent-editor--argument arguments 'status) nil))
+       :limit
+       (or (emacs-agent-editor--argument arguments 'limit) 50)
+       :cursor (emacs-agent-editor--argument arguments 'cursor))))))
+
+(defun emacs-agent-editor--changeset-get (arguments _context)
+  "Implement `emacs_agent_changeset_get' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-changeset-detail
+       (emacs-agent-workspace-current)
+       (emacs-agent-editor--argument arguments 'changeset_id)
+       :max-chars
+       (or (emacs-agent-editor--argument arguments 'max_chars)
+           (* 256 1024))
+       :cursor (emacs-agent-editor--argument arguments 'cursor))))))
+
+(defun emacs-agent-editor--document-diagnostics (arguments _context)
+  "Implement `emacs_agent_document_diagnostics' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-document-diagnostics
+       (emacs-agent-workspace-current)
+       (emacs-agent-editor--argument arguments 'path)
+       :expected-revision
+       (emacs-agent-editor--argument arguments 'expected_revision)
+       :sources
+       (mapcar
+        #'intern
+        (append
+         (emacs-agent-editor--argument arguments 'sources) nil))
+       :wait-ms
+       (or (emacs-agent-editor--argument arguments 'wait_ms) 3000))))))
+
+(defun emacs-agent-editor--workspace-diagnostics (arguments _context)
+  "Implement `emacs_agent_workspace_diagnostics' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-workspace-diagnostics
+       (emacs-agent-workspace-current)
+       :paths
+       (append (emacs-agent-editor--argument arguments 'paths) nil)
+       :include-globs
+       (append
+        (emacs-agent-editor--argument arguments 'include_globs) nil)
+       :exclude-globs
+       (append
+        (emacs-agent-editor--argument arguments 'exclude_globs) nil)
+       :severities
+       (mapcar
+        #'intern
+        (append
+         (emacs-agent-editor--argument arguments 'severities) nil))
+       :sources
+       (mapcar
+        #'intern
+        (append
+         (emacs-agent-editor--argument arguments 'sources) nil))
+       :wait-ms
+       (or (emacs-agent-editor--argument arguments 'wait_ms) 3000)
+       :limit
+       (or (emacs-agent-editor--argument arguments 'limit) 100)
+       :cursor (emacs-agent-editor--argument arguments 'cursor))))))
+
+(defun emacs-agent-editor--document-symbols (arguments _context)
+  "Implement `emacs_agent_document_symbols' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     `((symbols
+        . ,(vconcat
+            (emacs-agent-semantic-document-symbols
+             (emacs-agent-workspace-current)
+             (emacs-agent-editor--argument arguments 'path))))))))
+
+(defun emacs-agent-editor--workspace-symbols (arguments _context)
+  "Implement `emacs_agent_workspace_symbols' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-semantic-workspace-symbols
+      (emacs-agent-workspace-current)
+      (emacs-agent-editor--argument arguments 'path)
+      (emacs-agent-editor--argument arguments 'query)
+      (emacs-agent-editor--argument arguments 'kind)
+      (emacs-agent-editor--argument arguments 'path_prefix)
+      (emacs-agent-editor--argument arguments 'limit)))))
+
+(defun emacs-agent-editor--symbol-definition (arguments _context)
+  "Implement `emacs_agent_symbol_definition' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     `((definitions
+        . ,(vconcat
+            (emacs-agent-semantic-definition
+             (emacs-agent-workspace-current)
+             (emacs-agent-editor--argument arguments 'path)
+             (emacs-agent-editor--argument arguments 'position)
+             (emacs-agent-editor--argument arguments 'symbol))))))))
+
+(defun emacs-agent-editor--symbol-references (arguments _context)
+  "Implement `emacs_agent_symbol_references' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-semantic-references
+      (emacs-agent-workspace-current)
+      (emacs-agent-editor--argument arguments 'path)
+      (emacs-agent-editor--argument arguments 'position)
+      (emacs-agent-editor--argument arguments 'symbol)))))
+
+(defun emacs-agent-editor--editor-context-get (_arguments _context)
+  "Implement `emacs_agent_editor_context_get'."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-semantic-editor-context
+      (emacs-agent-workspace-current)))))
+
+(defun emacs-agent-editor--format-document (arguments context)
+  "Implement guarded `emacs_agent_format_document' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (path (emacs-agent-editor--argument arguments 'path))
+            (revision
+             (emacs-agent-editor--argument arguments 'expected_revision))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t)))
+       (if dry-run
+           (let* ((preview
+                   (emacs-agent-semantic-format-preview
+                    workspace path revision))
+                  (changed (alist-get 'changed preview)))
+             (append
+              preview
+              `((old_revision . ,revision)
+                (new_revision . ,revision)
+                (changeset_id . :false)
+                (applied . :false)
+                (checkpointed . :false)
+                (modified . ,changed)
+                (truncated . :false)
+                (diff_truncated . :false))))
+         (let* ((checkpoint
+                 (emacs-agent-editor--checkpoint-p
+                  workspace
+                  (emacs-agent-editor--argument arguments 'checkpoint)))
+                (emacs-agent-editor--request-context context)
+                (emacs-agent-editor--operation-name "format_document")
+                (_
+                 (emacs-agent-editor--authorize
+                  workspace "format_document" arguments))
+                (result
+                 (emacs-agent-workspace-enqueue-mutation
+                  workspace
+                  (lambda ()
+                    (emacs-agent-semantic-format-apply
+                     workspace path revision checkpoint)))))
+           (emacs-agent-editor--plist-to-alist
+            (append
+             result
+             (list
+              :old_revision
+              (or (plist-get result :previous_revision) revision)
+              :applied t
+              :modified (plist-get result :changed)
+              :truncated nil
+              :diff_truncated nil)))))))))
+
+(defun emacs-agent-editor--symbol-rename (arguments context)
+  "Preview or apply `emacs_agent_symbol_rename' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (preview-id
+             (emacs-agent-editor--argument arguments 'preview_id))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t)))
+       (if dry-run
+           (emacs-agent-editor--json-value
+            (emacs-agent-semantic-rename-preview
+             workspace
+             (emacs-agent-editor--argument arguments 'path)
+             (emacs-agent-editor--argument arguments 'position)
+             (emacs-agent-editor--argument arguments 'new_name)
+             (emacs-agent-editor--argument arguments 'expected_revision)))
+         (unless (stringp preview-id)
+           (emacs-agent-editor--tool-error
+            'invalid_argument
+            :field 'preview_id
+            :message "A prior dry-run preview_id is required"))
+         (emacs-agent-editor--plist-to-alist
+          (emacs-agent-semantic-rename-apply
+           workspace preview-id
+           (emacs-agent-editor--checkpoint-p
+            workspace
+            (emacs-agent-editor--argument arguments 'checkpoint))
+           context)))))))
+
+(defun emacs-agent-editor--code-actions (arguments context)
+  "List or safely apply `emacs_agent_code_actions' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (action-id
+             (emacs-agent-editor--argument arguments 'action_id)))
+       (if action-id
+           (emacs-agent-editor--plist-to-alist
+            (emacs-agent-semantic-code-action-apply
+             workspace action-id
+             (emacs-agent-editor--checkpoint-p
+              workspace
+              (emacs-agent-editor--argument arguments 'checkpoint))
+             context))
+         (emacs-agent-editor--json-value
+          (emacs-agent-semantic-code-actions
+           workspace
+           (emacs-agent-editor--argument arguments 'path)
+           (emacs-agent-editor--argument arguments 'range)
+           (emacs-agent-editor--argument arguments 'expected_revision)
+           (emacs-agent-editor--argument arguments 'kind))))))))
+
+(defun emacs-agent-editor--format-range (arguments context)
+  "Preview or apply `emacs_agent_format_range' for ARGUMENTS and CONTEXT."
+  (emacs-agent-editor--call
+   (lambda ()
+     (let* ((workspace (emacs-agent-workspace-current))
+            (preview-id
+             (emacs-agent-editor--argument arguments 'preview_id))
+            (dry-run
+             (eq (emacs-agent-editor--argument arguments 'dry_run) t)))
+       (if dry-run
+           (emacs-agent-editor--json-value
+            (emacs-agent-semantic-format-range-preview
+             workspace
+             (emacs-agent-editor--argument arguments 'path)
+             (emacs-agent-editor--argument arguments 'range)
+             (emacs-agent-editor--argument arguments 'expected_revision)))
+         (unless (stringp preview-id)
+           (emacs-agent-editor--tool-error
+            'invalid_argument
+            :field 'preview_id
+            :message "A prior dry-run preview_id is required"))
+         (emacs-agent-editor--authorize
+          workspace "format_range" arguments)
+         (emacs-agent-editor--plist-to-alist
+          (emacs-agent-semantic-format-range-apply
+           workspace preview-id
+           (emacs-agent-editor--checkpoint-p
+            workspace
+            (emacs-agent-editor--argument arguments 'checkpoint))
+           context)))))))
+
+(defun emacs-agent-editor--approval-status (arguments _context)
+  "Implement `emacs_agent_approval_status' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-workspace-approval-status
+       (emacs-agent-workspace-current)
+       (emacs-agent-editor--argument arguments 'approval_request_id))))))
+
+(defun emacs-agent-editor--approval-cancel (arguments _context)
+  "Implement `emacs_agent_approval_cancel' with ARGUMENTS."
+  (emacs-agent-editor--call
+   (lambda ()
+     (emacs-agent-editor--plist-to-alist
+      (emacs-agent-workspace-approval-cancel
+       (emacs-agent-workspace-current)
+       (emacs-agent-editor--argument arguments 'approval_request_id))))))
+
 (defun emacs-agent-editor--workspace-diff (arguments _context)
   "Implement `emacs_agent_workspace_diff' for ARGUMENTS."
   (emacs-agent-editor--call
@@ -866,15 +1548,75 @@ NEW-REVISION identifies the resulting content."
   (emacs-agent-editor--call
    (lambda ()
      (let ((workspace (emacs-agent-workspace-current))
+           (dry-run
+            (eq (emacs-agent-editor--argument arguments 'dry_run) t))
            (changeset-id
             (emacs-agent-editor--argument arguments 'changeset_id)))
-       (emacs-agent-editor--authorize workspace "changeset_rollback" arguments)
-       (let ((changeset
-              (emacs-agent-changeset-rollback workspace changeset-id)))
+       (unless dry-run
+         (emacs-agent-editor--authorize
+          workspace "changeset_rollback" arguments))
+       (let* ((target (emacs-agent-changeset-get workspace changeset-id))
+              (rollback
+               (emacs-agent-changeset--rollback-status workspace target))
+              (_
+               (unless (plist-get rollback :available)
+                 (emacs-agent-editor--tool-error
+                  'rollback_conflict
+                  :message "Change set is not currently rollback-compatible"
+                  :reason (plist-get rollback :reason))))
+              (old-revisions
+               (emacs-agent-changeset-final-revisions target))
+              (diff
+               (mapconcat
+                (lambda (entry)
+                  (emacs-agent-changeset--diff-text
+                   (car entry)
+                   (emacs-agent-changeset--current-content
+                    workspace (car entry))
+                   (emacs-agent-changeset--snapshot-content (cdr entry))))
+                (emacs-agent-changeset-before-snapshots target)
+                ""))
+              (changeset
+               (unless dry-run
+                 (emacs-agent-changeset-rollback workspace changeset-id)))
+              (new-revisions
+               (if dry-run
+                   (mapcar
+                    (lambda (entry)
+                      `((path . ,(car entry)) (revision . :false)))
+                    (emacs-agent-changeset-before-snapshots target))
+                 (mapcar
+                  (lambda (path)
+                    `((path . ,path)
+                      (revision
+                       . ,(emacs-agent-changeset--revision workspace path))))
+                  (emacs-agent-changeset-touched-documents changeset)))))
          `((changeset_id . ,changeset-id)
+           (old_revision . :false)
+           (new_revision . :false)
+           (old_revisions
+            . ,(vconcat
+                (mapcar
+                 (lambda (entry)
+                   `((path . ,(car entry)) (revision . ,(cdr entry))))
+                 old-revisions)))
+           (new_revisions . ,(vconcat new-revisions))
+           (applied . ,(if dry-run :false t))
+           (modified . t)
+           (checkpointed
+            . ,(if (and
+                     (not dry-run)
+                     (eq (emacs-agent-workspace-save-policy workspace)
+                         'immediate))
+                   t :false))
+           (diff . ,diff)
+           (truncated . :false)
+           (diff_truncated . :false)
            (status
-            . ,(symbol-name
-                (emacs-agent-changeset-status changeset)))))))))
+            . ,(if dry-run
+                   "preview"
+                 (symbol-name
+                  (emacs-agent-changeset-status changeset))))))))))
 
 (defun emacs-agent-editor--object-schema (properties &optional required)
   "Return an object schema with PROPERTIES and REQUIRED names."
@@ -884,15 +1626,26 @@ NEW-REVISION identifies the resulting content."
     ,@(when required `((required . ,(vconcat required))))))
 
 (defun emacs-agent-editor--register-tools ()
-  "Register the complete version 0.1 MCP tool surface."
+  "Register the complete version 0.2 MCP tool surface."
   (emacs-agent-tool-clear)
   (let* ((string '((type . "string")))
          (integer '((type . "integer")))
          (boolean '((type . "boolean")))
          (position
           (emacs-agent-editor--object-schema
-           `((line . ,integer) (column . ,integer))
+           `((line
+              . ((type . "integer") (minimum . 1)
+                 (description
+                  . "One-based logical line in the authoritative buffer.")))
+             (column
+              . ((type . "integer") (minimum . 0)
+                 (description
+                  . "Zero-based Emacs character offset; tabs count as one."))))
            '("line" "column")))
+         (range
+          (emacs-agent-editor--object-schema
+           `((start . ,position) (end . ,position))
+           '("start" "end")))
          (edit
           (emacs-agent-editor--object-schema
            `((start . ,position) (end . ,position)
@@ -918,18 +1671,19 @@ NEW-REVISION identifies the resulting content."
      output #'emacs-agent-editor--document-read 'read-only)
     (emacs-agent-tool-register
      "emacs_agent_document_apply_edits"
-     "Apply guarded non-overlapping range edits as one undo unit."
+     "Apply guarded half-open ranges (line 1-based, column 0-based Emacs characters) against one revision, validated together and executed in descending order as one undo unit; overlaps and same-position inserts are rejected."
      (emacs-agent-editor--object-schema
       `((path . ,string) (expected_revision . ,string)
         (edits . ((type . "array") (items . ,edit)))
-        (checkpoint . ,boolean))
+        (dry_run . ,boolean) (checkpoint . ,boolean))
       '("path" "expected_revision" "edits"))
      output #'emacs-agent-editor--document-apply-edits 'mutating)
     (emacs-agent-tool-register
      "emacs_agent_document_create"
      "Create a new visited text document inside the workspace."
      (emacs-agent-editor--object-schema
-      `((path . ,string) (content . ,string) (checkpoint . ,boolean))
+      `((path . ,string) (content . ,string)
+        (dry_run . ,boolean) (checkpoint . ,boolean))
       '("path" "content"))
      output #'emacs-agent-editor--document-create 'mutating)
     (emacs-agent-tool-register
@@ -955,7 +1709,8 @@ NEW-REVISION identifies the resulting content."
      "Move a guarded document while preserving its visiting buffer."
      (emacs-agent-editor--object-schema
       `((path . ,string) (new_path . ,string)
-        (expected_revision . ,string) (approval_request_id . ,string))
+        (expected_revision . ,string) (dry_run . ,boolean)
+        (approval_request_id . ,string))
       '("path" "new_path" "expected_revision"))
      output #'emacs-agent-editor--document-move 'destructive)
     (emacs-agent-tool-register
@@ -963,7 +1718,7 @@ NEW-REVISION identifies the resulting content."
      "Delete a guarded document with rollback metadata."
      (emacs-agent-editor--object-schema
       `((path . ,string) (expected_revision . ,string)
-        (approval_request_id . ,string))
+        (dry_run . ,boolean) (approval_request_id . ,string))
       '("path" "expected_revision"))
      output #'emacs-agent-editor--document-delete 'destructive)
     (emacs-agent-tool-register
@@ -991,9 +1746,175 @@ NEW-REVISION identifies the resulting content."
      "emacs_agent_changeset_rollback"
      "Rollback a change set only when all revision guards still match."
      (emacs-agent-editor--object-schema
-      `((changeset_id . ,string) (approval_request_id . ,string))
+      `((changeset_id . ,string) (dry_run . ,boolean)
+        (approval_request_id . ,string))
       '("changeset_id"))
-     output #'emacs-agent-editor--changeset-rollback 'destructive)))
+     output #'emacs-agent-editor--changeset-rollback 'destructive)
+    (emacs-agent-tool-register
+     "emacs_agent_document_replace"
+     "Replace exact authoritative text, with dry-run and revision guards."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (expected_revision . ,string)
+        (old_text . ,string) (new_text . ,string)
+        (replace_all . ,boolean) (expected_occurrences . ,integer)
+        (dry_run . ,boolean) (checkpoint . ,boolean))
+      '("path" "expected_revision" "old_text" "new_text"))
+     output #'emacs-agent-editor--document-replace 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_document_apply_patch"
+     "Validate and apply one strict single-file unified patch."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (expected_revision . ,string)
+        (patch . ,string) (fuzz . ,integer)
+        (dry_run . ,boolean) (checkpoint . ,boolean))
+      '("path" "expected_revision" "patch"))
+     output #'emacs-agent-editor--document-apply-patch 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_workspace_apply_edits"
+     "Validate and atomically apply exact edits across multiple buffers."
+     (emacs-agent-editor--object-schema
+      `((documents
+         . ((type . "array")
+            (items
+             . ((type . "object")
+                (properties
+                 . ((path . ,string)
+                    (expected_revision . ,string)
+                    (edits . ((type . "array")
+                              (items . ((type . "object")))))
+                    (patch . ,string)))
+                (required . ["path" "expected_revision"])))))
+        (atomic . ,boolean) (dry_run . ,boolean)
+        (checkpoint . ,boolean))
+      '("documents"))
+     output #'emacs-agent-editor--workspace-apply-edits 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_document_status"
+     "Return document visit, disk, conflict, encoding, and revision state."
+     (emacs-agent-editor--object-schema `((path . ,string)) '("path"))
+     output #'emacs-agent-editor--document-status 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_workspace_modified_documents"
+     "List dirty, externally changed, conflicted, or deleted buffers."
+     (emacs-agent-editor--object-schema nil)
+     output #'emacs-agent-editor--workspace-modified-documents 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_changeset_list"
+     "List filterable change-set summaries with immutable pagination."
+     (emacs-agent-editor--object-schema
+      `((path . ,string)
+        (status . ((type . "array") (items . ,string)))
+        (limit . ,integer) (cursor . ,string)))
+     output #'emacs-agent-editor--changeset-list 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_changeset_get"
+     "Return change-set metadata and a paginated frozen diff."
+     (emacs-agent-editor--object-schema
+      `((changeset_id . ,string) (max_chars . ,integer)
+        (cursor . ,string))
+      '("changeset_id"))
+     output #'emacs-agent-editor--changeset-get 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_document_diagnostics"
+     "Collect revision-bound safe parser and enabled editor diagnostics."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (expected_revision . ,string)
+        (sources . ((type . "array") (items . ,string)))
+        (wait_ms . ,integer))
+      '("path"))
+     output #'emacs-agent-editor--document-diagnostics 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_workspace_diagnostics"
+     "Aggregate revision-bound diagnostics across workspace documents."
+     (emacs-agent-editor--object-schema
+      `((paths . ((type . "array") (items . ,string)))
+        (include_globs . ((type . "array") (items . ,string)))
+        (exclude_globs . ((type . "array") (items . ,string)))
+        (severities . ((type . "array") (items . ,string)))
+        (sources . ((type . "array") (items . ,string)))
+        (wait_ms . ,integer) (limit . ,integer) (cursor . ,string)))
+     output #'emacs-agent-editor--workspace-diagnostics 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_document_symbols"
+     "Return the native imenu symbol tree for one document."
+     (emacs-agent-editor--object-schema `((path . ,string)) '("path"))
+     output #'emacs-agent-editor--document-symbols 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_workspace_symbols"
+     "Search symbols through the active native xref backend."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (query . ,string) (kind . ,string)
+        (path_prefix . ,string) (limit . ,integer))
+      '("path" "query"))
+     output #'emacs-agent-editor--workspace-symbols 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_symbol_definition"
+     "Resolve definitions through the active native xref backend."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (position . ,position) (symbol . ,string))
+      '("path" "position"))
+     output #'emacs-agent-editor--symbol-definition 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_symbol_references"
+     "Resolve references through the active native xref backend."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (position . ,position) (symbol . ,string))
+      '("path" "position"))
+     output #'emacs-agent-editor--symbol-references 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_editor_context_get"
+     "Return safe metadata for the current Emacs editing context."
+     (emacs-agent-editor--object-schema nil)
+     output #'emacs-agent-editor--editor-context-get 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_format_document"
+     "Preview or apply a server-configured trusted document formatter."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (expected_revision . ,string)
+        (dry_run . ,boolean) (checkpoint . ,boolean)
+        (approval_request_id . ,string))
+      '("path" "expected_revision" "dry_run"))
+     output #'emacs-agent-editor--format-document 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_symbol_rename"
+     "Preview an Eglot semantic rename, then atomically apply only its frozen preview_id."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (position . ,position)
+        (new_name . ,string) (expected_revision . ,string)
+        (preview_id . ,string) (dry_run . ,boolean)
+        (checkpoint . ,boolean)))
+     output #'emacs-agent-editor--symbol-rename 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_code_actions"
+     "List Eglot code actions or atomically apply a pure workspace-edit action; commands are never executed."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (range . ,range)
+        (expected_revision . ,string) (kind . ,string)
+        (action_id . ,string) (checkpoint . ,boolean)))
+     output #'emacs-agent-editor--code-actions 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_format_range"
+     "Preview Eglot range formatting, then atomically apply only its frozen preview_id."
+     (emacs-agent-editor--object-schema
+      `((path . ,string) (range . ,range)
+        (expected_revision . ,string) (preview_id . ,string)
+        (dry_run . ,boolean) (checkpoint . ,boolean)
+        (approval_request_id . ,string)))
+     output #'emacs-agent-editor--format-range 'mutating)
+    (emacs-agent-tool-register
+     "emacs_agent_approval_status"
+     "Return credential-free TTL and revision-bound approval status."
+     (emacs-agent-editor--object-schema
+      `((approval_request_id . ,string))
+      '("approval_request_id"))
+     output #'emacs-agent-editor--approval-status 'read-only)
+    (emacs-agent-tool-register
+     "emacs_agent_approval_cancel"
+     "Cancel a pending or approved request and audit the transition."
+     (emacs-agent-editor--object-schema
+      `((approval_request_id . ,string))
+      '("approval_request_id"))
+     output #'emacs-agent-editor--approval-cancel 'mutating)))
 
 ;;;###autoload
 (defun emacs-agent-editor-start (directory &optional port)
@@ -1003,9 +1924,11 @@ PORT overrides `emacs-agent-editor-port' when non-nil."
   (when (emacs-agent-editor-running-p)
     (user-error "Agent Editor MCP is already running"))
   (unless (equal emacs-agent-editor-host "127.0.0.1")
-    (user-error "Version 0.1 only supports the IPv4 loopback listener"))
-  (let* ((token (or emacs-agent-editor-bearer-token
-                    (emacs-agent-editor--random-token)))
+    (user-error "Version 0.2 only supports the IPv4 loopback listener"))
+  (let* ((token
+          (when emacs-agent-editor-token-authentication-enabled
+            (or emacs-agent-editor-bearer-token
+                (emacs-agent-editor--random-token))))
          (state-directory (emacs-agent-editor--instance-state-directory))
          (workspace
           (emacs-agent-workspace-create
@@ -1021,6 +1944,8 @@ PORT overrides `emacs-agent-editor-port' when non-nil."
           (emacs-agent-editor--register-tools)
           (setq emacs-agent-edit-record-function
                 #'emacs-agent-editor--record-edit
+                emacs-agent-protocol-tool-observer
+                #'emacs-agent-editor--observe-tool
                 emacs-agent-editor--token token
                 emacs-agent-editor--workspace workspace)
           (emacs-agent-journal-open workspace)
@@ -1049,7 +1974,8 @@ PORT overrides `emacs-agent-editor-port' when non-nil."
        (setq emacs-agent-editor--http-server nil
              emacs-agent-editor--workspace nil
              emacs-agent-editor--token nil
-             emacs-agent-edit-record-function nil)
+             emacs-agent-edit-record-function nil
+             emacs-agent-protocol-tool-observer nil)
        (signal (car error-data) (cdr error-data))))))
 
 ;;;###autoload
@@ -1072,7 +1998,8 @@ PORT overrides `emacs-agent-editor-port' when non-nil."
         emacs-agent-editor--http-server nil
         emacs-agent-editor--workspace nil
         emacs-agent-editor--token nil
-        emacs-agent-edit-record-function nil)
+        emacs-agent-edit-record-function nil
+        emacs-agent-protocol-tool-observer nil)
   t)
 
 ;;;###autoload
@@ -1089,12 +2016,15 @@ PORT overrides `emacs-agent-editor-port' when non-nil."
 
 ;;;###autoload
 (defun emacs-agent-editor-revoke-writer ()
-  "Pause mutations and rotate the active writer credential."
+  "Pause mutations and revoke the active writer credential.
+When token authentication is enabled, also rotate the bearer token."
   (interactive)
   (unless (emacs-agent-editor-running-p)
     (user-error "Agent Editor MCP is not running"))
   (emacs-agent-editor-pause)
-  (let ((token (emacs-agent-editor--random-token)))
+  (let ((token
+         (when emacs-agent-editor--token
+           (emacs-agent-editor--random-token))))
     (setq emacs-agent-editor--token token)
     (setf (emacs-agent-http-server-token emacs-agent-editor--http-server)
           token

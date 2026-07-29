@@ -118,6 +118,41 @@
      (emacs-agent-http--try-frame server frame nil)
      :type 'emacs-agent-http-error)))
 
+(ert-deftest emacs-agent-http-auth-error-does-not-echo-token ()
+  (let* ((server
+          (emacs-agent-http-server--create
+           :endpoint "/mcp" :token "expected-secret"
+           :allowed-origins nil))
+         (supplied-secret "attacker-supplied-secret")
+         (body "{}")
+         (frame
+          (format
+           (concat "POST /mcp HTTP/1.1\r\n"
+                   "Authorization: Bearer %s\r\n"
+                   "Content-Type: application/json\r\n"
+                   "Content-Length: %d\r\n\r\n%s")
+           supplied-secret (string-bytes body) body))
+         captured)
+    (condition-case condition
+        (emacs-agent-http--try-frame server frame nil)
+      (emacs-agent-http-error (setq captured condition)))
+    (should captured)
+    (let ((public-error (prin1-to-string captured)))
+      (should-not (string-match-p "expected-secret" public-error))
+      (should-not
+       (string-match-p (regexp-quote supplied-secret) public-error)))))
+
+(ert-deftest emacs-agent-http-allows-missing-authorization-when-disabled ()
+  (let* ((server
+          (emacs-agent-http-server--create
+           :endpoint "/mcp" :token nil :allowed-origins nil))
+         (request
+          (emacs-agent-http-request-create
+           :method "GET" :target "/mcp" :version "HTTP/1.1"
+           :headers nil :body "")))
+    (should (eq (emacs-agent-http--validate-request server request)
+                request))))
+
 (ert-deftest emacs-agent-http-rejects-invalid-utf8 ()
   (should (emacs-agent-http--valid-utf8-p
            (encode-coding-string "λ" 'utf-8 t)))

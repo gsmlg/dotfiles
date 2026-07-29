@@ -2,18 +2,19 @@
 
 ## A Pure Emacs Lisp, Buffer-First HTTP MCP Runtime for AI Software Development Agents
 
-**Status:** Implementation specification v0.1
-**Date:** 2026-07-28
+**Status:** Implemented specification v0.2
+**Date:** 2026-07-29
 **Package name:** `emacs-agent-editor`
 **Primary implementation language:** Emacs Lisp
 
 ---
 
-## 0. Version 0.1 Implementation Profile
+## 0. Version 0.2 Implementation Profile
 
-Version 0.1 implements Phases 0 through 2 and all acceptance criteria in
-Section 27. Semantic tools and the advanced collaboration work in Phases 3 and
-4 are deferred.
+The implementation now covers the complete guarded editing, workspace
+transaction, diagnostics, semantic navigation/refactoring, formatting,
+change-set, and collaboration scope in `emacs-prd.md`. Native semantic
+features fail closed when their Eglot/Xref provider is unavailable.
 
 The supported runtime and operational defaults are:
 
@@ -24,7 +25,7 @@ save policy:           immediate
 listen address:        127.0.0.1
 listen port:           ephemeral unless configured
 workspace:             daemon launch directory
-authentication:        generated bearer token
+authentication:        token authentication disabled
 ```
 
 The dotfiles integration loads the package for all Emacs sessions and
@@ -238,7 +239,7 @@ The agent calls tools such as:
 emacs_agent_document_read
 emacs_agent_document_apply_edits
 emacs_agent_workspace_search
-emacs_agent_diagnostics_get
+emacs_agent_document_diagnostics
 ```
 
 It does not send keys, move the user's point, manipulate windows, or invoke arbitrary interactive commands.
@@ -338,7 +339,7 @@ The compatibility adapter should support:
 - POST request/response operation
 - GET returning `405 Method Not Allowed` until SSE is implemented
 
-Version 0.1 mints a compatibility session ID after initialization, validates it
+Version 0.2 mints a compatibility session ID after initialization, validates it
 on subsequent legacy requests, and returns `405 Method Not Allowed` for
 unsupported GET and DELETE session operations.
 
@@ -536,14 +537,19 @@ The transport must:
 - validate `Origin` when present
 - reject unapproved origins
 - bind to loopback by default
-- require a random bearer token by default
-- compare tokens without leaking partial matches
-- store generated tokens in a user-only state file
+- disable bearer-token authentication by default
+- allow users to enable bearer-token authentication
+- use a configured token or generate a random token when authentication is enabled
+- compare enabled tokens without leaking partial matches
+- store enabled tokens in a user-only state file
 - reject unsupported content types
 - reject invalid protocol-version headers
 - avoid including secrets in logs
 
-Remote exposure must occur only through an explicit trusted tunnel or authenticated reverse proxy. Direct public binding is outside the supported security model.
+With token authentication disabled, any local process that can reach the
+loopback port can access the endpoint. Remote exposure must occur only through
+an explicit trusted tunnel or authenticated reverse proxy. Direct public
+binding is outside the supported security model.
 
 ---
 
@@ -865,7 +871,7 @@ rolled_back
 conflicted
 ```
 
-### 16.1 MVP transaction boundary
+### 16.1 Transaction boundary
 
 One mutating tool call creates one change set.
 
@@ -879,9 +885,11 @@ If a human or another operation has subsequently modified a document, rollback r
 
 ### 16.3 Persistence
 
-Full before-images should remain in memory for active change sets.
-
-Persistent journaling should store metadata and diffs by default. Persisting complete source snapshots must be optional because source files can contain sensitive information.
+Full before-images remain in memory for active change sets. They are
+intentionally daemon-scoped: restarting Emacs invalidates revisions, cursors,
+semantic previews, approvals, and rollback history. The optional persistent
+journal stores redacted metadata and diffs, never bearer credentials or full
+before-images.
 
 ---
 
@@ -889,38 +897,53 @@ Persistent journaling should store metadata and diffs by default. Persisting com
 
 Tool names use a stable `emacs_agent_` prefix to avoid collisions with native agent tools.
 
-### 17.1 MVP tools
+### 17.1 Implemented tool groups
 
-| Tool | Class | Purpose |
-|---|---|---|
-| `emacs_agent_workspace_info` | Read-only | Return root, mode, save policy, capabilities, and health |
-| `emacs_agent_document_read` | Read-only | Read the authoritative buffer contents and revision |
-| `emacs_agent_document_apply_edits` | Mutating | Apply guarded range edits atomically |
-| `emacs_agent_document_create` | Mutating | Create a new visited document |
-| `emacs_agent_workspace_checkpoint` | Mutating | Save selected or modified workspace buffers |
-| `emacs_agent_workspace_diff` | Read-only | Return the diff for a change set or current agent changes |
-
-### 17.2 Workspace replacement tools
-
-| Tool | Class | Purpose |
-|---|---|---|
-| `emacs_agent_workspace_files` | Read-only | List project files with filters and pagination |
-| `emacs_agent_workspace_search` | Read-only/Async | Search project text with bounded results |
-| `emacs_agent_document_move` | Destructive | Rename or move a file while preserving buffer identity |
-| `emacs_agent_document_delete` | Destructive | Delete a document with rollback metadata |
-| `emacs_agent_workspace_sync` | Mutating | Reconcile buffers with external filesystem changes |
-| `emacs_agent_changeset_rollback` | Destructive | Revert a compatible agent change set |
-
-### 17.3 Semantic tools
-
-| Tool | Purpose |
+| Group | Tools |
 |---|---|
-| `emacs_agent_document_outline` | Return symbols from imenu or Tree-sitter |
-| `emacs_agent_symbol_definition` | Resolve a symbol through Xref/Eglot |
-| `emacs_agent_symbol_references` | Find references through Xref/Eglot |
-| `emacs_agent_symbol_rename` | Perform a guarded semantic rename |
-| `emacs_agent_diagnostics_get` | Return revision-associated Flymake diagnostics |
-| `emacs_agent_document_format` | Run the configured formatter and return a change set |
+| Workspace | `workspace_info`, `workspace_files`, `workspace_search`, `workspace_apply_edits`, `workspace_checkpoint`, `workspace_sync`, `workspace_diff`, `workspace_modified_documents`, `workspace_diagnostics`, `workspace_symbols` |
+| Documents | `document_read`, `document_status`, `document_apply_edits`, `document_replace`, `document_apply_patch`, `document_create`, `document_move`, `document_delete`, `document_diagnostics`, `document_symbols` |
+| Change sets | `changeset_list`, `changeset_get`, `changeset_rollback` |
+| Semantics | `symbol_definition`, `symbol_references`, `symbol_rename`, `code_actions` |
+| Formatting | `format_document`, `format_range` |
+| Collaboration | `editor_context_get`, `approval_status`, `approval_cancel` |
+
+All wire names use the `emacs_agent_` prefix.
+
+### 17.2 Position and write-result contract
+
+Public positions use one-based lines and zero-based Emacs-character columns.
+Ranges are half-open, tabs count as one character, and CRLF files use logical
+buffer lines while retaining their coding-system EOL style. Every edit in a
+request is relative to one `expected_revision`. The server validates every
+range before mutation, rejects overlaps and same-position inserts, and applies
+valid edits in descending order.
+
+Core write results include:
+
+```text
+old_revision
+new_revision
+changeset_id
+applied
+checkpointed
+modified
+diff
+truncated
+```
+
+Public errors expose an uppercase stable code, message, retryability, nested
+details, and the legacy internal code for compatibility.
+
+### 17.3 Semantic safety
+
+Imenu supplies document symbols, Xref supplies navigation and workspace symbol
+queries, and Eglot supplies rename, code actions, and range formatting.
+Semantic rename and range formatting require a frozen preview identifier
+before apply. Only pure workspace-edit code actions can be applied; advertised
+language-server commands are classified but never executed. Missing native
+providers return `CAPABILITY_UNAVAILABLE` rather than falling back to textual
+search.
 
 ---
 
@@ -984,12 +1007,13 @@ Output:
 ```text
 path
 changeset_id
-previous_revision
+old_revision
 new_revision
+applied
 checkpointed
-edit_count
-diff_summary
-diagnostics_state
+modified
+diff
+truncated
 ```
 
 A stale revision returns a structured conflict rather than applying a best-effort merge.
@@ -1013,12 +1037,19 @@ Output results contain:
 path
 line
 column
-preview
+match
+context
+source
+modified
+revision
 ```
 
-The preferred provider is a controlled asynchronous ripgrep subprocess using an argument vector rather than a shell command string. A pure Emacs fallback may search `project-files`.
+Dirty visiting buffers are searched first and shadow disk results for the same
+path. The preferred disk provider is a controlled asynchronous ripgrep
+subprocess using an argument vector rather than a shell command string. A pure
+Emacs fallback may search `project-files`.
 
-### 18.4 `emacs_agent_diagnostics_get`
+### 18.4 `emacs_agent_document_diagnostics`
 
 Output:
 
@@ -1026,7 +1057,7 @@ Output:
 path
 document_revision
 diagnostics_revision
-provider
+providers
 pending
 stale
 diagnostics[]
@@ -1385,6 +1416,8 @@ Fuzz:
 
 ### Phase 0: Architectural Skeleton
 
+Status: implemented.
+
 Deliver:
 
 - package layout
@@ -1397,10 +1430,12 @@ Deliver:
 
 ### Phase 1: HTTP MCP Editing Loop
 
+Status: implemented.
+
 Deliver:
 
 - local HTTP listener
-- authentication and Origin validation
+- optional bearer authentication and Origin validation
 - protocol adapter framework
 - `server/discover` or compatibility initialization
 - `tools/list`
@@ -1423,6 +1458,8 @@ Agent reads buffer
 
 ### Phase 2: Complete Workspace Tool Replacement
 
+Status: implemented.
+
 Deliver:
 
 - project file listing
@@ -1439,35 +1476,39 @@ This phase replaces Read, Edit, Write, Glob, and Grep for normal source developm
 
 ### Phase 3: Semantic Editor Services
 
+Status: implemented.
+
 Deliver:
 
-- outline
+- document and workspace symbols
 - definitions
 - references
-- diagnostics
-- formatting
-- semantic rename
-- code actions where practical
+- revision-bound document and workspace diagnostics
+- trusted document and Eglot range formatting
+- preview-gated semantic rename
+- safely classified code actions
 - diagnostics revision tracking
 
 ### Phase 4: Advanced Protocol and Collaboration
 
+Status: implemented for the bounded PRD collaboration scope.
+
 Deliver:
 
-- both MCP protocol profiles as required by real clients
-- long-lived subscriptions for activity and diagnostics
-- multiple pre-approved workspaces
-- read-only concurrent clients
-- persistent review state
+- both MCP protocol profiles
 - multi-document semantic transactions
-- Ediff approval workflow
-- task/worktree lifecycle helpers
+- editor context with sensitive-buffer redaction
+- approval status, cancellation, TTL, and revision invalidation
+- read-only change-set diff buffers, source navigation, and overlays
+
+Long-lived subscriptions, cross-daemon persistent rollback state, and
+multi-workspace daemons remain outside the current package contract.
 
 ---
 
 ## 27. MVP Acceptance Criteria
 
-Version `0.1` is complete only when all of the following are true:
+The implemented release is complete only when all of the following are true:
 
 1. The complete server runs inside Emacs with no external MCP backend.
 2. An agent can connect through HTTP MCP.

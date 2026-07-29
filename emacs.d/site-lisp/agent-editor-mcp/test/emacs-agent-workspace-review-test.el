@@ -42,7 +42,7 @@
 
 (ert-deftest emacs-agent-workspace-review-approval-is-bound-and-one-use ()
   (emacs-agent-review-test--workspace
-    (let* ((arguments '(:path "a.el" :expected_revision "rev"))
+    (let* ((arguments '(:path "a.el" :force t))
            (request
             (emacs-agent-workspace-request-approval
              workspace "document_delete" arguments "writer-a"))
@@ -58,12 +58,94 @@
        (emacs-agent-workspace-consume-approval
         workspace id "document_delete" arguments "writer-b")
        :type 'emacs-agent-approval-error)
+      (should-error
+       (emacs-agent-workspace-consume-approval
+        workspace id "document_delete"
+        '(:path "different.el" :force t)
+        "writer-a")
+       :type 'emacs-agent-approval-error)
       (should
        (emacs-agent-workspace-consume-approval
         workspace id "document_delete" arguments "writer-a"))
       (should-error
        (emacs-agent-workspace-consume-approval
         workspace id "document_delete" arguments "writer-a")
+       :type 'emacs-agent-approval-error))))
+
+(ert-deftest emacs-agent-workspace-review-approval-expires ()
+  (emacs-agent-review-test--workspace
+    (let* ((request
+            (emacs-agent-workspace-request-approval
+             workspace "document_delete" '(:path "a.el") "writer"))
+           (id (plist-get request :approval_request_id))
+           (approval
+            (gethash id
+                     (emacs-agent-workspace-approval-registry workspace))))
+      (setf (emacs-agent-approval-expires-at approval)
+            (1- (float-time)))
+      (should-error
+       (emacs-agent-workspace-approve workspace id)
+       :type 'emacs-agent-approval-error)
+      (should (eq (emacs-agent-approval-status approval) 'expired)))))
+
+(ert-deftest emacs-agent-workspace-review-approval-invalidates-on-revision-change ()
+  (emacs-agent-review-test--workspace
+    (let* ((path "guarded.el")
+           (absolute (expand-file-name path root)))
+      (write-region "before\n" nil absolute)
+      (let* ((document (emacs-agent-document-open workspace path))
+             (revision (emacs-agent-document-revision document))
+             (arguments
+              (list :path path :expected_revision revision))
+             (request
+              (emacs-agent-workspace-request-approval
+               workspace "document_delete" arguments "writer"))
+             (id (plist-get request :approval_request_id))
+             (approval
+              (gethash
+               id (emacs-agent-workspace-approval-registry workspace))))
+        (emacs-agent-workspace-approve workspace id)
+        (with-current-buffer (emacs-agent-document-buffer document)
+          (goto-char (point-max))
+          (insert "changed\n"))
+        (should-error
+         (emacs-agent-workspace-consume-approval
+          workspace id "document_delete" arguments "writer")
+         :type 'emacs-agent-approval-error)
+        (should
+         (eq (emacs-agent-approval-status approval) 'invalidated))))))
+
+(ert-deftest emacs-agent-workspace-review-approval-does-not-leak-token ()
+  (emacs-agent-review-test--workspace
+    (let* ((credential "bearer-super-secret")
+           (request
+            (emacs-agent-workspace-request-approval
+             workspace "document_delete" '(:path "a.el") credential))
+           (public
+            (concat
+             (prin1-to-string request)
+             (prin1-to-string
+             (emacs-agent-workspace-recent-activity workspace)))))
+      (should-not (string-match-p (regexp-quote credential) public)))))
+
+(ert-deftest emacs-agent-workspace-review-approval-status-and-cancel ()
+  (emacs-agent-review-test--workspace
+    (let* ((arguments '(:path "a.el" :force t))
+           (request
+            (emacs-agent-workspace-request-approval
+             workspace "document_delete" arguments "writer"))
+           (id (plist-get request :approval_request_id))
+           (pending
+            (emacs-agent-workspace-approval-status workspace id))
+           (cancelled
+            (emacs-agent-workspace-approval-cancel workspace id)))
+      (should (eq (plist-get pending :status) 'pending))
+      (should (eq (plist-get cancelled :status) 'cancelled))
+      (should-not
+       (string-match-p "writer" (prin1-to-string cancelled)))
+      (should-error
+       (emacs-agent-workspace-consume-approval
+        workspace id "document_delete" arguments "writer")
        :type 'emacs-agent-approval-error))))
 
 (ert-deftest emacs-agent-workspace-review-files-and-search-cursors ()
@@ -92,6 +174,31 @@
               (mapcar
                (lambda (item) (plist-get item :path))
                (plist-get results :results)))))))
+
+(ert-deftest emacs-agent-workspace-search-prefers-dirty-buffer ()
+  (emacs-agent-review-test--workspace
+    (let* ((path "dirty.el")
+           (absolute (expand-file-name path root)))
+      (write-region "disk-only\n" nil absolute)
+      (let ((document (emacs-agent-document-open workspace path)))
+        (with-current-buffer (emacs-agent-document-buffer document)
+          (erase-buffer)
+          (insert "buffer-only needle\n"))
+        (let* ((found
+                (emacs-agent-workspace-search workspace "needle"))
+               (items (plist-get found :results))
+               (item (car items)))
+          (should (= (length items) 1))
+          (should (equal (plist-get item :path) path))
+          (should (equal (plist-get item :source) "buffer"))
+          (should (plist-get item :modified))
+          (should (stringp (plist-get item :revision))))
+        (should
+         (= 0
+            (length
+             (plist-get
+              (emacs-agent-workspace-search workspace "disk-only")
+              :results))))))))
 
 (ert-deftest emacs-agent-workspace-review-journal-redacts-secrets ()
   (emacs-agent-review-test--workspace
@@ -160,6 +267,37 @@
                   (with-temp-buffer
                     (insert-file-contents absolute)
                     (buffer-string)))))))))
+
+(ert-deftest emacs-agent-workspace-review-changeset-query-and-detail ()
+  (emacs-agent-review-test--workspace
+    (let* ((path "a.el")
+           (absolute (expand-file-name path root)))
+      (write-region "after\n" nil absolute)
+      (let* ((revision
+              (emacs-agent-document-revision-for-path workspace path))
+             (changeset
+              (emacs-agent-changeset-record
+               workspace
+               :operations (list (list :type 'edit :path path))
+               :before-snapshots
+               (list (cons path '(:exists t :content "before\n")))
+               :base-revisions (list (cons path "rev:before"))
+               :final-revisions (list (cons path revision))))
+             (id (emacs-agent-changeset-changeset-id changeset))
+             (page
+              (emacs-agent-changeset-query
+               workspace :path path :statuses '(applied) :limit 1))
+             (detail
+              (emacs-agent-changeset-detail
+               workspace id :max-chars 8)))
+        (should (= (plist-get page :result_count) 1))
+        (should
+         (equal
+          (plist-get (car (plist-get page :changesets)) :changeset_id)
+          id))
+        (should (stringp (plist-get detail :diff)))
+        (should (plist-get detail :diff_truncated))
+        (should (stringp (plist-get detail :diff_cursor)))))))
 
 (ert-deftest emacs-agent-workspace-review-rollback-rejects-symlink-escape ()
   (emacs-agent-review-test--workspace

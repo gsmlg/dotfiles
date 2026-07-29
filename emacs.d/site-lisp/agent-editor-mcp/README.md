@@ -5,15 +5,18 @@ server for software-development agents. The agent and the human use the same
 Emacs buffers, so unsaved edits, undo history, major modes, save hooks, and
 external file changes have one authoritative owner.
 
-Version 0.1 implements the transport, workspace, document, editing, search,
-change-set, rollback, and review features described in [design.md](design.md).
-Semantic language-service tools are intentionally deferred.
+The current implementation covers guarded exact replacement and unified
+patching, atomic multi-buffer edits, diagnostics, buffer-aware search,
+change-set review, Eglot/Xref semantics, trusted formatting, and the
+keyboard-driven approval UI described in [design.md](design.md).
 
 ## Requirements
 
 - Emacs 29.1 or newer
 - A local workspace directory
 - `ripgrep` for asynchronous workspace search, when available
+- Eglot/Xref providers for language-server semantic tools
+- Tree-sitter Python or YAML grammars for their parser diagnostics
 
 Search falls back to an Emacs implementation when `ripgrep` is unavailable.
 The server is pure Emacs Lisp and has no external MCP service.
@@ -92,17 +95,20 @@ The file contains:
   "pid": 12345,
   "workspace": "/path/to/workspace/",
   "endpoint": "http://127.0.0.1:54321/mcp",
-  "token": "generated-bearer-token",
+  "token_authentication": false,
   "protocol_versions": ["2026-07-28", "2025-11-25"],
   "started_at": "2026-07-28T08:00:00Z"
 }
 ```
 
-Clients should read `endpoint` and `token` each time they connect. Revoking
-the writer rotates the token and rewrites this file, invalidating existing
-credentials and legacy sessions.
+Token authentication is disabled by default, so the `token` field is omitted.
+When token authentication is enabled, `token_authentication` is `true` and
+the file also contains a `token` field. Clients should read the connection
+file each time they connect. Revoking the writer rotates an enabled token,
+rewrites this file, and invalidates existing credentials and legacy sessions.
 
-Do not copy the connection file into a repository or expose its token in logs.
+Do not copy the connection file into a repository or expose an enabled token
+in logs.
 
 ### Discovery example
 
@@ -111,10 +117,8 @@ The modern protocol profile uses MCP method headers and per-request metadata:
 ```sh
 connection="${XDG_STATE_HOME:-$HOME/.local/state}/emacs-agent-editor/workspace-name/connection.json"
 endpoint="$(jq -r .endpoint "$connection")"
-token="$(jq -r .token "$connection")"
 
 curl "$endpoint" \
-  -H "Authorization: Bearer $token" \
   -H "Content-Type: application/json" \
   -H "MCP-Protocol-Version: 2026-07-28" \
   -H "Mcp-Method: server/discover" \
@@ -135,6 +139,16 @@ curl "$endpoint" \
   }'
 ```
 
+When token authentication is enabled, also read the token and add the
+authorization header:
+
+```sh
+token="$(jq -r .token "$connection")"
+authorization="Authorization: Bearer $token"
+```
+
+Then add `-H "$authorization"` to the `curl` command above.
+
 ## Protocol profiles
 
 The endpoint supports two wire profiles:
@@ -144,33 +158,47 @@ The endpoint supports two wire profiles:
 - `2025-11-25`: compatibility profile using `initialize`,
   `notifications/initialized`, and `Mcp-Session-Id`.
 
-Both profiles expose the same editor tool registry. Requests are authenticated
-with `Authorization: Bearer <token>`. The v0.1 listener accepts only
-`127.0.0.1`.
+Both profiles expose the same editor tool registry. When token authentication
+is enabled, every request must include `Authorization: Bearer <token>`. The
+v0.2 listener accepts only `127.0.0.1`.
 
 ## Tools
 
-| Tool | Purpose |
+| Area | Tools |
 | --- | --- |
-| `emacs_agent_workspace_info` | Return workspace identity, policy, health, and capabilities. |
-| `emacs_agent_document_read` | Read authoritative buffer content with an opaque revision. |
-| `emacs_agent_document_apply_edits` | Apply guarded, non-overlapping range edits as one undo unit. |
-| `emacs_agent_document_create` | Create a text document inside the workspace. |
-| `emacs_agent_workspace_files` | List workspace files with glob filters and pagination. |
-| `emacs_agent_workspace_search` | Search text with `ripgrep` or the Emacs fallback. |
-| `emacs_agent_document_move` | Move a revision-guarded document while preserving its buffer. |
-| `emacs_agent_document_delete` | Delete a guarded document with rollback metadata. |
-| `emacs_agent_workspace_checkpoint` | Save guarded buffers through normal Emacs save hooks. |
-| `emacs_agent_workspace_sync` | Reconcile managed buffers with filesystem changes. |
-| `emacs_agent_workspace_diff` | Return paginated unified diffs for change sets. |
-| `emacs_agent_changeset_rollback` | Roll back a compatible change set after revision checks. |
+| Workspace | `workspace_info`, `workspace_files`, `workspace_search`, `workspace_apply_edits`, `workspace_checkpoint`, `workspace_sync`, `workspace_diff`, `workspace_modified_documents`, `workspace_diagnostics`, `workspace_symbols` |
+| Documents | `document_read`, `document_status`, `document_apply_edits`, `document_replace`, `document_apply_patch`, `document_create`, `document_move`, `document_delete`, `document_diagnostics`, `document_symbols` |
+| Change sets | `changeset_list`, `changeset_get`, `changeset_rollback` |
+| Semantics | `symbol_definition`, `symbol_references`, `symbol_rename`, `code_actions` |
+| Formatting | `format_document`, `format_range` |
+| Collaboration | `editor_context_get`, `approval_status`, `approval_cancel` |
+
+Every name above has the `emacs_agent_` prefix on the wire. Unsupported native
+language capabilities fail with `CAPABILITY_UNAVAILABLE`; text search is never
+presented as semantic rename or reference analysis.
 
 Document revisions are opaque. A mutating client must first read a document,
 then send the returned revision as `expected_revision`. If the buffer or file
 changes in the meantime, the mutation fails and the client must reread.
 
-Positions are one-based lines and zero-based character columns. Columns count
-Emacs characters, not UTF-8 bytes.
+Positions use one-based logical lines and zero-based Emacs-character columns.
+Ranges are half-open. Tabs count as one character; columns are not display
+columns or UTF-8/UTF-16 offsets. CRLF is represented as logical newlines while
+the document coding system preserves its EOL style. All edits refer to the
+same `expected_revision`, are validated together, and are applied in
+descending position order. Overlaps and multiple inserts at the same position
+are rejected.
+
+Exact replacement, patching, workspace edits, semantic rename, and formatting
+support preview/dry-run flows. Rename and range formatting return a frozen
+preview identifier that must be supplied to the apply call. Code actions are
+classified; only pure workspace edits can be applied. Language-server commands
+are never executed.
+
+Core write results consistently include `old_revision`, `new_revision`,
+`changeset_id`, `applied`, `checkpointed`, `modified`, `diff`, and
+`truncated`. Public tool errors contain an uppercase stable `code`, `message`,
+`retryable`, nested `details`, and a compatibility `legacy_code`.
 
 ## Workspace and save policies
 
@@ -194,6 +222,9 @@ change and unsaved buffer edit produces a reconciliation conflict.
 Each successful mutation creates a change set containing revision guards,
 before-images in memory, and a frozen unified diff. Rollback is allowed only
 while every affected document still matches the recorded final revision.
+Change-set contents persist for the lifetime of the Emacs daemon; restarting
+the daemon intentionally invalidates revisions, cursors, previews, approvals,
+and in-memory rollback history.
 
 ## Human controls
 
@@ -206,9 +237,10 @@ Useful interactive commands:
 | `M-x emacs-agent-editor-stop` | Stop the server and remove connection metadata. |
 | `M-x emacs-agent-editor-pause` | Pause mutations while retaining read access. |
 | `M-x emacs-agent-editor-resume` | Resume mutations. |
-| `M-x emacs-agent-editor-revoke-writer` | Pause mutations, rotate the token, and clear sessions. |
+| `M-x emacs-agent-editor-revoke-writer` | Pause mutations, rotate an enabled token, and clear sessions. |
 | `M-x emacs-agent-show-activity` | Show requests and pending approvals. |
 | `M-x emacs-agent-show-changes` | Show recorded change sets. |
+| `M-x emacs-agent-show-approvals` | Review approval details and TTL state. |
 
 The activity buffer provides:
 
@@ -228,6 +260,11 @@ The changes buffer provides:
 - `P` / `R`: pause or resume mutations
 - `g`: refresh
 
+The approvals buffer shows redacted operation impact and supports approve,
+reject, and cancel. Partial acceptance is explicitly unsupported. Change-set
+diff buffers are read-only, can refresh, and can highlight current hunks in
+their source buffers.
+
 ## Configuration
 
 Core options can be set with `setq` or through
@@ -235,22 +272,28 @@ Core options can be set with `setq` or through
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `emacs-agent-editor-host` | `"127.0.0.1"` | Listener address; v0.1 only accepts IPv4 loopback. |
+| `emacs-agent-editor-host` | `"127.0.0.1"` | Listener address; v0.2 only accepts IPv4 loopback. |
 | `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. |
 | `emacs-agent-editor-endpoint` | `"/mcp"` | HTTP endpoint path. |
 | `emacs-agent-editor-allowed-origins` | `nil` | Allowed values for a present `Origin` header. |
 | `emacs-agent-editor-state-directory` | XDG state directory | Parent directory for private runtime state. |
 | `emacs-agent-editor-access-mode` | `autonomous` | `read-only`, `review`, or `autonomous`. |
 | `emacs-agent-editor-save-policy` | `immediate` | `immediate`, `manual`, or `explicit-per-call`. |
-| `emacs-agent-editor-bearer-token` | `nil` | Fixed token, or `nil` to generate one at startup. |
+| `emacs-agent-editor-token-authentication-enabled` | `nil` | Require bearer-token authentication for MCP requests. |
+| `emacs-agent-editor-bearer-token` | `nil` | When authentication is enabled, use this fixed token or generate one when nil. |
 | `emacs-agent-policy-maximum-document-bytes` | 4 MiB | Maximum managed document size. |
 | `emacs-agent-journal-enabled` | `nil` | Enable the redacted JSONL activity journal. |
+| `emacs-agent-semantic-format-function` | `nil` | Trusted string-in/string-out document formatter configured by the Emacs user. |
 
 Example:
 
 ```elisp
 (setq emacs-agent-editor-access-mode 'review
       emacs-agent-editor-save-policy 'manual
+      emacs-agent-editor-token-authentication-enabled t
+      ;; Omit this setting to generate a fresh token at startup.
+      emacs-agent-editor-bearer-token
+      (getenv "AGENT_EDITOR_MCP_TOKEN")
       emacs-agent-editor-allowed-origins
       '("http://127.0.0.1:3000")
       emacs-agent-journal-enabled t)
@@ -262,10 +305,10 @@ removed before journal entries are serialized.
 
 ## Security model
 
-Version 0.1 applies the following boundaries:
+Version 0.2 applies the following boundaries:
 
 - Loopback-only listener.
-- Bearer authentication on every request.
+- Optional bearer authentication, disabled by default.
 - Optional exact origin allowlist.
 - Content-length framing with bounded headers and bodies.
 - Strict UTF-8 and JSON-RPC validation.
@@ -276,6 +319,10 @@ Version 0.1 applies the following boundaries:
   reconciliation.
 - Request cancellation when a client disconnects.
 - Private state directories and credential files.
+
+With token authentication disabled, any local process able to connect to the
+loopback port can call the endpoint. Enable token authentication when the
+local machine or process boundary is not sufficiently trusted.
 
 The server is intended for trusted local agents. It is not an
 internet-facing service.
@@ -296,9 +343,11 @@ After changing Emacs Lisp in this repository, also run:
 ```
 
 The test suite covers transport framing and authentication, both protocol
-profiles, revision and reconciliation behavior, atomic editing, policy
-boundaries, search pagination, lifecycle operations, change sets, rollback,
-journaling, and the review UI.
+profiles, revision and reconciliation behavior, Unicode/tab/CRLF positions,
+exact replacement and strict patching, multi-buffer atomicity, diagnostics,
+buffer-aware search, native semantic previews, lifecycle operations, change
+sets, approval replay/expiry, credential redaction, rollback, journaling, and
+the review UI.
 
 See [design.md](design.md) for the complete architecture, protocol contracts,
 security rationale, and deferred roadmap.

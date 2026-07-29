@@ -13,6 +13,15 @@
 (require 'project)
 (require 'subr-x)
 
+(declare-function emacs-agent-changeset-final-revisions
+                  "emacs-agent-changeset" (changeset))
+(declare-function emacs-agent-changeset-get
+                  "emacs-agent-changeset" (workspace changeset-id))
+(declare-function emacs-agent-document-revision-for-path
+                  "emacs-agent-document" (workspace path))
+(declare-function emacs-agent-document-status
+                  "emacs-agent-document" (workspace path))
+
 (defgroup emacs-agent-editor nil
   "Buffer-first editing services for software agents."
   :group 'tools)
@@ -55,7 +64,8 @@
 
 (cl-defstruct (emacs-agent-approval
                (:constructor emacs-agent-approval--make))
-  id operation digest credential created-at expires-at status)
+  id operation digest credential created-at expires-at status summary
+  revision-bindings)
 
 (defvar emacs-agent-workspace-registry (make-hash-table :test #'equal)
   "Registry of configured workspaces, keyed by workspace ID.")
@@ -323,6 +333,110 @@ job is queued and returns `queued'."
                    arguments)))
                 'utf-8)))
 
+(defun emacs-agent-workspace--approval-field (object key)
+  "Read KEY from approval argument OBJECT."
+  (cond
+   ((hash-table-p object)
+    (or (gethash key object)
+        (gethash (symbol-name key) object)
+        (gethash (intern (concat ":" (symbol-name key))) object)))
+   ((and (listp object) (keywordp (car object)))
+    (plist-get object (intern (concat ":" (symbol-name key)))))
+   ((listp object)
+    (or (alist-get key object)
+        (alist-get (symbol-name key) object nil nil #'string=)))))
+
+(defun emacs-agent-workspace--approval-has-field-p (object key)
+  "Return whether approval argument OBJECT has KEY."
+  (cond
+   ((hash-table-p object)
+    (let ((missing (make-symbol "missing")))
+      (or
+       (not (eq missing (gethash key object missing)))
+       (not (eq missing (gethash (symbol-name key) object missing)))
+       (not
+        (eq
+         missing
+         (gethash
+          (intern (concat ":" (symbol-name key)))
+          object missing))))))
+   ((and (listp object) (keywordp (car object)))
+    (plist-member object (intern (concat ":" (symbol-name key)))))
+   ((listp object)
+    (or (assq key object)
+        (assoc (symbol-name key) object)))))
+
+(defun emacs-agent-workspace--approval-revision-bindings
+    (workspace arguments)
+  "Return safe path and revision bindings for WORKSPACE and ARGUMENTS."
+  (let ((path (emacs-agent-workspace--approval-field arguments 'path))
+        (revision
+         (emacs-agent-workspace--approval-field arguments
+                                                'expected_revision))
+        (documents
+         (emacs-agent-workspace--approval-field arguments 'documents))
+        (changeset-id
+         (emacs-agent-workspace--approval-field arguments 'changeset_id))
+        bindings)
+    (when (and (stringp path) (stringp revision))
+      (push (cons path revision) bindings))
+    (dolist (document
+             (cond
+              ((vectorp documents) (append documents nil))
+              ((listp documents) documents)))
+      (let ((document-path
+             (emacs-agent-workspace--approval-field document 'path))
+            (document-revision
+             (emacs-agent-workspace--approval-field
+              document 'expected_revision)))
+        (when (and (stringp document-path)
+                   (stringp document-revision))
+          (push (cons document-path document-revision) bindings))))
+    (when (and (null bindings)
+               (stringp changeset-id)
+               (fboundp 'emacs-agent-changeset-get)
+               (fboundp 'emacs-agent-changeset-final-revisions))
+      (condition-case nil
+          (setq bindings
+                (copy-tree
+                 (funcall
+                  #'emacs-agent-changeset-final-revisions
+                  (funcall #'emacs-agent-changeset-get
+                           workspace changeset-id))))
+        (error nil)))
+    (nreverse bindings)))
+
+(defun emacs-agent-workspace--approval-summary (operation arguments)
+  "Return a display-safe summary for OPERATION and ARGUMENTS."
+  (let ((keys '(path new_path changeset_id expected_revision
+                     checkpoint force dry_run))
+        summary)
+    (dolist (key keys)
+      (let ((value (emacs-agent-workspace--approval-field arguments key)))
+        (when (and
+               (emacs-agent-workspace--approval-has-field-p arguments key)
+               (or (stringp value) (numberp value)
+                   (memq value '(t nil))))
+          (setq summary
+                (plist-put summary
+                           (intern (concat ":" (symbol-name key)))
+                           value)))))
+    (let ((documents
+           (emacs-agent-workspace--approval-field arguments 'documents)))
+      (when (or (listp documents) (vectorp documents))
+        (setq summary
+              (plist-put summary :document_count (length documents)))))
+    (plist-put
+     summary :risk
+     (cond
+      ((equal operation "document_delete") "Deletes a workspace document")
+      ((equal operation "document_move") "Moves a workspace document")
+      ((equal operation "changeset_rollback")
+       "Restores prior contents and may overwrite current files")
+      ((string-match-p "format" (format "%s" operation))
+       "Runs a configured formatter and changes buffer contents")
+      (t "Performs a protected workspace mutation")))))
+
 (defun emacs-agent-workspace-request-approval
     (workspace operation arguments credential)
   "Create a pending approval for OPERATION and ARGUMENTS in WORKSPACE.
@@ -337,7 +451,12 @@ returned value or activity history."
            :digest (emacs-agent-workspace-approval-digest operation arguments)
            :credential credential :created-at now
            :expires-at (+ now emacs-agent-approval-lifetime)
-           :status 'pending)))
+           :status 'pending
+           :summary
+           (emacs-agent-workspace--approval-summary operation arguments)
+           :revision-bindings
+           (emacs-agent-workspace--approval-revision-bindings
+            workspace arguments))))
     (puthash id approval
              (emacs-agent-workspace-approval-registry workspace))
     (emacs-agent-workspace-record-activity
@@ -355,26 +474,134 @@ returned value or activity history."
       (signal 'emacs-agent-approval-error
               (list "Unknown approval request"))))
 
+(defun emacs-agent-workspace--approval-record-transition
+    (workspace approval status &optional reason)
+  "Audit APPROVAL transition to STATUS in WORKSPACE, optionally for REASON."
+  (emacs-agent-workspace-record-activity
+   workspace
+   (append
+    (list :tool (emacs-agent-approval-operation approval)
+          :status (symbol-name status)
+          :approval_request_id (emacs-agent-approval-id approval))
+    (when reason (list :reason reason)))))
+
+(defun emacs-agent-workspace--approval-revisions-current-p
+    (workspace approval)
+  "Return non-nil when APPROVAL revision bindings still match WORKSPACE."
+  (or
+   (null (emacs-agent-approval-revision-bindings approval))
+   (not (fboundp 'emacs-agent-document-revision-for-path))
+   (and
+    (cl-every
+     (lambda (binding)
+       (condition-case nil
+           (if (cdr binding)
+               (equal
+                (cdr binding)
+                (funcall #'emacs-agent-document-revision-for-path
+                         workspace (car binding)))
+             (and
+              (fboundp 'emacs-agent-document-status)
+              (not
+               (plist-get
+                (funcall #'emacs-agent-document-status
+                         workspace (car binding))
+                :exists_on_disk))))
+         (error nil)))
+     (emacs-agent-approval-revision-bindings approval)))))
+
+(defun emacs-agent-workspace--refresh-approval (workspace approval)
+  "Refresh TTL and revision state for APPROVAL in WORKSPACE."
+  (when (memq (emacs-agent-approval-status approval) '(pending approved))
+    (cond
+     ((<= (emacs-agent-approval-expires-at approval) (float-time))
+      (setf (emacs-agent-approval-status approval) 'expired)
+      (emacs-agent-workspace--approval-record-transition
+       workspace approval 'expired 'ttl))
+     ((not
+       (emacs-agent-workspace--approval-revisions-current-p
+        workspace approval))
+      (setf (emacs-agent-approval-status approval) 'invalidated)
+      (emacs-agent-workspace--approval-record-transition
+       workspace approval 'invalidated 'revision_changed))))
+  approval)
+
+;;;###autoload
+(defun emacs-agent-workspace-approval-status (workspace id)
+  "Return a credential-free public status for approval ID in WORKSPACE."
+  (let* ((approval
+          (emacs-agent-workspace--refresh-approval
+           workspace (emacs-agent-workspace--approval workspace id)))
+         (remaining
+          (max 0.0
+               (- (emacs-agent-approval-expires-at approval)
+                  (float-time)))))
+    (append
+     (list :approval_request_id (emacs-agent-approval-id approval)
+           :operation (emacs-agent-approval-operation approval)
+           :operation_digest (emacs-agent-approval-digest approval)
+           :status (emacs-agent-approval-status approval)
+           :created_at (emacs-agent-approval-created-at approval)
+           :expires_at (emacs-agent-approval-expires-at approval)
+           :ttl_remaining remaining
+           :partial_accept_supported nil)
+     (copy-tree (emacs-agent-approval-summary approval)))))
+
+;;;###autoload
+(defun emacs-agent-workspace-approval-list (&optional workspace)
+  "Return safe approval statuses for WORKSPACE, newest first."
+  (let ((workspace (or workspace (emacs-agent-workspace-current)))
+        statuses)
+    (maphash
+     (lambda (id _approval)
+       (push (emacs-agent-workspace-approval-status workspace id) statuses))
+     (emacs-agent-workspace-approval-registry workspace))
+    (sort statuses
+          (lambda (left right)
+            (> (plist-get left :created_at)
+               (plist-get right :created_at))))))
+
+;;;###autoload
+(defun emacs-agent-workspace-approval-cancel (workspace id)
+  "Cancel pending or approved approval ID in WORKSPACE and return its status."
+  (let ((approval
+         (emacs-agent-workspace--refresh-approval
+          workspace (emacs-agent-workspace--approval workspace id))))
+    (unless (memq (emacs-agent-approval-status approval) '(pending approved))
+      (signal 'emacs-agent-approval-error
+              (list "Approval request cannot be cancelled")))
+    (setf (emacs-agent-approval-status approval) 'cancelled)
+    (emacs-agent-workspace--approval-record-transition
+     workspace approval 'cancelled)
+    (emacs-agent-workspace-approval-status workspace id)))
+
+(defalias 'emacs-agent-workspace-cancel-approval
+  #'emacs-agent-workspace-approval-cancel)
+
 (defun emacs-agent-workspace-approve (workspace id)
   "Approve pending request ID in WORKSPACE."
-  (let ((approval (emacs-agent-workspace--approval workspace id)))
+  (let ((approval
+         (emacs-agent-workspace--refresh-approval
+          workspace (emacs-agent-workspace--approval workspace id))))
     (unless (eq (emacs-agent-approval-status approval) 'pending)
       (signal 'emacs-agent-approval-error
               (list "Approval request is not pending")))
-    (when (< (emacs-agent-approval-expires-at approval) (float-time))
-      (setf (emacs-agent-approval-status approval) 'expired)
-      (signal 'emacs-agent-approval-error
-              (list "Approval request has expired")))
     (setf (emacs-agent-approval-status approval) 'approved)
+    (emacs-agent-workspace--approval-record-transition
+     workspace approval 'approved)
     t))
 
 (defun emacs-agent-workspace-reject (workspace id)
   "Reject pending request ID in WORKSPACE."
-  (let ((approval (emacs-agent-workspace--approval workspace id)))
+  (let ((approval
+         (emacs-agent-workspace--refresh-approval
+          workspace (emacs-agent-workspace--approval workspace id))))
     (unless (memq (emacs-agent-approval-status approval) '(pending approved))
       (signal 'emacs-agent-approval-error
               (list "Approval request cannot be rejected")))
     (setf (emacs-agent-approval-status approval) 'rejected)
+    (emacs-agent-workspace--approval-record-transition
+     workspace approval 'rejected)
     t))
 
 (defun emacs-agent-workspace-consume-approval
@@ -382,15 +609,13 @@ returned value or activity history."
   "Consume approval ID in WORKSPACE if it exactly authorizes this request.
 
 The grant is one-use, unexpired, credential-bound, and tied to OPERATION and
-ARGUMENTS."
-  (let ((approval (emacs-agent-workspace--approval workspace id)))
+  ARGUMENTS."
+  (let ((approval
+         (emacs-agent-workspace--refresh-approval
+          workspace (emacs-agent-workspace--approval workspace id))))
     (unless (eq (emacs-agent-approval-status approval) 'approved)
       (signal 'emacs-agent-approval-error
               (list "Approval request has not been approved")))
-    (when (< (emacs-agent-approval-expires-at approval) (float-time))
-      (setf (emacs-agent-approval-status approval) 'expired)
-      (signal 'emacs-agent-approval-error
-              (list "Approval request has expired")))
     (unless (and (equal credential (emacs-agent-approval-credential approval))
                  (equal operation (emacs-agent-approval-operation approval))
                  (equal (emacs-agent-workspace-approval-digest
@@ -399,6 +624,8 @@ ARGUMENTS."
       (signal 'emacs-agent-approval-error
               (list "Approval does not match this request")))
     (setf (emacs-agent-approval-status approval) 'consumed)
+    (emacs-agent-workspace--approval-record-transition
+     workspace approval 'consumed)
     t))
 
 (provide 'emacs-agent-workspace)

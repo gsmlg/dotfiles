@@ -39,6 +39,30 @@
         (should (equal (buffer-string) "aβ\tz\n")))
       (should-not (equal revision (plist-get result :new_revision))))))
 
+(ert-deftest emacs-agent-edit-counts-tab-combining-and-emoji-as-characters ()
+  (emacs-agent-edit-test-with-file "a\t中é😀z\n"
+    (let* ((document (emacs-agent-document-open root "file.txt"))
+           (revision (emacs-agent-document-revision document)))
+      ;; Columns are: a=0, tab=1, 中=2, e=3, combining acute=4,
+      ;; emoji=5, z=6.  Display width must not affect the public range.
+      (emacs-agent-edit-apply
+       root "file.txt" revision
+       (list (emacs-agent-edit-test-edit 1 4 1 6 "X" "́😀")))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (should (equal (buffer-string) "a\t中eXz\n"))))))
+
+(ert-deftest emacs-agent-edit-crlf-positions-use-logical-lines ()
+  (emacs-agent-edit-test-with-file "one\r\ntwo\r\n"
+    (let* ((document (emacs-agent-document-open root "file.txt"))
+           (revision (emacs-agent-document-revision document)))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (should (= (coding-system-eol-type buffer-file-coding-system) 1)))
+      (emacs-agent-edit-apply
+       root "file.txt" revision
+       (list (emacs-agent-edit-test-edit 2 0 2 3 "TWO" "two")))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (should (equal (buffer-string) "one\nTWO\n"))))))
+
 (ert-deftest emacs-agent-edit-rejects-stale-revision-without-change ()
   (emacs-agent-edit-test-with-file "abc\n"
     (let* ((document (emacs-agent-document-open root "file.txt"))

@@ -12,6 +12,7 @@
 (require 'project)
 (require 'seq)
 (require 'subr-x)
+(require 'emacs-agent-document)
 (require 'emacs-agent-workspace)
 (require 'emacs-agent-policy)
 
@@ -237,7 +238,21 @@ constrain paths."
                              :column
                              (emacs-agent-search--byte-column
                               preview byte-column)
-                             :preview preview)
+                             :match
+                             (when submatch
+                               (let ((start
+                                      (emacs-agent-search--byte-column
+                                       preview
+                                       (alist-get 'start submatch)))
+                                     (end
+                                      (emacs-agent-search--byte-column
+                                       preview
+                                       (alist-get 'end submatch))))
+                                 (substring preview start end)))
+                             :context preview
+                             :preview preview
+                             :source "disk"
+                             :modified :false)
                        results))))
               (error nil))))
         (forward-line 1))
@@ -291,6 +306,105 @@ constrain paths."
                 (error nil)))))))
     (nreverse results)))
 
+(defun emacs-agent-search--dirty-buffer-results
+    (workspace query regexp include-globs exclude-globs)
+  "Search dirty WORKSPACE buffers for QUERY.
+REGEXP, INCLUDE-GLOBS, and EXCLUDE-GLOBS have their public meanings.  Return
+the dirty paths together with normalized search results."
+  (let ((matcher (if regexp query (regexp-quote query)))
+        paths results)
+    (dolist (buffer (buffer-list))
+      (when-let* ((file (buffer-file-name buffer)))
+        (when (and
+               (with-current-buffer buffer (buffer-modified-p))
+               (condition-case nil
+                   (file-in-directory-p
+                    (file-truename file)
+                    (emacs-agent-workspace-root workspace))
+                 (file-error nil)))
+          (let ((path
+                 (file-relative-name
+                  (file-truename file)
+                  (emacs-agent-workspace-root workspace))))
+            (when (and
+                   (emacs-agent-search--included-p
+                    path include-globs exclude-globs)
+                   (condition-case nil
+                       (progn
+                         (emacs-agent-policy-assert-document workspace path)
+                         t)
+                     (emacs-agent-error nil)))
+              (push path paths)
+              (with-current-buffer buffer
+                (save-restriction
+                  (widen)
+                  (save-excursion
+                    (goto-char (point-min))
+                    (while
+                        (and
+                         (< (length results)
+                            emacs-agent-search-hard-limit)
+                         (condition-case error-data
+                             (re-search-forward matcher nil t)
+                           (invalid-regexp
+                            (signal
+                             'emacs-agent-search-error
+                             (list (error-message-string error-data))))))
+                      (let* ((start (match-beginning 0))
+                             (matched (match-string-no-properties 0))
+                             (line-start
+                              (save-excursion
+                                (goto-char start)
+                                (line-beginning-position)))
+                             (line-end
+                              (save-excursion
+                                (goto-char start)
+                                (line-end-position)))
+                             (document
+                              (emacs-agent-document-open workspace path t)))
+                        (push
+                         (list
+                          :path path
+                          :line (line-number-at-pos start)
+                          :column (- start line-start)
+                          :match matched
+                          :context
+                          (buffer-substring-no-properties
+                           line-start line-end)
+                          :preview
+                          (buffer-substring-no-properties
+                           line-start line-end)
+                          :source "buffer"
+                          :modified t
+                          :revision
+                          (emacs-agent-document-revision document))
+                         results)))))))))))
+    (list :paths (delete-dups paths)
+          :results (nreverse results))))
+
+(defun emacs-agent-search--merge-authoritative
+    (disk-results dirty-paths buffer-results)
+  "Merge DISK-RESULTS with authoritative BUFFER-RESULTS.
+DIRTY-PATHS are removed from disk output before deterministic sorting."
+  (sort
+   (append
+    (seq-remove
+     (lambda (item)
+       (member (plist-get item :path) dirty-paths))
+     disk-results)
+    buffer-results)
+   (lambda (left right)
+     (let ((left-path (plist-get left :path))
+           (right-path (plist-get right :path)))
+       (if (equal left-path right-path)
+           (let ((left-line (plist-get left :line))
+                 (right-line (plist-get right :line)))
+             (if (= left-line right-line)
+                 (< (plist-get left :column)
+                    (plist-get right :column))
+               (< left-line right-line)))
+         (string< left-path right-path))))))
+
 (defun emacs-agent-search--run-rg
     (workspace query regexp include-globs exclude-globs)
   "Search WORKSPACE synchronously with ripgrep for QUERY.
@@ -318,7 +432,7 @@ REGEXP, INCLUDE-GLOBS, and EXCLUDE-GLOBS control matching."
       (kill-buffer buffer))))
 
 (defun emacs-agent-search--finish-async
-    (process workspace fingerprint limit callback)
+    (process workspace fingerprint limit callback dirty-paths buffer-results)
   "Complete PROCESS for WORKSPACE and invoke CALLBACK.
 FINGERPRINT binds pagination and LIMIT bounds the returned page."
   (let ((buffer (process-buffer process))
@@ -330,15 +444,17 @@ FINGERPRINT binds pagination and LIMIT bounds the returned page."
              callback
              (emacs-agent-search--page
               workspace 'search fingerprint
-              (seq-filter
-               (lambda (item)
-                 (condition-case nil
-                     (progn
-                       (emacs-agent-policy-assert-document
-                        workspace (plist-get item :path))
-                       t)
-                   (emacs-agent-error nil)))
-               (emacs-agent-search--parse-rg-buffer buffer))
+              (emacs-agent-search--merge-authoritative
+               (seq-filter
+                (lambda (item)
+                  (condition-case nil
+                      (progn
+                        (emacs-agent-policy-assert-document
+                         workspace (plist-get item :path))
+                        t)
+                    (emacs-agent-error nil)))
+                (emacs-agent-search--parse-rg-buffer buffer))
+               dirty-paths buffer-results)
               0 limit)
              nil)
           (funcall callback nil
@@ -348,10 +464,11 @@ FINGERPRINT binds pagination and LIMIT bounds the returned page."
 
 (defun emacs-agent-search--start-rg
     (workspace query regexp include-globs exclude-globs fingerprint
-               limit callback)
+               limit callback dirty-paths buffer-results)
   "Search WORKSPACE asynchronously for QUERY and return the process.
 REGEXP, INCLUDE-GLOBS, and EXCLUDE-GLOBS control matching.  FINGERPRINT binds
-pagination, LIMIT bounds the page, and CALLBACK receives completion."
+pagination, LIMIT bounds the page, and CALLBACK receives completion.
+DIRTY-PATHS shadow disk hits with authoritative BUFFER-RESULTS."
   (let* ((default-directory (emacs-agent-workspace-root workspace))
          (buffer (generate-new-buffer " *emacs-agent-rg*"))
          (process
@@ -368,7 +485,8 @@ pagination, LIMIT bounds the page, and CALLBACK receives completion."
              (when (and (gethash proc emacs-agent-search-processes)
                         (memq (process-status proc) '(exit signal)))
                (emacs-agent-search--finish-async
-                proc workspace fingerprint limit callback))))))
+                proc workspace fingerprint limit callback
+                dirty-paths buffer-results))))))
     (puthash process t emacs-agent-search-processes)
     process))
 
@@ -384,6 +502,11 @@ and CURSOR resumes a prior request."
   (unless (and (stringp query) (not (string-empty-p query)))
     (signal 'wrong-type-argument (list 'non-empty-string query)))
   (let* ((limit (emacs-agent-search--limit max-results))
+         (dirty
+          (emacs-agent-search--dirty-buffer-results
+           workspace query regexp include-globs exclude-globs))
+         (dirty-paths (plist-get dirty :paths))
+         (buffer-results (plist-get dirty :results))
          (fingerprint
           (secure-hash
            'sha256
@@ -401,14 +524,16 @@ and CURSOR resumes a prior request."
      ((and callback (executable-find "rg"))
       (emacs-agent-search--start-rg
        workspace query regexp include-globs exclude-globs
-       fingerprint limit callback))
+       fingerprint limit callback dirty-paths buffer-results))
      (t
       (let ((items
-             (if (executable-find "rg")
-                 (emacs-agent-search--run-rg
-                  workspace query regexp include-globs exclude-globs)
-               (emacs-agent-search--fallback
-                workspace query regexp include-globs exclude-globs))))
+             (emacs-agent-search--merge-authoritative
+              (if (executable-find "rg")
+                  (emacs-agent-search--run-rg
+                   workspace query regexp include-globs exclude-globs)
+                (emacs-agent-search--fallback
+                 workspace query regexp include-globs exclude-globs))
+              dirty-paths buffer-results)))
         (emacs-agent-search--page
          workspace 'search fingerprint items 0 limit))))))
 

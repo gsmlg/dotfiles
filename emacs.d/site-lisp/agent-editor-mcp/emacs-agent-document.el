@@ -11,6 +11,15 @@
 (require 'emacs-agent-policy)
 (require 'subr-x)
 
+(declare-function emacs-agent-changeset-changeset-id
+                  "emacs-agent-changeset" (changeset))
+(declare-function emacs-agent-changeset-list
+                  "emacs-agent-changeset" (&optional workspace))
+(declare-function emacs-agent-changeset-status
+                  "emacs-agent-changeset" (changeset))
+(declare-function emacs-agent-changeset-touched-documents
+                  "emacs-agent-changeset" (changeset))
+
 (defvar emacs-agent-document-server-epoch
   (substring (secure-hash 'sha256
                           (format "%s:%s:%s:%s"
@@ -167,19 +176,47 @@ FOR-CREATE permits a missing leaf but does not insert or save any content."
     (with-current-buffer buffer
       (save-restriction
         (widen)
-        (let ((tick (buffer-chars-modified-tick)))
-          (unless (equal tick (emacs-agent-document-buffer-tick document))
-            (let ((hash (secure-hash 'sha256 (current-buffer)
-                                     (point-min) (point-max))))
-              (setf (emacs-agent-document-buffer-tick document) tick
-                    (emacs-agent-document-content-hash document) hash
-                    (emacs-agent-document-cached-revision document)
-                    (format "rev:%s:%s:%s"
-                            (emacs-agent-document--epoch
-                             (emacs-agent-document-workspace document))
-                            tick hash))))
+        (let* ((tick (buffer-chars-modified-tick))
+               (coding (or buffer-file-coding-system 'undecided))
+               (eol (emacs-agent-document--eol-style coding))
+               (hash
+                (secure-hash
+                 'sha256
+                 (concat
+                  (symbol-name coding) "\0" eol "\0"
+                  (buffer-substring-no-properties
+                   (point-min) (point-max))))))
+          (unless (and
+                   (equal hash
+                          (emacs-agent-document-content-hash document))
+                   (equal coding
+                          (emacs-agent-document-coding-system document)))
+            (setf (emacs-agent-document-buffer-tick document) tick
+                  (emacs-agent-document-content-hash document) hash
+                  (emacs-agent-document-coding-system document) coding
+                  (emacs-agent-document-eol-style document) eol
+                  (emacs-agent-document-cached-revision document)
+                  (format "rev:%s:%s"
+                          (emacs-agent-document--epoch
+                           (emacs-agent-document-workspace document))
+                          hash)))
           (setf (emacs-agent-document-modified document) (buffer-modified-p))
           (emacs-agent-document-cached-revision document))))))
+
+(defun emacs-agent-document--unvisited-revision (workspace absolute)
+  "Return a content revision for unvisited ABSOLUTE in WORKSPACE."
+  (with-temp-buffer
+    (insert-file-contents absolute)
+    (let* ((coding (or buffer-file-coding-system 'undecided))
+           (eol (emacs-agent-document--eol-style coding))
+           (hash
+            (secure-hash
+             'sha256
+             (concat
+              (symbol-name coding) "\0" eol "\0"
+              (buffer-substring-no-properties (point-min) (point-max))))))
+      (format "rev:%s:%s"
+              (emacs-agent-document--epoch workspace) hash))))
 
 ;;;###autoload
 (defun emacs-agent-document-revision-for-path (workspace path)
@@ -187,6 +224,106 @@ FOR-CREATE permits a missing leaf but does not insert or save any content."
   (let ((document (emacs-agent-document-open workspace path)))
     (emacs-agent-document-reconcile document)
     (emacs-agent-document-revision document)))
+
+;;;###autoload
+(defun emacs-agent-document-status (workspace path)
+  "Return status for PATH in WORKSPACE without visiting an unvisited file."
+  (let* ((absolute (emacs-agent-policy-resolve workspace path t))
+         (relative
+          (file-relative-name absolute
+                              (emacs-agent-document--workspace-root workspace)))
+         (buffer (emacs-agent-document--existing-buffer absolute))
+         (document
+          (and (buffer-live-p buffer)
+               (emacs-agent-document-open workspace relative t)))
+         (exists (file-exists-p absolute))
+         (disk-fingerprint
+          (emacs-agent-document--disk-fingerprint absolute))
+         (known-fingerprint
+          (and document
+               (emacs-agent-document-disk-fingerprint document)))
+         (disk-changed
+          (and document
+               (not (equal known-fingerprint disk-fingerprint))))
+         (modified
+          (and (buffer-live-p buffer)
+               (with-current-buffer buffer (buffer-modified-p))))
+         active-changesets)
+    (when (and (fboundp 'emacs-agent-workspace-p)
+               (emacs-agent-workspace-p workspace)
+               (fboundp 'emacs-agent-changeset-list))
+      (dolist (changeset (emacs-agent-changeset-list workspace))
+        (when (and
+               (memq (emacs-agent-changeset-status changeset)
+                     '(applied checkpointed reviewed conflicted))
+               (member relative
+                       (emacs-agent-changeset-touched-documents changeset)))
+          (push (emacs-agent-changeset-changeset-id changeset)
+                active-changesets))))
+    (list
+     :path relative
+     :visited (and (buffer-live-p buffer) t)
+     :exists_on_disk (and exists t)
+     :modified (and modified t)
+     :checkpointed (not modified)
+     :disk_changed (and disk-changed t)
+     :conflicted
+     (and document
+          (or (emacs-agent-document-externally-modified document)
+              (emacs-agent-document-degraded document)
+              (and modified disk-changed))
+          t)
+     :revision
+     (cond
+      (document (emacs-agent-document-revision document))
+      ((file-regular-p absolute)
+       (emacs-agent-document--unvisited-revision workspace absolute)))
+     :coding_system
+     (and (buffer-live-p buffer)
+          (with-current-buffer buffer
+            (symbol-name (or buffer-file-coding-system 'undecided))))
+     :eol_style
+     (and document (emacs-agent-document-eol-style document))
+     :major_mode
+     (and (buffer-live-p buffer)
+          (with-current-buffer buffer (symbol-name major-mode)))
+     :read_only
+     (and (buffer-live-p buffer)
+          (with-current-buffer buffer (and buffer-read-only t)))
+     :active_changesets (nreverse active-changesets))))
+
+;;;###autoload
+(defun emacs-agent-workspace-modified-documents (workspace)
+  "Return statuses for modified or conflicted visiting buffers in WORKSPACE."
+  (let (results)
+    (dolist (buffer (buffer-list))
+      (when-let* ((file (buffer-file-name buffer)))
+        (when (condition-case nil
+                  (file-in-directory-p
+                   (file-truename file)
+                   (emacs-agent-document--workspace-root workspace))
+                (file-error
+                 (file-in-directory-p
+                  (expand-file-name file)
+                  (emacs-agent-document--workspace-root workspace))))
+          (let* ((relative
+                  (file-relative-name
+                   (expand-file-name file)
+                   (emacs-agent-document--workspace-root workspace)))
+                 (status
+                  (condition-case nil
+                      (emacs-agent-document-status workspace relative)
+                    (emacs-agent-error nil))))
+            (when (and status
+                       (or (plist-get status :modified)
+                           (plist-get status :disk_changed)
+                           (plist-get status :conflicted)
+                           (not (plist-get status :exists_on_disk))))
+              (push status results))))))
+    (sort results
+          (lambda (left right)
+            (string< (plist-get left :path)
+                     (plist-get right :path))))))
 
 ;;;###autoload
 (defun emacs-agent-document-reconcile (document)

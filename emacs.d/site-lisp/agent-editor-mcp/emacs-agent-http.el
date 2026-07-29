@@ -174,16 +174,17 @@
   (when-let* ((origin (emacs-agent-http-header request "origin")))
     (unless (member origin (emacs-agent-http-server-allowed-origins server))
       (emacs-agent-http--fail 403 "Origin is not allowed")))
-  (let ((authorization
-         (emacs-agent-http-header request "authorization")))
-    (unless (and authorization
-                 (string-prefix-p "Bearer " authorization)
-                 (emacs-agent-http--constant-equal
-                  (substring authorization 7)
-                  (emacs-agent-http-server-token server)))
-      (emacs-agent-http--fail
-       401 "Bearer authentication required"
-       '(("WWW-Authenticate" . "Bearer")))))
+  (when-let* ((token (emacs-agent-http-server-token server)))
+    (let ((authorization
+           (emacs-agent-http-header request "authorization")))
+      (unless (and authorization
+                   (string-prefix-p "Bearer " authorization)
+                   (emacs-agent-http--constant-equal
+                    (substring authorization 7)
+                    token))
+        (emacs-agent-http--fail
+         401 "Bearer authentication required"
+         '(("WWW-Authenticate" . "Bearer"))))))
   (when (equal (emacs-agent-http-request-method request) "POST")
     (let ((content-type
            (downcase
@@ -357,10 +358,13 @@ Return nil while incomplete, otherwise an immutable HTTP request."
              token allowed-origins)
   "Start an MCP HTTP server and call HANDLER for each request.
 HOST defaults to loopback and PORT to an ephemeral port.  ENDPOINT defaults to
-`/mcp'.  TOKEN is required.  ALLOWED-ORIGINS is an exact-match string list."
-  (unless (and (functionp handler) (stringp token)
-               (not (string-empty-p token)))
-    (error "A handler and nonempty bearer token are required"))
+`/mcp'.  A non-nil TOKEN enables bearer authentication.  ALLOWED-ORIGINS is
+an exact-match string list."
+  (unless (functionp handler)
+    (error "An HTTP request handler is required"))
+  (when (and token
+             (or (not (stringp token)) (string-empty-p token)))
+    (error "Bearer token must be nil or a nonempty string"))
   (when (and emacs-agent-http--server
              (process-live-p
               (emacs-agent-http-server-listener

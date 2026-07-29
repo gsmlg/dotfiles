@@ -41,6 +41,36 @@
       (should-not
        (equal before (emacs-agent-document-revision document))))))
 
+(ert-deftest emacs-agent-document-revision-is-content-stable ()
+  (emacs-agent-document-test-with-file "one\n"
+    (let* ((document (emacs-agent-document-open root "file.txt"))
+           (before (emacs-agent-document-revision document)))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (goto-char (point-max))
+        (insert "temporary")
+        (delete-region (- (point) (length "temporary")) (point)))
+      (should (equal before
+                     (emacs-agent-document-revision document))))))
+
+(ert-deftest emacs-agent-document-status-does-not-visit-file ()
+  (emacs-agent-document-test-with-file "one\n"
+    (let ((status (emacs-agent-document-status root "file.txt")))
+      (should-not (plist-get status :visited))
+      (should (plist-get status :exists_on_disk))
+      (should (string-prefix-p "rev:" (plist-get status :revision)))
+      (should-not (get-file-buffer path)))))
+
+(ert-deftest emacs-agent-workspace-modified-documents-finds-dirty-buffer ()
+  (emacs-agent-document-test-with-file "one\n"
+    (let ((document (emacs-agent-document-open root "file.txt")))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (goto-char (point-max))
+        (insert "dirty"))
+      (let ((items (emacs-agent-workspace-modified-documents root)))
+        (should (= (length items) 1))
+        (should (equal (plist-get (car items) :path) "file.txt"))
+        (should (plist-get (car items) :modified))))))
+
 (ert-deftest emacs-agent-document-read-paginates-with-revision-cursor ()
   (emacs-agent-document-test-with-file "abcdef\n"
     (let* ((first (emacs-agent-document-read root "file.txt" nil nil 3))
@@ -54,7 +84,7 @@
 (ert-deftest emacs-agent-document-external-change-reloads-clean-buffer ()
   (emacs-agent-document-test-with-file "old\n"
     (let ((document (emacs-agent-document-open root "file.txt")))
-      (sleep-for 0 10)
+      (sleep-for 0.01)
       (with-temp-file path (insert "new content\n"))
       (emacs-agent-document-reconcile document)
       (with-current-buffer (emacs-agent-document-buffer document)

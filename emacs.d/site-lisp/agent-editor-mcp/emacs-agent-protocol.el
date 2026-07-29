@@ -19,7 +19,11 @@
 
 (defconst emacs-agent-protocol-versions '("2026-07-28" "2025-11-25"))
 (defconst emacs-agent-server-name "emacs-agent-editor")
-(defconst emacs-agent-server-version "0.1.0")
+(defconst emacs-agent-server-version "0.2.0")
+
+(defvar emacs-agent-protocol-tool-observer nil
+  "Optional callback for bounded tool execution metadata.
+The function receives NAME, STATUS, DURATION, and a result or error PAYLOAD.")
 
 (cl-defstruct (emacs-agent-protocol-response
                (:constructor emacs-agent-protocol-response-create))
@@ -45,7 +49,8 @@
 (defun emacs-agent-protocol-call-tool (name arguments context)
   "Invoke tool NAME with ARGUMENTS and protocol-neutral CONTEXT.
 Return an MCP call result, including structured and text content."
-  (let ((tool (emacs-agent-tool-get name)))
+  (let ((tool (emacs-agent-tool-get name))
+        (started-at (float-time)))
     (unless tool
       (signal 'emacs-agent-jsonrpc-error
               (list emacs-agent-jsonrpc-invalid-params
@@ -60,10 +65,20 @@ Return an MCP call result, including structured and text content."
             (when (emacs-agent-tool-output-schema tool)
               (emacs-agent-schema-validate
                result (emacs-agent-tool-output-schema tool)))
+            (when (functionp emacs-agent-protocol-tool-observer)
+              (ignore-errors
+                (funcall emacs-agent-protocol-tool-observer
+                         name "completed"
+                         (- (float-time) started-at) result)))
             `((structuredContent . ,result)
               (content . [,(emacs-agent-protocol--text-content result)])
               (isError . :false))))
       (emacs-agent-schema-error
+       (when (functionp emacs-agent-protocol-tool-observer)
+         (ignore-errors
+           (funcall emacs-agent-protocol-tool-observer
+                    name "rejected"
+                    (- (float-time) started-at) (cadr condition))))
        (signal 'emacs-agent-jsonrpc-error
                (list emacs-agent-jsonrpc-invalid-params
                      "Invalid tool arguments"
@@ -72,6 +87,11 @@ Return an MCP call result, including structured and text content."
        (let* ((data (or (cadr condition)
                         '((code . "tool_error"))))
               (result `((error . ,data))))
+         (when (functionp emacs-agent-protocol-tool-observer)
+           (ignore-errors
+             (funcall emacs-agent-protocol-tool-observer
+                      name "failed"
+                      (- (float-time) started-at) data)))
          `((structuredContent . ,result)
            (content . [,(emacs-agent-protocol--text-content result)])
            (isError . t)))))))

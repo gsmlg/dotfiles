@@ -10,12 +10,21 @@
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
+(require 'emacs-agent-document)
 (require 'emacs-agent-policy)
 (require 'emacs-agent-workspace)
 
 (define-error 'emacs-agent-changeset-error "Emacs Agent change set error")
 (define-error 'emacs-agent-rollback-conflict "Change set cannot be rolled back"
   'emacs-agent-changeset-error)
+
+(defcustom emacs-agent-changeset-cursor-ttl 300
+  "Seconds for which change-set list and detail cursors remain valid."
+  :type 'integer
+  :group 'emacs-agent-editor)
+
+(defvar emacs-agent-changeset-cursors (make-hash-table :test #'equal)
+  "Opaque immutable pagination snapshots for change-set queries.")
 
 (cl-defstruct (emacs-agent-changeset
                (:constructor emacs-agent-changeset--make))
@@ -100,6 +109,160 @@ INSERTIONS and DELETIONS provide summary counts."
           (lambda (left right)
             (> (emacs-agent-changeset-created-at left)
                (emacs-agent-changeset-created-at right))))))
+
+(defun emacs-agent-changeset--rollback-status (workspace changeset)
+  "Return rollback availability metadata for CHANGESET in WORKSPACE."
+  (cond
+   ((not (memq (emacs-agent-changeset-status changeset)
+               '(applied checkpointed reviewed)))
+    (list :available nil :reason 'status))
+   ((condition-case nil
+        (cl-every
+         (lambda (entry)
+           (equal (emacs-agent-changeset--revision workspace (car entry))
+                  (cdr entry)))
+         (emacs-agent-changeset-final-revisions changeset))
+      (error nil))
+    (list :available t))
+   (t
+    (list :available nil :reason 'revision_mismatch))))
+
+(defun emacs-agent-changeset--revision-items (entries)
+  "Convert revision ENTRIES to JSON-friendly plist items."
+  (mapcar (lambda (entry)
+            (list :path (car entry) :revision (cdr entry)))
+          entries))
+
+(defun emacs-agent-changeset-summary (workspace changeset)
+  "Return a public summary of CHANGESET in WORKSPACE."
+  (let ((rollback (emacs-agent-changeset--rollback-status
+                   workspace changeset)))
+    (list
+     :changeset_id (emacs-agent-changeset-changeset-id changeset)
+     :created_at (emacs-agent-changeset-created-at changeset)
+     :status (emacs-agent-changeset-status changeset)
+     :paths (copy-sequence
+             (emacs-agent-changeset-touched-documents changeset))
+     :operations (copy-tree (emacs-agent-changeset-operations changeset))
+     :old_revisions
+     (emacs-agent-changeset--revision-items
+      (emacs-agent-changeset-base-revisions changeset))
+     :new_revisions
+     (emacs-agent-changeset--revision-items
+      (emacs-agent-changeset-final-revisions changeset))
+     :checkpointed
+     (and (memq (emacs-agent-changeset-checkpoint-state changeset)
+                '(t checkpointed))
+          t)
+     :rollback_available (plist-get rollback :available)
+     :rollback_unavailable_reason (plist-get rollback :reason)
+     :request_id (emacs-agent-changeset-request-id changeset)
+     :agent_identity (emacs-agent-changeset-agent-identity changeset))))
+
+(defun emacs-agent-changeset--new-cursor (workspace kind fingerprint data)
+  "Store DATA for WORKSPACE and KIND under FINGERPRINT."
+  (let ((id (emacs-agent-workspace--random-id "cursor")))
+    (puthash
+     id
+     (list :workspace-id (emacs-agent-workspace-workspace-id workspace)
+           :kind kind :fingerprint fingerprint :data data
+           :expires-at (+ (float-time) emacs-agent-changeset-cursor-ttl))
+     emacs-agent-changeset-cursors)
+    id))
+
+(defun emacs-agent-changeset--consume-cursor
+    (workspace cursor kind fingerprint)
+  "Consume CURSOR for WORKSPACE, KIND, and FINGERPRINT."
+  (let ((state (and (stringp cursor)
+                    (gethash cursor emacs-agent-changeset-cursors))))
+    (remhash cursor emacs-agent-changeset-cursors)
+    (unless (and state
+                 (> (plist-get state :expires-at) (float-time))
+                 (equal (plist-get state :workspace-id)
+                        (emacs-agent-workspace-workspace-id workspace))
+                 (eq (plist-get state :kind) kind)
+                 (equal (plist-get state :fingerprint) fingerprint))
+      (signal 'emacs-agent-changeset-error
+              (list "Invalid or expired change-set cursor")))
+    (plist-get state :data)))
+
+(cl-defun emacs-agent-changeset-query
+    (workspace &key path statuses (limit 50) cursor)
+  "Return recorded operations from WORKSPACE filtered by PATH and STATUSES.
+LIMIT bounds one immutable page and CURSOR resumes the next page."
+  (unless (and (integerp limit) (> limit 0) (<= limit 200))
+    (signal 'emacs-agent-changeset-error
+            (list "Change-set limit must be between 1 and 200")))
+  (let* ((fingerprint (secure-hash 'sha256
+                                   (prin1-to-string
+                                    (list path statuses limit))))
+         (state
+          (and cursor
+               (emacs-agent-changeset--consume-cursor
+                workspace cursor 'list fingerprint)))
+         (items
+          (or (plist-get state :items)
+              (seq-filter
+               (lambda (changeset)
+                 (and
+                  (or (null path)
+                      (member path
+                              (emacs-agent-changeset-touched-documents
+                               changeset)))
+                  (or (null statuses)
+                      (memq (emacs-agent-changeset-status changeset)
+                            statuses))))
+               (emacs-agent-changeset-list workspace))))
+         (offset (or (plist-get state :offset) 0))
+         (end (min (length items) (+ offset limit)))
+         (page (cl-subseq items offset end))
+         (next
+          (and (< end (length items))
+               (emacs-agent-changeset--new-cursor
+                workspace 'list fingerprint
+                (list :items items :offset end)))))
+    (list
+     :changesets
+     (mapcar (lambda (changeset)
+               (emacs-agent-changeset-summary workspace changeset))
+             page)
+     :result_count (length page)
+     :truncated (and next t)
+     :cursor next)))
+
+(cl-defun emacs-agent-changeset-detail
+    (workspace changeset-id &key (max-chars (* 256 1024)) cursor)
+  "Return CHANGESET-ID detail from WORKSPACE with paginated diff."
+  (unless (and (integerp max-chars) (> max-chars 0))
+    (signal 'emacs-agent-changeset-error
+            (list "max_chars must be positive")))
+  (let* ((fingerprint
+          (secure-hash 'sha256
+                       (prin1-to-string
+                        (list changeset-id max-chars))))
+         (state
+          (and cursor
+               (emacs-agent-changeset--consume-cursor
+                workspace cursor 'diff fingerprint)))
+         (changeset (emacs-agent-changeset-get workspace changeset-id))
+         (diff (or (plist-get state :diff)
+                   (emacs-agent-changeset-diff workspace changeset-id)))
+         (offset (or (plist-get state :offset) 0))
+         (end (min (length diff) (+ offset max-chars)))
+         (next
+          (and (< end (length diff))
+               (emacs-agent-changeset--new-cursor
+                workspace 'diff fingerprint
+                (list :diff diff :offset end)))))
+    (append
+     (emacs-agent-changeset-summary workspace changeset)
+     (list :diff (substring diff offset end)
+           :diff_truncated (and next t)
+           :diff_cursor next
+           :diagnostics_before
+           (emacs-agent-changeset-diagnostics-before changeset)
+           :diagnostics_after
+           (emacs-agent-changeset-diagnostics-after changeset)))))
 
 (defun emacs-agent-changeset--snapshot-exists-p (snapshot)
   "Return whether SNAPSHOT represents an existing document."

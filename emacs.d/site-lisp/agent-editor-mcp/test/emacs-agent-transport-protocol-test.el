@@ -102,6 +102,67 @@
                    "hello"))))
     (emacs-agent-tool-clear)))
 
+(ert-deftest emacs-agent-protocol-distinguishes-output-schema-errors ()
+  (unwind-protect
+      (progn
+        (emacs-agent-tool-clear)
+        (emacs-agent-tool-register
+         "emacs_agent_bad_output" "Return an invalid test output."
+         '((type . "object")
+           (properties . ((value . ((type . "string")))))
+           (required . ["value"])
+           (additionalProperties . :false))
+         '((type . "object")
+           (properties . ((result . ((type . "string")))))
+           (required . ["result"])
+           (additionalProperties . :false))
+         (lambda (_arguments _context)
+           '((result . 42))))
+        (let* ((input-response
+                (emacs-agent-protocol-handle-http-request
+                 (emacs-agent-test--modern-request
+                  "tools/call"
+                  '((name . "emacs_agent_bad_output")
+                    (arguments . ((value . 42))))
+                  "emacs_agent_bad_output")))
+               (input-json
+                (json-parse-string
+                 (decode-coding-string
+                  (emacs-agent-protocol-response-body input-response)
+                  'utf-8)
+                 :object-type 'alist))
+               (input-error (alist-get 'error input-json))
+               (output-response
+                (emacs-agent-protocol-handle-http-request
+                 (emacs-agent-test--modern-request
+                  "tools/call"
+                  '((name . "emacs_agent_bad_output")
+                    (arguments . ((value . "valid"))))
+                  "emacs_agent_bad_output")))
+               (output-json
+                (json-parse-string
+                 (decode-coding-string
+                  (emacs-agent-protocol-response-body output-response)
+                  'utf-8)
+                 :object-type 'alist))
+               (output-error (alist-get 'error output-json))
+               (output-data (alist-get 'data output-error)))
+          (should (= (alist-get 'code input-error)
+                     emacs-agent-jsonrpc-invalid-params))
+          (should (equal (alist-get 'message input-error)
+                         "Invalid tool arguments"))
+          (should (= (alist-get 'code output-error)
+                     emacs-agent-jsonrpc-internal-error))
+          (should (equal (alist-get 'message output-error)
+                         "Tool output contract violation"))
+          (should (equal (alist-get 'code output-data)
+                         "OUTPUT_SCHEMA_VIOLATION"))
+          (should (equal (alist-get 'tool output-data)
+                         "emacs_agent_bad_output"))
+          (should (equal (alist-get 'schema_path output-data)
+                         "$.result"))))
+    (emacs-agent-tool-clear)))
+
 (ert-deftest emacs-agent-http-framing-rejects-trailing-request ()
   (let* ((server
           (emacs-agent-http-server--create

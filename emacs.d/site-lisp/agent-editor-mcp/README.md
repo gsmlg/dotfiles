@@ -216,7 +216,9 @@ flag. A dry-run reports the currently observed revision because it does not
 mutate the buffer. Multi-document operations return per-document revisions
 and use `false` for a singular revision that is not applicable. P0/P1 tools
 advertise required output fields and nested array schemas, and live results
-are validated against those schemas before they are returned.
+are validated against those schemas before they are returned. Invalid input
+uses JSON-RPC `-32602`; a server-side output contract failure instead uses
+`-32603` with `OUTPUT_SCHEMA_VIOLATION`, the tool name, and schema path.
 
 `workspace_info.supported_tools` lists the registered tool surface.
 `workspace_info.runtime_capabilities` separately reports whether the current

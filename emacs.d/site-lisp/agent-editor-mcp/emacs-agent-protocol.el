@@ -63,8 +63,26 @@ Return an MCP call result, including structured and text content."
           (let ((result (funcall (emacs-agent-tool-handler tool)
                                  arguments context)))
             (when (emacs-agent-tool-output-schema tool)
-              (emacs-agent-schema-validate
-               result (emacs-agent-tool-output-schema tool)))
+              (condition-case output-condition
+                  (emacs-agent-schema-validate
+                   result (emacs-agent-tool-output-schema tool))
+                (emacs-agent-schema-error
+                 (let* ((details (cadr output-condition))
+                        (data
+                         `((code . "OUTPUT_SCHEMA_VIOLATION")
+                           (tool . ,name)
+                           (schema_path . ,(alist-get 'path details))
+                           (details . ,details))))
+                   (when (functionp emacs-agent-protocol-tool-observer)
+                     (ignore-errors
+                       (funcall emacs-agent-protocol-tool-observer
+                                name "failed"
+                                (- (float-time) started-at) data)))
+                   (signal
+                    'emacs-agent-jsonrpc-error
+                    (list emacs-agent-jsonrpc-internal-error
+                          "Tool output contract violation"
+                          data))))))
             (when (functionp emacs-agent-protocol-tool-observer)
               (ignore-errors
                 (funcall emacs-agent-protocol-tool-observer

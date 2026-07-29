@@ -19,6 +19,87 @@
    :object-type 'alist :array-type 'array
    :null-object :null :false-object :false))
 
+(defun emacs-agent-wire-test--tcp-post (object &optional session)
+  "POST JSON-RPC OBJECT over a real TCP connection.
+
+When SESSION is non-nil, send the legacy protocol and session headers.  Return
+a plist containing the HTTP status, response headers, and decoded JSON body."
+  (let* ((body (emacs-agent-jsonrpc-encode object))
+         (response "")
+         done
+         (client
+          (make-network-process
+           :name "emacs-agent-wire-tcp-client"
+           :host "127.0.0.1"
+           :service
+           (emacs-agent-http-server-port
+            emacs-agent-editor--http-server)
+           :coding 'binary
+           :noquery t
+           :filter
+           (lambda (_process chunk)
+             (setq response (concat response chunk)))
+           :sentinel
+           (lambda (_process _event)
+             (setq done t)))))
+    (unwind-protect
+        (progn
+          (process-send-string
+           client
+           (concat
+            "POST /mcp HTTP/1.1\r\n"
+            "Host: 127.0.0.1\r\n"
+            "Authorization: Bearer test-bearer-token\r\n"
+            "Content-Type: application/json\r\n"
+            "Accept: application/json, text/event-stream\r\n"
+            (when session
+              (concat
+               "MCP-Protocol-Version: 2025-11-25\r\n"
+               "Mcp-Session-Id: " session "\r\n"))
+            (format "Content-Length: %d\r\n\r\n" (string-bytes body))
+            body))
+          (process-send-eof client)
+          (let ((deadline (+ (float-time) 3)))
+            (while (and (not done) (< (float-time) deadline))
+              (accept-process-output nil 0.05)))
+          (should done)
+          (should (string-match "\r\n\r\n" response))
+          (let* ((header-end (match-end 0))
+                 (header-lines
+                  (split-string
+                   (substring response 0 (- header-end 4)) "\r\n"))
+                 (status-line (pop header-lines))
+                 headers)
+            (dolist (line header-lines)
+              (when (string-match
+                     "\\`\\([^:]+\\):[ \t]*\\(.*\\)\\'" line)
+                (push
+                 (cons (downcase (match-string 1 line))
+                       (match-string 2 line))
+                 headers)))
+            (should (string-match
+                     "\\`HTTP/1\\.1 \\([0-9]+\\)" status-line))
+            (let ((payload (substring response header-end)))
+              (list
+               :status (string-to-number (match-string 1 status-line))
+               :headers (nreverse headers)
+               :json
+               (unless (string-empty-p payload)
+                 (json-parse-string
+                  (decode-coding-string payload 'utf-8)
+                  :object-type 'alist :array-type 'array
+                  :null-object :null :false-object :false))))))
+      (when (process-live-p client)
+        (delete-process client)))))
+
+(defun emacs-agent-wire-test--legacy-tcp-call
+    (session id name arguments)
+  "Call legacy tool NAME with ARGUMENTS over TCP SESSION using ID."
+  (emacs-agent-wire-test--tcp-post
+   `((jsonrpc . "2.0") (id . ,id) (method . "tools/call")
+     (params . ((name . ,name) (arguments . ,arguments))))
+   session))
+
 (defun emacs-agent-wire-test--call (name arguments)
   "Call registered MCP tool NAME with wire ARGUMENTS.
 Return its decoded structured result and require a successful tool call."
@@ -209,6 +290,105 @@ declared as arrays in the advertised schema."
         (emacs-agent-wire-test--assert-array detail key))
       (emacs-agent-wire-test--assert-array detail 'diagnostics_before)
       (emacs-agent-wire-test--assert-array detail 'diagnostics_after))))
+
+(ert-deftest emacs-agent-wire-tcp-client-info-changeset-identity ()
+  (emacs-agent-editor-test--with-server
+    (write-region "old-a\n" nil (expand-file-name "tcp-a.txt" root))
+    (write-region "old-b\n" nil (expand-file-name "tcp-b.txt" root))
+    (let* ((initialize
+            (emacs-agent-wire-test--tcp-post
+             '((jsonrpc . "2.0") (id . 1) (method . "initialize")
+               (params
+                . ((protocolVersion . "2025-11-25")
+                   (capabilities . ())
+                   (clientInfo
+                    . ((name . "emacs-agent-recheck")
+                       (version . "1"))))))))
+           (session
+            (cdr (assoc "mcp-session-id"
+                        (plist-get initialize :headers)))))
+      (should (= (plist-get initialize :status) 200))
+      (should (stringp session))
+      (should-not (alist-get 'error (plist-get initialize :json)))
+      (let ((initialized
+             (emacs-agent-wire-test--tcp-post
+              '((jsonrpc . "2.0")
+                (method . "notifications/initialized")
+                (params . ()))
+              session)))
+        (should (= (plist-get initialized :status) 202)))
+      (let* ((read-a
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 2 "emacs_agent_document_read"
+               '((path . "tcp-a.txt"))))
+             (read-b
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 3 "emacs_agent_document_read"
+               '((path . "tcp-b.txt"))))
+             (read-a-result
+              (alist-get 'structuredContent
+                         (alist-get 'result (plist-get read-a :json))))
+             (read-b-result
+              (alist-get 'structuredContent
+                         (alist-get 'result (plist-get read-b :json))))
+             (transaction
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 4 "emacs_agent_workspace_apply_edits"
+               `((documents
+                  . [((path . "tcp-a.txt")
+                      (expected_revision
+                       . ,(alist-get 'revision read-a-result))
+                      (edits
+                       . [((old_text . "old-a")
+                           (new_text . "new-a"))]))
+                     ((path . "tcp-b.txt")
+                      (expected_revision
+                       . ,(alist-get 'revision read-b-result))
+                      (edits
+                       . [((old_text . "old-b")
+                           (new_text . "new-b"))]))])
+                 (atomic . t)
+                 (dry_run . :false))))
+             (transaction-result
+              (alist-get 'structuredContent
+                         (alist-get 'result
+                                    (plist-get transaction :json))))
+             (changeset-id
+              (alist-get 'changeset_id transaction-result))
+             (detail
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 5 "emacs_agent_changeset_get"
+               `((changeset_id . ,changeset-id))))
+             (detail-json (plist-get detail :json))
+             (detail-result
+              (alist-get 'structuredContent
+                         (alist-get 'result detail-json)))
+             (listing
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 6 "emacs_agent_changeset_list" '((limit . 10))))
+             (listing-json (plist-get listing :json))
+             (listing-result
+              (alist-get 'structuredContent
+                         (alist-get 'result listing-json)))
+             (changesets
+              (alist-get 'changesets listing-result))
+             (listed
+              (seq-find
+               (lambda (item)
+                 (equal (alist-get 'changeset_id item) changeset-id))
+               changesets)))
+        (dolist (response
+                 (list read-a read-b transaction detail listing))
+          (should (= (plist-get response :status) 200))
+          (should-not (alist-get 'error (plist-get response :json))))
+        (should (stringp changeset-id))
+        (dolist (identity
+                 (list (alist-get 'agent_identity detail-result)
+                       (alist-get 'agent_identity listed)))
+          (should
+           (equal identity
+                  '((name . "emacs-agent-recheck")
+                    (version . "1")))))))))
 
 (ert-deftest emacs-agent-wire-workspace-diagnostics-preserve-arrays ()
   (emacs-agent-editor-test--with-server

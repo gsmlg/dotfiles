@@ -744,6 +744,10 @@ The selected buffer is first only when it is one of those workspace buffers."
           :request-id
           (and emacs-agent-editor--request-context
                (emacs-agent-request-id emacs-agent-editor--request-context))
+          :agent-identity
+          (and emacs-agent-editor--request-context
+               (emacs-agent-request-client-info
+                emacs-agent-editor--request-context))
           :operations (list operation)
           :touched-documents paths
           :base-revisions base
@@ -1780,6 +1784,15 @@ The selected buffer is first only when it is one of those workspace buffers."
            '("path" "expected_revision")))
          (falseable-string '((type . ["string" "boolean"])))
          (falseable-id '((type . ["string" "integer" "boolean"])))
+         (agent-identity
+          (emacs-agent-editor--object-schema
+           `((name . ,string) (version . ,string))
+           '("name" "version")))
+         (falseable-agent-identity
+          `((type . ["object" "boolean"])
+            (properties . ,(alist-get 'properties agent-identity))
+            (additionalProperties . :false)
+            (required . ,(alist-get 'required agent-identity))))
          (string-array `((type . "array") (items . ,string)))
          (object-array
           '((type . "array") (items . ((type . "object")))))
@@ -1932,7 +1945,7 @@ The selected buffer is first only when it is one of those workspace buffers."
                         (rollback_available . ,boolean)
                         (rollback_unavailable_reason . ,falseable-string)
                         (request_id . ,falseable-id)
-                        (agent_identity . ,falseable-string))
+                        (agent_identity . ,falseable-agent-identity))
                       '("changeset_id" "created_at" "status" "paths"
                         "operations" "old_revisions" "new_revisions"
                         "checkpointed" "rollback_available")))))
@@ -1950,7 +1963,7 @@ The selected buffer is first only when it is one of those workspace buffers."
              (rollback_available . ,boolean)
              (rollback_unavailable_reason . ,falseable-string)
              (request_id . ,falseable-id)
-             (agent_identity . ,falseable-string)
+             (agent_identity . ,falseable-agent-identity)
              (diff . ,string) (diff_truncated . ,boolean)
              (diff_cursor . ,falseable-string)
              (diagnostics_before . ,diagnostic-array)

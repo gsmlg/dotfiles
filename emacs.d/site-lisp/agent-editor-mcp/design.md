@@ -946,7 +946,9 @@ the revision unchanged. Multi-document writes provide exact per-document
 revision pairs and use JSON false when a singular top-level revision is not
 applicable. P0/P1 output schemas declare their required fields and collection
 types, and the protocol validates every live structured result before
-serialization.
+serialization. Input validation failures use JSON-RPC `-32602`. Output
+validation failures are server contract errors using `-32603` with
+`OUTPUT_SCHEMA_VIOLATION`, the tool name, and schema path.
 
 Public errors expose an uppercase stable code, message, retryability, nested
 details, and the legacy internal code for compatibility.
@@ -1250,6 +1252,9 @@ Agent operations must not select windows, pop buffers, move point, or interrupt 
 ## 22. Error Model
 
 Protocol errors are reserved for invalid JSON-RPC, unknown methods, unsupported protocol versions, and malformed MCP envelopes.
+
+An output schema violation is an internal server contract error, never an
+invalid-arguments response.
 
 Recoverable editor failures are tool execution errors with stable codes and structured fields.
 

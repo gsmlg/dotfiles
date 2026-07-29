@@ -11,10 +11,13 @@
 (defvar mu4e-root-maildir nil)
 (defvar mu4e-sent-folder nil)
 (defvar mu4e-drafts-folder nil)
+(defvar mu4e-trash-folder nil)
 (defvar mu4e-get-mail-command nil)
 (defvar mu4e-update-interval nil)
 (defvar mu4e-maildir-shortcuts nil)
 (defvar mu4e-bookmarks nil)
+(defvar mu4e-mu-binary nil)
+(defvar mu4e-mbsync-program nil)
 
 (declare-function mu4e-message-field "mu4e-message" (msg field))
 (declare-function mu4e-maildirs-extension-load "mu4e-maildirs-extension" ())
@@ -29,13 +32,17 @@
   :ensure nil
   :bind (("C-x m" . mu4e-compose-new)
 	 ("C-c m" . mu4e))
+  :init
+  (setq mu4e-mu-binary (executable-find "mu")
+        mu4e-mbsync-program (executable-find "mbsync"))
   :config
   (progn
     ;; Set up some common mu4e variables
-    (setq mu4e-root-maildir "~/.Mail"
+    (setq mu4e-root-maildir "~/.local/share/mail"
 	  mu4e-sent-folder "/zdns/Sent Messages"
 	  mu4e-drafts-folder "/zdns/Drafts"
-	  mu4e-get-mail-command "mbsync -a"
+	  mu4e-trash-folder "/zdns/Trash"
+	  mu4e-get-mail-command (concat mu4e-mbsync-program " -a")
 	  mu4e-update-interval 300)
 
     ;; Mail directory shortcuts
@@ -61,25 +68,28 @@
 	     "All inboxes" ?i)))
 
     (setq mu4e-account-alist
-	  '(("zdns"
+	  `(("zdns"
 	     (mu4e-sent-messages-behavior sent)
 	     (mu4e-sent-folder "/zdns/Sent Messages")
 	     (mu4e-drafts-folder "/zdns/Drafts")
-	     (mu4e-get-mail-command "mbsync zdns")
+	     (mu4e-trash-folder "/zdns/Trash")
+	     (mu4e-get-mail-command ,(concat mu4e-mbsync-program " zdns"))
 	     (user-mail-address "gaoshiming@zdns.cn")
 	     (user-full-name "Gao Shi Ming"))
 	    ("qq"
-	     (mu4e-send-messages-behavior sent)
+	     (mu4e-sent-messages-behavior sent)
 	     (mu4e-sent-folder "/qq/Sent Messages")
 	     (mu4e-drafts-folder "/qq/Drafts")
-	     (mu4e-get-mail-command "mbsync qq")
+	     (mu4e-trash-folder "/qq/Trash")
+	     (mu4e-get-mail-command ,(concat mu4e-mbsync-program " qq"))
 	     (user-mail-address "gsmlg@qq.com")
 	     (user-full-name "GSMLG"))
 	    ("live"
-	     (mu4e-send-messages-behavior sent)
+	     (mu4e-sent-messages-behavior sent)
 	     (mu4e-sent-folder "/live/Sent Messages")
 	     (mu4e-drafts-folder "/live/Drafts")
-	     (mu4e-get-mail-command "mbsync live")
+	     (mu4e-trash-folder "/live/Trash")
+	     (mu4e-get-mail-command ,(concat mu4e-mbsync-program " live"))
 	     (user-mail-address "gaoshiming@live.com")
 	     (user-full-name "Gao"))))))
 
@@ -129,7 +139,7 @@ address first then fallback to the maildir."
 
 ;; use msmtp
 (setq message-send-mail-function 'message-send-mail-with-sendmail)
-(setq sendmail-program "/usr/local/bin/msmtp")
+(setq sendmail-program (executable-find "msmtp"))
 
 ;; tell msmtp to choose the SMTP server according to the from field in the outgoing email
 (setq message-sendmail-extra-arguments '("--read-envelope-from"))

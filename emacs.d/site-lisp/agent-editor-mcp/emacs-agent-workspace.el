@@ -65,7 +65,7 @@
 (cl-defstruct (emacs-agent-approval
                (:constructor emacs-agent-approval--make))
   id operation digest credential created-at expires-at status summary
-  revision-bindings)
+  revision-bindings arguments parent-id derived-id accepted-paths)
 
 (defvar emacs-agent-workspace-registry (make-hash-table :test #'equal)
   "Registry of configured workspaces, keyed by workspace ID.")
@@ -425,7 +425,19 @@ job is queued and returns `queued'."
            (emacs-agent-workspace--approval-field arguments 'documents)))
       (when (or (listp documents) (vectorp documents))
         (setq summary
-              (plist-put summary :document_count (length documents)))))
+              (plist-put summary :document_count (length documents)))
+        (setq summary
+              (plist-put
+               summary :document_paths
+               (delq
+                nil
+                (mapcar
+                 (lambda (document)
+                   (let ((path
+                          (emacs-agent-workspace--approval-field
+                           document 'path)))
+                     (and (stringp path) path)))
+                 (append documents nil)))))))
     (plist-put
      summary :risk
      (cond
@@ -456,7 +468,9 @@ returned value or activity history."
            (emacs-agent-workspace--approval-summary operation arguments)
            :revision-bindings
            (emacs-agent-workspace--approval-revision-bindings
-            workspace arguments))))
+            workspace arguments)
+           :arguments
+           (emacs-agent-workspace--copy-approval-value arguments))))
     (puthash id approval
              (emacs-agent-workspace-approval-registry workspace))
     (emacs-agent-workspace-record-activity
@@ -526,6 +540,15 @@ returned value or activity history."
        workspace approval 'invalidated 'revision_changed))))
   approval)
 
+(defun emacs-agent-workspace--approval-partial-supported-p (approval)
+  "Return whether APPROVAL supports safe per-document acceptance."
+  (and
+   (equal (emacs-agent-approval-operation approval) "workspace_checkpoint")
+   (> (or (plist-get (emacs-agent-approval-summary approval)
+                     :document_count)
+          0)
+      1)))
+
 ;;;###autoload
 (defun emacs-agent-workspace-approval-status (workspace id)
   "Return a credential-free public status for approval ID in WORKSPACE."
@@ -544,7 +567,22 @@ returned value or activity history."
            :created_at (emacs-agent-approval-created-at approval)
            :expires_at (emacs-agent-approval-expires-at approval)
            :ttl_remaining remaining
-           :partial_accept_supported nil)
+           :partial_accept_supported
+           (and
+            (memq (emacs-agent-approval-status approval)
+                  '(pending approved))
+            (emacs-agent-workspace--approval-partial-supported-p approval))
+           :partial_accept_granularity
+           (and
+            (emacs-agent-workspace--approval-partial-supported-p approval)
+            'document)
+           :parent_approval_request_id
+           (emacs-agent-approval-parent-id approval)
+           :derived_approval_request_id
+           (emacs-agent-approval-derived-id approval)
+           :accepted_paths
+           (copy-sequence
+            (or (emacs-agent-approval-accepted-paths approval) nil)))
      (copy-tree (emacs-agent-approval-summary approval)))))
 
 ;;;###autoload
@@ -560,6 +598,145 @@ returned value or activity history."
           (lambda (left right)
             (> (plist-get left :created_at)
                (plist-get right :created_at))))))
+
+(defun emacs-agent-workspace--copy-approval-value (value)
+  "Return a recursive private copy of approval VALUE."
+  (cond
+   ((hash-table-p value)
+    (let ((copy (make-hash-table :test (hash-table-test value))))
+      (maphash
+       (lambda (key item)
+         (puthash key
+                  (emacs-agent-workspace--copy-approval-value item)
+                  copy))
+       value)
+      copy))
+   ((vectorp value)
+    (vconcat
+     (mapcar #'emacs-agent-workspace--copy-approval-value value)))
+   ((consp value)
+    (cons
+     (emacs-agent-workspace--copy-approval-value (car value))
+     (emacs-agent-workspace--copy-approval-value (cdr value))))
+   (t value)))
+
+(defun emacs-agent-workspace--approval-set-documents
+    (arguments documents)
+  "Return copied ARGUMENTS whose documents field is DOCUMENTS."
+  (let ((copy (emacs-agent-workspace--copy-approval-value arguments)))
+    (cond
+     ((hash-table-p copy)
+      (let ((missing (make-symbol "missing")))
+        (cond
+         ((not (eq missing (gethash 'documents copy missing)))
+          (puthash 'documents documents copy))
+         ((not (eq missing (gethash "documents" copy missing)))
+          (puthash "documents" documents copy))
+         (t (puthash :documents documents copy)))))
+     ((and (listp copy) (keywordp (car copy)))
+      (setq copy (plist-put copy :documents documents)))
+     ((listp copy)
+      (let ((key
+             (if (assoc "documents" copy)
+                 "documents"
+               'documents)))
+        (setq copy
+              (cons
+               (cons key documents)
+               (if (stringp key)
+                   (assoc-delete-all key copy)
+                 (assq-delete-all key copy)))))))
+    copy))
+
+;;;###autoload
+(defun emacs-agent-workspace-approval-partial
+    (workspace id selected-paths)
+  "Partially accept approval ID for SELECTED-PATHS in WORKSPACE.
+
+This is supported only for multi-document `workspace_checkpoint' requests.
+It creates and approves a new child request bound to the exact narrowed
+arguments; ID itself is never authorized for mutated parameters."
+  (let* ((approval
+          (emacs-agent-workspace--refresh-approval
+           workspace (emacs-agent-workspace--approval workspace id)))
+         (status (emacs-agent-approval-status approval))
+         (arguments (emacs-agent-approval-arguments approval))
+         (documents
+          (append
+           (emacs-agent-workspace--approval-field arguments 'documents)
+           nil))
+         (paths
+          (mapcar
+           (lambda (document)
+             (emacs-agent-workspace--approval-field document 'path))
+           documents))
+         (selection
+          (cond
+           ((vectorp selected-paths) (append selected-paths nil))
+           ((listp selected-paths) selected-paths)))
+         selected-documents)
+    (unless (and
+             (memq status '(pending approved))
+             (emacs-agent-workspace--approval-partial-supported-p approval))
+      (signal 'emacs-agent-approval-error
+              (list "Approval request does not support partial acceptance")))
+    (unless
+        (and
+         selection
+         (cl-every #'stringp selection)
+         (= (length selection) (length (delete-dups (copy-sequence selection))))
+         (cl-every #'stringp paths)
+         (= (length paths) (length (delete-dups (copy-sequence paths))))
+         (cl-every (lambda (path) (member path paths)) selection)
+         (< (length selection) (length paths)))
+      (signal 'emacs-agent-approval-error
+              (list "Select a unique, non-empty proper subset of documents")))
+    (dolist (document documents)
+      (when (member
+             (emacs-agent-workspace--approval-field document 'path)
+             selection)
+        (push document selected-documents)))
+    (setq selected-documents (nreverse selected-documents))
+    (let* ((narrowed
+            (emacs-agent-workspace--approval-set-documents
+             arguments
+             (if (vectorp
+                  (emacs-agent-workspace--approval-field
+                   arguments 'documents))
+                 (vconcat selected-documents)
+               selected-documents)))
+           (child-request
+            (emacs-agent-workspace-request-approval
+             workspace
+             (emacs-agent-approval-operation approval)
+             narrowed
+             (emacs-agent-approval-credential approval)))
+           (child-id
+            (plist-get child-request :approval_request_id))
+           (child
+            (emacs-agent-workspace--approval workspace child-id)))
+      (setf (emacs-agent-approval-parent-id child) id
+            (emacs-agent-approval-expires-at child)
+            (min (emacs-agent-approval-expires-at child)
+                 (emacs-agent-approval-expires-at approval)))
+      (emacs-agent-workspace-approve workspace child-id)
+      (setf (emacs-agent-approval-status approval) 'partially_approved
+            (emacs-agent-approval-derived-id approval) child-id
+            (emacs-agent-approval-accepted-paths approval)
+            (copy-sequence selection))
+      (emacs-agent-workspace-record-activity
+       workspace
+       (list
+        :tool (emacs-agent-approval-operation approval)
+        :status "partially_approved"
+        :approval_request_id id
+        :derived_approval_request_id child-id
+        :paths (copy-sequence selection)))
+      (append
+       (emacs-agent-workspace-approval-status workspace id)
+       (list
+        :derived_approval
+        (emacs-agent-workspace-approval-status workspace child-id))))))
 
 ;;;###autoload
 (defun emacs-agent-workspace-approval-cancel (workspace id)

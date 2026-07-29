@@ -935,6 +935,19 @@ diff
 truncated
 ```
 
+Workspace transaction edit items have an explicit exact-replacement schema:
+`old_text`, `new_text`, `replace_all?`, and `expected_occurrences?`.
+Transactions are always atomic. The optional `atomic` compatibility field may
+only be true; false is rejected instead of being silently ignored.
+
+`modified` describes whether authoritative content changed, or would change
+for a dry-run; buffer dirty state belongs to `document_status`. Dry-run leaves
+the revision unchanged. Multi-document writes provide exact per-document
+revision pairs and use JSON false when a singular top-level revision is not
+applicable. P0/P1 output schemas declare their required fields and collection
+types, and the protocol validates every live structured result before
+serialization.
+
 Public errors expose an uppercase stable code, message, retryability, nested
 details, and the legacy internal code for compatibility.
 
@@ -1205,7 +1218,16 @@ Commands provide:
 - mark reviewed
 - move to next or previous change set
 
-### 21.3 Emergency controls
+### 21.3 Approval buffer
+
+The approval buffer supports approve, reject, cancel, and document-granularity
+partial acceptance for multi-document checkpoint requests. Partial acceptance
+creates a new approved child request bound to the exact selected proper subset,
+original revision guards, credential, and remaining TTL. The parent becomes
+non-consumable. Delete, move, rollback, formatting, and other operations that
+cannot be safely split remain all-or-nothing.
+
+### 21.4 Emergency controls
 
 The package provides commands equivalent to:
 
@@ -1219,7 +1241,7 @@ stop editor service
 
 Pausing prevents new mutations but may allow read-only tools to continue.
 
-### 21.4 Focus preservation
+### 21.5 Focus preservation
 
 Agent operations must not select windows, pop buffers, move point, or interrupt minibuffer use unless the human explicitly opens the activity or review UI.
 

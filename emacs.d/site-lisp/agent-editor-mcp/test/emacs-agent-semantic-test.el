@@ -417,8 +417,104 @@
            (should
             (eq
              (plist-get
-              (emacs-agent-error-details error-data) :capability)
+             (emacs-agent-error-details error-data) :capability)
              'symbol_rename))))))))
+
+(ert-deftest emacs-agent-semantic-runtime-capabilities-separate-support-and-providers ()
+  (with-temp-buffer
+    (emacs-lisp-mode)
+    (add-hook 'xref-backend-functions
+              (lambda () 'emacs-agent-semantic-test-backend)
+              nil t)
+    (let ((emacs-agent-semantic-format-function
+           (lambda (content _mode) content)))
+      (cl-letf (((symbol-function 'eglot-current-server)
+                 (lambda (&optional _prompt) 'server))
+                ((symbol-function 'eglot-server-capable)
+                 (lambda (&rest features)
+                   (memq
+                    (car features)
+                    '(:renameProvider
+                      :codeActionProvider
+                      :documentRangeFormattingProvider)))))
+        (let* ((report
+                (emacs-agent-semantic-runtime-capabilities
+                 (current-buffer)))
+               (supported (alist-get 'supported_tools report))
+               (providers (alist-get 'providers report))
+               (tools (alist-get 'tool_availability report))
+               (rename
+                (seq-find
+                 (lambda (entry)
+                   (equal
+                    (alist-get 'tool entry)
+                    "emacs_agent_symbol_rename"))
+                 tools))
+               (format-document
+                (seq-find
+                 (lambda (entry)
+                   (equal
+                    (alist-get 'tool entry)
+                    "emacs_agent_format_document"))
+                 tools)))
+          (should
+           (equal
+            supported
+            '("emacs_agent_document_symbols"
+              "emacs_agent_workspace_symbols"
+              "emacs_agent_symbol_definition"
+              "emacs_agent_symbol_references"
+              "emacs_agent_editor_context_get"
+              "emacs_agent_format_document"
+              "emacs_agent_symbol_rename"
+              "emacs_agent_code_actions"
+              "emacs_agent_format_range")))
+          (should
+           (eq
+            (alist-get 'available (alist-get 'imenu providers)) t))
+          (should
+           (equal
+            (alist-get 'provider (alist-get 'xref providers))
+            "emacs-agent-semantic-test-backend"))
+          (should (eq (alist-get 'available rename) t))
+          (should (equal (alist-get 'provider rename) "eglot"))
+          (should (eq (alist-get 'available format-document) t))
+          (should
+           (equal
+            (alist-get 'provider format-document)
+            "trusted_formatter")))))))
+
+(ert-deftest emacs-agent-semantic-runtime-capabilities-report-unavailable-providers ()
+  (with-temp-buffer
+    (fundamental-mode)
+    (let ((emacs-agent-semantic-format-function nil))
+      (cl-letf (((symbol-function 'xref-find-backend)
+                 (lambda () nil))
+                ((symbol-function 'eglot-current-server)
+                 (lambda (&optional _prompt) nil))
+                ((symbol-function 'eglot--request)
+                 (lambda (&rest _)
+                   (ert-fail "Capability reporting must not request LSP"))))
+        (let* ((report
+                (emacs-agent-semantic-runtime-capabilities
+                 (current-buffer)))
+               (providers (alist-get 'providers report))
+               (tools (alist-get 'tool_availability report))
+               (context
+                (seq-find
+                 (lambda (entry)
+                   (equal
+                    (alist-get 'tool entry)
+                    "emacs_agent_editor_context_get"))
+                 tools)))
+          (dolist (provider '(imenu xref eglot trusted_formatter))
+            (should
+             (eq
+              (alist-get
+               'available (alist-get provider providers))
+              :false)))
+          (should (eq (alist-get 'available context) t))
+          (should (equal (alist-get 'provider context) "editor")))))))
 
 (provide 'emacs-agent-semantic-test)
 ;;; emacs-agent-semantic-test.el ends here

@@ -167,6 +167,7 @@
           #'emacs-agent-transaction-item-diff
           (emacs-agent-transaction-plan-items plan) "")))
     (list
+   :old_revision nil :new_revision nil
    :applied nil :checkpointed nil
    :modified
    (seq-some
@@ -337,6 +338,8 @@ REQUEST-CONTEXT attributes the resulting workspace change set."
                   plan (and checkpoint (not checkpoint-error))
                   request-context))
            (list
+            :old_revision nil
+            :new_revision nil
             :applied t
             :checkpointed
             (and checkpoint (not checkpoint-error))

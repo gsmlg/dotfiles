@@ -208,8 +208,11 @@ TOKEN is omitted from the metadata when authentication is disabled."
   "Convert internal VALUE into a `json-serialize' compatible value."
   (cond
    ((or (eq value t) (eq value :false) (stringp value)
-        (numberp value) (vectorp value))
+        (numberp value))
     value)
+   ((vectorp value)
+    (vconcat
+     (mapcar #'emacs-agent-editor--json-value (append value nil))))
    ((null value) :false)
    ((and (symbolp value) (not (keywordp value)))
     (symbol-name value))
@@ -217,15 +220,44 @@ TOKEN is omitted from the metadata when authentication is disabled."
     (emacs-agent-editor--plist-to-alist value))
    ((and (listp value)
          (cl-every (lambda (entry)
-                     (and (consp entry) (symbolp (car entry))))
+                     (and (consp entry)
+                          (symbolp (car entry))
+                          (not (keywordp (car entry)))))
                    value))
     (mapcar (lambda (entry)
               (cons (car entry)
-                    (emacs-agent-editor--json-value (cdr entry))))
+                    (if
+                        (emacs-agent-editor--json-array-key-p
+                         (car entry))
+                        (emacs-agent-editor--json-array (cdr entry))
+                      (emacs-agent-editor--json-value (cdr entry)))))
             value))
    ((listp value)
     (vconcat (mapcar #'emacs-agent-editor--json-value value)))
    (t (format "%s" value))))
+
+(defconst emacs-agent-editor--json-array-plist-keys
+  '(:accepted_paths :active_changesets :actions :changesets
+    :checkpointed_paths :diagnostics :diagnostics_after
+    :diagnostics_before :document_paths :documents :edits :matches
+    :new_revisions :old_revisions :operations :paths :ranges
+    :references :related_information :restored_paths :revision_bindings
+    :sources :symbols)
+  "Public plist keys whose values are always JSON arrays.")
+
+(defun emacs-agent-editor--json-array-key-p (key)
+  "Return non-nil when public JSON field KEY is always an array."
+  (memq
+   (if (keywordp key)
+       key
+     (intern (concat ":" (symbol-name key))))
+   emacs-agent-editor--json-array-plist-keys))
+
+(defun emacs-agent-editor--json-array (items)
+  "Convert collection ITEMS into a JSON-compatible array."
+  (vconcat
+   (mapcar #'emacs-agent-editor--json-value
+           (append items nil))))
 
 (defun emacs-agent-editor--plist-to-alist (plist)
   "Convert PLIST recursively to a JSON-compatible alist."
@@ -234,7 +266,10 @@ TOKEN is omitted from the metadata when authentication is disabled."
       (let ((key (pop plist))
             (value (pop plist)))
         (push (cons (emacs-agent-editor--json-key key)
-                    (emacs-agent-editor--json-value value))
+                    (if (memq key
+                              emacs-agent-editor--json-array-plist-keys)
+                        (emacs-agent-editor--json-array value)
+                      (emacs-agent-editor--json-value value)))
               result)))
     (nreverse result)))
 
@@ -454,9 +489,32 @@ NEW-REVISION identifies the resulting content."
        emacs-agent-editor--workspace event)
       (emacs-agent-journal-write emacs-agent-editor--workspace event))))
 
+(defun emacs-agent-editor--workspace-provider-buffers (workspace)
+  "Return live document buffers belonging to WORKSPACE.
+
+The selected buffer is first only when it is one of those workspace buffers."
+  (let ((selected (and (window-live-p (selected-window))
+                       (window-buffer (selected-window))))
+        buffers)
+    (maphash
+     (lambda (_path document)
+       (let ((buffer (emacs-agent-document-buffer document)))
+         (when (buffer-live-p buffer)
+           (push buffer buffers))))
+     (emacs-agent-workspace-document-registry workspace))
+    (setq buffers (delete-dups buffers))
+    (if (memq selected buffers)
+        (cons selected (delq selected buffers))
+      buffers)))
+
 (defun emacs-agent-editor--workspace-info (_arguments _context)
   "Implement `emacs_agent_workspace_info'."
-  (let ((workspace (emacs-agent-workspace-current)))
+  (let* ((workspace (emacs-agent-workspace-current))
+         (provider-buffers
+          (emacs-agent-editor--workspace-provider-buffers workspace))
+         (runtime-capabilities
+          (emacs-agent-semantic-runtime-capabilities
+           (or provider-buffers :none))))
     `((workspace_id . ,(emacs-agent-workspace-workspace-id workspace))
       (root . ,(emacs-agent-workspace-root workspace))
       (access_mode
@@ -469,6 +527,12 @@ NEW-REVISION identifies the resulting content."
       (protocol_versions . ["2026-07-28" "2025-11-25"])
       (authentication
        . ((type . ,(if emacs-agent-editor--token "bearer" "none"))))
+      (supported_tools
+       . ,(vconcat
+           (mapcar #'emacs-agent-tool-name
+                   (emacs-agent-tool-list))))
+      (runtime_capabilities
+       . ,(emacs-agent-editor--json-value runtime-capabilities))
       (capabilities
        . ["read" "edit" "create" "files" "search" "move" "delete"
           "checkpoint" "sync" "diff" "rollback" "replace" "patch"
@@ -1125,8 +1189,19 @@ NEW-REVISION identifies the resulting content."
                     (push
                      `((path
                         . ,(emacs-agent-document-relative-path document))
+                       (old_revision
+                        . ,(cdr
+                            (assoc
+                             (emacs-agent-document-relative-path document)
+                             base-revisions)))
+                       (new_revision
+                        . ,(emacs-agent-document-revision document))
                        (revision
-                        . ,(emacs-agent-document-revision document)))
+                        . ,(emacs-agent-document-revision document))
+                       (applied . t) (checkpointed . t)
+                       (modified . :false) (diff . "")
+                       (truncated . :false)
+                       (diff_truncated . :false))
                      results)
                     (push
                      (cons
@@ -1154,8 +1229,23 @@ NEW-REVISION identifies the resulting content."
                       (nreverse base-revisions)
                       (nreverse final-revisions)
                       t)))
-                `((changeset_id . ,changeset-id)
-                  (checkpointed . ,(vconcat (nreverse results)))))))))))))
+                (let* ((documents (vconcat (nreverse results)))
+                       (single (and (= (length documents) 1)
+                                    (aref documents 0))))
+                  `((old_revision
+                     . ,(if single
+                            (alist-get 'old_revision single)
+                          :false))
+                    (new_revision
+                     . ,(if single
+                            (alist-get 'new_revision single)
+                          :false))
+                    (changeset_id . ,changeset-id)
+                    (applied . t) (checkpointed . t)
+                    (modified . :false) (diff . "")
+                    (truncated . :false)
+                    (diff_truncated . :false)
+                    (documents . ,documents))))))))))))
 
 (defun emacs-agent-editor--workspace-sync (arguments _context)
   "Implement `emacs_agent_workspace_sync' for ARGUMENTS."
@@ -1262,10 +1352,8 @@ NEW-REVISION identifies the resulting content."
        :expected-revision
        (emacs-agent-editor--argument arguments 'expected_revision)
        :sources
-       (mapcar
-        #'intern
-        (append
-         (emacs-agent-editor--argument arguments 'sources) nil))
+       (append
+        (emacs-agent-editor--argument arguments 'sources) nil)
        :wait-ms
        (or (emacs-agent-editor--argument arguments 'wait_ms) 3000))))))
 
@@ -1285,15 +1373,11 @@ NEW-REVISION identifies the resulting content."
        (append
         (emacs-agent-editor--argument arguments 'exclude_globs) nil)
        :severities
-       (mapcar
-        #'intern
-        (append
-         (emacs-agent-editor--argument arguments 'severities) nil))
+       (append
+        (emacs-agent-editor--argument arguments 'severities) nil)
        :sources
-       (mapcar
-        #'intern
-        (append
-         (emacs-agent-editor--argument arguments 'sources) nil))
+       (append
+        (emacs-agent-editor--argument arguments 'sources) nil)
        :wait-ms
        (or (emacs-agent-editor--argument arguments 'wait_ms) 3000)
        :limit
@@ -1590,10 +1674,36 @@ NEW-REVISION identifies the resulting content."
                     `((path . ,path)
                       (revision
                        . ,(emacs-agent-changeset--revision workspace path))))
-                  (emacs-agent-changeset-touched-documents changeset)))))
+                  (emacs-agent-changeset-touched-documents changeset))))
+              (documents
+               (vconcat
+                (mapcar
+                 (lambda (entry)
+                   (let* ((path (alist-get 'path entry))
+                          (new-revision (alist-get 'revision entry))
+                          (old-revision (cdr (assoc path old-revisions))))
+                     `((path . ,path)
+                       (old_revision . ,old-revision)
+                       (new_revision . ,new-revision)
+                       (applied . ,(if dry-run :false t))
+                       (checkpointed
+                        . ,(if (and
+                                (not dry-run)
+                                (eq
+                                 (emacs-agent-workspace-save-policy workspace)
+                                 'immediate))
+                               t :false))
+                       (modified . t) (diff . "")
+                       (truncated . :false)
+                       (diff_truncated . :false))))
+                 new-revisions)))
+              (single (and (= (length documents) 1)
+                           (aref documents 0))))
          `((changeset_id . ,changeset-id)
-           (old_revision . :false)
-           (new_revision . :false)
+           (old_revision
+            . ,(if single (alist-get 'old_revision single) :false))
+           (new_revision
+            . ,(if single (alist-get 'new_revision single) :false))
            (old_revisions
             . ,(vconcat
                 (mapcar
@@ -1612,6 +1722,7 @@ NEW-REVISION identifies the resulting content."
            (diff . ,diff)
            (truncated . :false)
            (diff_truncated . :false)
+           (documents . ,documents)
            (status
             . ,(if dry-run
                    "preview"
@@ -1651,10 +1762,239 @@ NEW-REVISION identifies the resulting content."
            `((start . ,position) (end . ,position)
              (new_text . ,string) (expected_text . ,string))
            '("start" "end" "new_text")))
+         (replace-edit
+          (emacs-agent-editor--object-schema
+           `((old_text . ,string) (new_text . ,string)
+             (replace_all . ,boolean)
+             (expected_occurrences . ,integer))
+           '("old_text" "new_text")))
+         (transaction-document
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (expected_revision . ,string)
+             (edits . ((type . "array") (items . ,replace-edit)))
+             (patch . ,string))
+           '("path" "expected_revision")))
          (document-guard
           (emacs-agent-editor--object-schema
            `((path . ,string) (expected_revision . ,string))
            '("path" "expected_revision")))
+         (falseable-string '((type . ["string" "boolean"])))
+         (falseable-id '((type . ["string" "integer" "boolean"])))
+         (string-array `((type . "array") (items . ,string)))
+         (object-array
+          '((type . "array") (items . ((type . "object")))))
+         (revision-item
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (revision . ,falseable-string))
+           '("path" "revision")))
+         (revision-array
+          `((type . "array") (items . ,revision-item)))
+         (diagnostic-item
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (source . ,string) (severity . ,string)
+             (code . ,falseable-string) (message . ,string)
+             (range . ((type . ["object" "boolean"])))
+             (revision . ,string) (stale . ,boolean)
+             (related_information . ,object-array)
+             (action_id . ,falseable-string))
+           '("source" "severity" "message" "range")))
+         (diagnostic-array
+          `((type . "array") (items . ,diagnostic-item)))
+         (diagnostic-document
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (document_revision . ,string)
+             (diagnostics_revision . ,string)
+             (providers . ,string-array)
+             (pending . ,boolean) (stale . ,boolean)
+             (diagnostics . ,diagnostic-array))
+           '("path" "document_revision" "diagnostics_revision"
+             "providers" "pending" "stale" "diagnostics")))
+         (diagnostic-document-array
+          `((type . "array") (items . ,diagnostic-document)))
+         (write-properties
+          `((path . ,string)
+            (new_path . ,string)
+            (old_revision . ,falseable-string)
+            (new_revision . ,falseable-string)
+            (previous_revision . ,falseable-string)
+            (old_revisions . ,revision-array)
+            (new_revisions . ,revision-array)
+            (changeset_id . ,falseable-string)
+            (applied . ,boolean)
+            (checkpointed . ,boolean)
+            (modified
+             . ((type . "boolean")
+                (description
+                 . "Whether authoritative content differs because of this operation.")))
+            (documents . ,object-array)
+            (diff . ,string)
+            (truncated . ,boolean)
+            (diff_truncated . ,boolean)
+            (revision . ,falseable-string)
+            (edit_count . ,integer)
+            (diagnostics_state . ,string)
+            (deleted . ,boolean)
+            (status . ,string)
+            (checkpoint_error . ((type . ["object" "boolean"])))))
+         (write-required
+          '("old_revision" "new_revision" "changeset_id" "applied"
+            "checkpointed" "modified" "diff" "truncated"))
+         (write-document-required
+          '("path" "old_revision" "new_revision" "applied"
+            "checkpointed" "modified" "diff" "truncated"))
+         (document-write-output
+          (emacs-agent-editor--object-schema
+           write-properties (cons "path" write-required)))
+         (write-document-item
+          (emacs-agent-editor--object-schema
+           write-properties write-document-required))
+         (write-document-array
+          `((type . "array") (items . ,write-document-item)))
+         (transform-write-output
+          (emacs-agent-editor--object-schema
+           (append
+            write-properties
+            `((ranges . ((type . "array") (items . ,range)))
+              (match_count . ((type . ["integer" "boolean"])))))
+           (append (cons "path" write-required) '("ranges"))))
+         (workspace-write-output
+          (emacs-agent-editor--object-schema
+           (append
+            `((documents . ,write-document-array))
+            write-properties)
+           (append write-required '("documents"))))
+         (document-read-output
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (revision . ,string)
+             (modified . ,boolean) (checkpointed . ,boolean)
+             (coding_system . ,string) (eol_style . ,string)
+             (start_line . ,integer) (end_line . ,integer)
+             (total_lines . ,integer) (truncated . ,boolean)
+             (cursor . ,falseable-string) (content . ,string))
+           '("path" "revision" "modified" "checkpointed"
+             "coding_system" "eol_style" "start_line" "end_line"
+             "total_lines" "truncated" "content")))
+         (files-output
+          (emacs-agent-editor--object-schema
+           `((files . ,string-array) (result_count . ,integer)
+             (cursor . ,falseable-string))
+           '("files" "result_count")))
+         (search-output
+          (emacs-agent-editor--object-schema
+           `((results
+              . ((type . "array")
+                 (items
+                  . ,(emacs-agent-editor--object-schema
+                      `((path . ,string) (line . ,integer)
+                        (column . ,integer) (match . ,string)
+                        (context . ,string) (source . ,string)
+                        (modified . ,boolean) (revision . ,string))
+                      '("path" "line" "column" "match" "context"
+                        "source" "modified" "revision")))))
+             (result_count . ,integer)
+             (cursor . ,falseable-string))
+           '("results" "result_count")))
+         (documents-output
+          (emacs-agent-editor--object-schema
+           `((documents . ,object-array))
+           '("documents")))
+         (workspace-diff-output
+          (emacs-agent-editor--object-schema
+           `((changeset_id . ,string) (content . ,string)
+             (truncated . ,boolean) (cursor . ,falseable-string))
+           '("changeset_id" "content" "truncated")))
+         (document-status-output
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (visited . ,boolean)
+             (exists_on_disk . ,boolean) (modified . ,boolean)
+             (checkpointed . ,boolean) (disk_changed . ,boolean)
+             (conflicted . ,boolean) (revision . ,string)
+             (coding_system . ,string) (eol_style . ,string)
+             (major_mode . ,string) (read_only . ,boolean)
+             (active_changesets . ,string-array))
+           '("path" "visited" "exists_on_disk" "modified"
+             "checkpointed" "disk_changed" "conflicted" "revision"
+             "coding_system" "eol_style" "major_mode" "read_only"
+             "active_changesets")))
+         (changeset-list-output
+          (emacs-agent-editor--object-schema
+           `((changesets
+              . ((type . "array")
+                 (items
+                  . ,(emacs-agent-editor--object-schema
+                      `((changeset_id . ,string)
+                        (created_at . ((type . "number")))
+                        (status . ,string) (paths . ,string-array)
+                        (operations . ,object-array)
+                        (old_revisions . ,revision-array)
+                        (new_revisions . ,revision-array)
+                        (checkpointed . ,boolean)
+                        (rollback_available . ,boolean)
+                        (rollback_unavailable_reason . ,falseable-string)
+                        (request_id . ,falseable-id)
+                        (agent_identity . ,falseable-string))
+                      '("changeset_id" "created_at" "status" "paths"
+                        "operations" "old_revisions" "new_revisions"
+                        "checkpointed" "rollback_available")))))
+             (result_count . ,integer)
+             (truncated . ,boolean) (cursor . ,falseable-string))
+           '("changesets" "result_count" "truncated")))
+         (changeset-detail-output
+          (emacs-agent-editor--object-schema
+           `((changeset_id . ,string) (created_at . ((type . "number")))
+             (status . ,string) (paths . ,string-array)
+             (operations . ,object-array)
+             (old_revisions . ,revision-array)
+             (new_revisions . ,revision-array)
+             (checkpointed . ,boolean)
+             (rollback_available . ,boolean)
+             (rollback_unavailable_reason . ,falseable-string)
+             (request_id . ,falseable-id)
+             (agent_identity . ,falseable-string)
+             (diff . ,string) (diff_truncated . ,boolean)
+             (diff_cursor . ,falseable-string)
+             (diagnostics_before . ,diagnostic-array)
+             (diagnostics_after . ,diagnostic-array))
+           '("changeset_id" "created_at" "status" "paths"
+             "operations" "old_revisions" "new_revisions"
+             "checkpointed" "rollback_available" "diff"
+             "diff_truncated" "diagnostics_before"
+             "diagnostics_after")))
+         (document-diagnostics-output
+          (emacs-agent-editor--object-schema
+           `((path . ,string) (document_revision . ,string)
+             (diagnostics_revision . ,string)
+             (providers . ,string-array)
+             (pending . ,boolean) (stale . ,boolean)
+             (diagnostics . ,diagnostic-array))
+           '("path" "document_revision" "diagnostics_revision"
+             "providers" "pending" "stale" "diagnostics")))
+         (workspace-diagnostics-output
+          (emacs-agent-editor--object-schema
+           `((document_count . ,integer) (diagnostic_count . ,integer)
+             (pending . ,boolean) (stale . ,boolean)
+             (next_cursor . ,falseable-string)
+             (summary . ((type . "object")))
+             (documents . ,diagnostic-document-array)
+             (diagnostics . ,diagnostic-array))
+           '("document_count" "diagnostic_count" "pending" "stale"
+             "summary" "documents" "diagnostics")))
+         (workspace-info-output
+          (emacs-agent-editor--object-schema
+           `((workspace_id . ,string) (root . ,string)
+             (access_mode . ,string) (save_policy . ,string)
+             (paused . ,boolean) (health . ,string)
+             (protocol_versions . ,string-array)
+             (authentication . ((type . "object")))
+             (supported_tools . ,string-array)
+             (runtime_capabilities . ((type . "object")))
+             (capabilities . ,string-array)
+             (position_semantics . ((type . "object")))
+             (feature_capabilities . ((type . "object"))))
+           '("workspace_id" "root" "access_mode" "save_policy"
+             "paused" "health" "protocol_versions" "authentication"
+             "supported_tools" "runtime_capabilities" "capabilities"
+             "position_semantics" "feature_capabilities")))
          (output '((type . "object"))))
     (emacs-agent-tool-register
      "emacs_agent_workspace_info"
@@ -1775,16 +2115,11 @@ NEW-REVISION identifies the resulting content."
      (emacs-agent-editor--object-schema
       `((documents
          . ((type . "array")
-            (items
-             . ((type . "object")
-                (properties
-                 . ((path . ,string)
-                    (expected_revision . ,string)
-                    (edits . ((type . "array")
-                              (items . ((type . "object")))))
-                    (patch . ,string)))
-                (required . ["path" "expected_revision"])))))
-        (atomic . ,boolean) (dry_run . ,boolean)
+            (items . ,transaction-document)))
+        (atomic
+         . ((type . "boolean") (enum . [t])
+            (description . "Transactions are always atomic; false is invalid.")))
+        (dry_run . ,boolean)
         (checkpoint . ,boolean))
       '("documents"))
      output #'emacs-agent-editor--workspace-apply-edits 'mutating)
@@ -1914,7 +2249,36 @@ NEW-REVISION identifies the resulting content."
      (emacs-agent-editor--object-schema
       `((approval_request_id . ,string))
       '("approval_request_id"))
-     output #'emacs-agent-editor--approval-cancel 'mutating)))
+     output #'emacs-agent-editor--approval-cancel 'mutating)
+    (dolist
+        (entry
+         `(("emacs_agent_document_read" . ,document-read-output)
+           ("emacs_agent_workspace_info" . ,workspace-info-output)
+           ("emacs_agent_document_apply_edits" . ,document-write-output)
+           ("emacs_agent_document_create" . ,document-write-output)
+           ("emacs_agent_workspace_files" . ,files-output)
+           ("emacs_agent_workspace_search" . ,search-output)
+           ("emacs_agent_document_move" . ,document-write-output)
+           ("emacs_agent_document_delete" . ,document-write-output)
+           ("emacs_agent_workspace_checkpoint" . ,workspace-write-output)
+           ("emacs_agent_workspace_sync" . ,documents-output)
+           ("emacs_agent_workspace_diff" . ,workspace-diff-output)
+           ("emacs_agent_changeset_rollback" . ,workspace-write-output)
+           ("emacs_agent_document_replace" . ,transform-write-output)
+           ("emacs_agent_document_apply_patch" . ,transform-write-output)
+           ("emacs_agent_workspace_apply_edits" . ,workspace-write-output)
+           ("emacs_agent_document_status" . ,document-status-output)
+           ("emacs_agent_workspace_modified_documents" . ,documents-output)
+           ("emacs_agent_changeset_list" . ,changeset-list-output)
+           ("emacs_agent_changeset_get" . ,changeset-detail-output)
+           ("emacs_agent_document_diagnostics"
+            . ,document-diagnostics-output)
+           ("emacs_agent_workspace_diagnostics"
+            . ,workspace-diagnostics-output)))
+      (setf
+       (emacs-agent-tool-output-schema
+        (emacs-agent-tool-get (car entry)))
+       (cdr entry)))))
 
 ;;;###autoload
 (defun emacs-agent-editor-start (directory &optional port)

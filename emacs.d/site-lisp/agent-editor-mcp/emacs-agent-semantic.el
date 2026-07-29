@@ -27,6 +27,7 @@
 (declare-function eglot--request "eglot")
 (declare-function eglot-current-server "eglot")
 (declare-function eglot-path-to-uri "eglot")
+(declare-function eglot-server-capable "eglot")
 (declare-function eglot-uri-to-path "eglot")
 (defvar eglot-move-to-linepos-function)
 
@@ -54,12 +55,195 @@ its returned value before previewing or applying it."
 (defvar emacs-agent-semantic--actions (make-hash-table :test #'equal)
   "Code actions indexed by opaque action IDs.")
 
+(defconst emacs-agent-semantic-supported-tools
+  '("emacs_agent_document_symbols"
+    "emacs_agent_workspace_symbols"
+    "emacs_agent_symbol_definition"
+    "emacs_agent_symbol_references"
+    "emacs_agent_editor_context_get"
+    "emacs_agent_format_document"
+    "emacs_agent_symbol_rename"
+    "emacs_agent_code_actions"
+    "emacs_agent_format_range")
+  "Semantic MCP tools implemented by this module, in stable display order.")
+
 (defun emacs-agent-semantic--unavailable (capability &optional reason)
   "Signal that CAPABILITY is unavailable, optionally because of REASON."
   (emacs-agent-signal
    'capability_unavailable
    :capability capability
    :reason (or reason 'no_native_backend)))
+
+(defun emacs-agent-semantic--json-boolean (value)
+  "Return JSON-compatible true or false for VALUE."
+  (if value t :false))
+
+(defun emacs-agent-semantic--provider-name (provider fallback)
+  "Return a deterministic public name for PROVIDER or FALLBACK."
+  (cond
+   ((symbolp provider) (symbol-name provider))
+   (provider fallback)
+   (t :false)))
+
+(defun emacs-agent-semantic--imenu-provider ()
+  "Return the configured imenu provider name, or nil."
+  (cond
+   ((and imenu-create-index-function
+         (not (eq imenu-create-index-function
+                  #'imenu-default-create-index-function)))
+    (emacs-agent-semantic--provider-name
+     imenu-create-index-function "configured"))
+   (imenu-generic-expression "generic")
+   (t nil)))
+
+(defun emacs-agent-semantic--xref-provider ()
+  "Return the active xref provider name, or nil."
+  (let ((backend
+         (condition-case nil
+             (xref-find-backend)
+           (error nil))))
+    (and backend
+         (emacs-agent-semantic--provider-name backend "configured"))))
+
+(defun emacs-agent-semantic--eglot-runtime ()
+  "Return deterministic Eglot provider capability metadata."
+  (let ((server
+         (and (featurep 'eglot)
+              (condition-case nil
+                  (eglot-current-server)
+                (error nil)))))
+    (cl-labels
+        ((capable (capability)
+           (and server
+                (condition-case nil
+                    (eglot-server-capable capability)
+                  (error nil)))))
+      `((available
+         . ,(emacs-agent-semantic--json-boolean server))
+        (rename
+         . ,(emacs-agent-semantic--json-boolean
+             (capable :renameProvider)))
+        (code_actions
+         . ,(emacs-agent-semantic--json-boolean
+             (capable :codeActionProvider)))
+        (format_document
+         . ,(emacs-agent-semantic--json-boolean
+             (capable :documentFormattingProvider)))
+        (format_range
+         . ,(emacs-agent-semantic--json-boolean
+             (capable :documentRangeFormattingProvider)))))))
+
+(defun emacs-agent-semantic--tool-availability
+    (tool available provider)
+  "Return public availability metadata for supported TOOL.
+AVAILABLE is converted to a JSON boolean and PROVIDER names its adapter."
+  `((tool . ,tool)
+    (supported . t)
+    (available . ,(emacs-agent-semantic--json-boolean available))
+    (provider . ,(if available provider :false))))
+
+;;;###autoload
+(defun emacs-agent-semantic-runtime-capabilities (&optional buffer)
+  "Report supported semantic tools and providers active for BUFFER.
+
+BUFFER may be one buffer or a list of workspace buffers.  It defaults to the
+current buffer; the sentinel `:none' explicitly probes no buffer.
+`supported_tools' is the deterministic module surface and does not imply a
+provider is currently active.
+`providers' reports runtime imenu, xref, Eglot, trusted formatter, and editor
+adapters.  `tool_availability' maps each supported tool to a provider active
+in at least one supplied buffer.  This function sends no language-server
+requests."
+  (let ((buffers
+         (cond
+          ((eq buffer :none) nil)
+          ((bufferp buffer) (list buffer))
+          ((listp buffer) buffer)
+          (t (list (current-buffer)))))
+        imenu-provider xref-provider eglot-runtime)
+    (dolist (candidate buffers)
+      (when (buffer-live-p candidate)
+        (with-current-buffer candidate
+          (setq imenu-provider
+                (or imenu-provider
+                    (emacs-agent-semantic--imenu-provider))
+                xref-provider
+                (or xref-provider
+                    (emacs-agent-semantic--xref-provider)))
+          (let ((runtime (emacs-agent-semantic--eglot-runtime)))
+            (dolist (key '(available rename code_actions
+                                     format_document format_range))
+              (when (eq (alist-get key runtime) t)
+                (setf (alist-get key eglot-runtime) t)))))))
+    (setq eglot-runtime
+          (or eglot-runtime
+              '((available . :false)
+                (rename . :false)
+                (code_actions . :false)
+                (format_document . :false)
+                (format_range . :false))))
+    (let* ((trusted-formatter
+            (functionp emacs-agent-semantic-format-function))
+           (eglot-available
+            (eq (alist-get 'available eglot-runtime) t))
+           (rename-available
+            (eq (alist-get 'rename eglot-runtime) t))
+           (code-actions-available
+            (eq (alist-get 'code_actions eglot-runtime) t))
+           (format-range-available
+            (eq (alist-get 'format_range eglot-runtime) t)))
+      `((supported_tools
+         . ,(copy-sequence emacs-agent-semantic-supported-tools))
+        (providers
+         . ((imenu
+             . ((available
+                 . ,(emacs-agent-semantic--json-boolean
+                     imenu-provider))
+                (provider . ,(or imenu-provider :false))))
+            (xref
+             . ((available
+                 . ,(emacs-agent-semantic--json-boolean
+                     xref-provider))
+                (provider . ,(or xref-provider :false))))
+            (eglot . ,eglot-runtime)
+            (trusted_formatter
+             . ((available
+                 . ,(emacs-agent-semantic--json-boolean
+                     trusted-formatter))
+                (provider
+                 . ,(if trusted-formatter
+                        "trusted_formatter" :false))))
+            (editor
+             . ((available . t)
+                (provider . "emacs")))))
+        (tool_availability
+         . ,(list
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_document_symbols"
+              imenu-provider "imenu")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_workspace_symbols"
+              xref-provider "xref")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_symbol_definition"
+              xref-provider "xref")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_symbol_references"
+              xref-provider "xref")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_editor_context_get" t "editor")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_format_document"
+              trusted-formatter "trusted_formatter")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_symbol_rename"
+              (and eglot-available rename-available) "eglot")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_code_actions"
+              (and eglot-available code-actions-available) "eglot")
+             (emacs-agent-semantic--tool-availability
+              "emacs_agent_format_range"
+              (and eglot-available format-range-available) "eglot")))))))
 
 (defun emacs-agent-semantic--field (object key)
   "Return KEY from protocol OBJECT."

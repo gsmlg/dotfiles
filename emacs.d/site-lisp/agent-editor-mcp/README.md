@@ -203,10 +203,29 @@ preview identifier that must be supplied to the apply call. Code actions are
 classified; only pure workspace edits can be applied. Language-server commands
 are never executed.
 
+`workspace_apply_edits.documents[].edits[]` uses exact replacement fields
+`old_text`, `new_text`, optional `replace_all`, and optional
+`expected_occurrences`. Workspace transactions are always atomic; `atomic`
+may be omitted or set to `true`, while `false` is rejected.
+
 Core write results consistently include `old_revision`, `new_revision`,
 `changeset_id`, `applied`, `checkpointed`, `modified`, `diff`, and
-`truncated`. Public tool errors contain an uppercase stable `code`, `message`,
-`retryable`, nested `details`, and a compatibility `legacy_code`.
+`truncated`. Here `modified` means that the operation changed, or in dry-run
+would change, authoritative content; it is not the buffer's current dirty
+flag. A dry-run reports the currently observed revision because it does not
+mutate the buffer. Multi-document operations return per-document revisions
+and use `false` for a singular revision that is not applicable. P0/P1 tools
+advertise required output fields and nested array schemas, and live results
+are validated against those schemas before they are returned.
+
+`workspace_info.supported_tools` lists the registered tool surface.
+`workspace_info.runtime_capabilities` separately reports whether the current
+Imenu, Xref, Eglot, trusted-formatter, and editor providers are actually
+available. A registered semantic tool can therefore remain supported while
+returning `CAPABILITY_UNAVAILABLE` until its provider is active.
+
+Public tool errors contain an uppercase stable `code`, `message`, `retryable`,
+nested `details`, and a compatibility `legacy_code`.
 
 ## Workspace and save policies
 
@@ -253,6 +272,7 @@ Useful interactive commands:
 The activity buffer provides:
 
 - `a`: approve the operation at point
+- `p`: partially approve selected documents when supported
 - `x`: reject it
 - `P` / `R`: pause or resume mutations
 - `k`: revoke the writer credential
@@ -269,9 +289,12 @@ The changes buffer provides:
 - `g`: refresh
 
 The approvals buffer shows redacted operation impact and supports approve,
-reject, and cancel. Partial acceptance is explicitly unsupported. Change-set
-diff buffers are read-only, can refresh, and can highlight current hunks in
-their source buffers.
+reject, cancel, and safe per-document partial acceptance for multi-document
+checkpoint requests. Partial acceptance derives a new, parameter-bound child
+approval for the selected proper subset; it never mutates the original
+approval. Operations that cannot be safely split remain all-or-nothing.
+Change-set diff buffers are read-only, can refresh, and can highlight current
+hunks in their source buffers.
 
 ## Configuration
 

@@ -40,6 +40,7 @@
     (define-key map (kbd "P") #'emacs-agent-pause-mutations)
     (define-key map (kbd "R") #'emacs-agent-resume-mutations)
     (define-key map (kbd "a") #'emacs-agent-approve-at-point)
+    (define-key map (kbd "p") #'emacs-agent-partially-approve-at-point)
     (define-key map (kbd "x") #'emacs-agent-reject-at-point)
     (define-key map (kbd "k") #'emacs-agent-revoke-writer)
     (define-key map (kbd "q") #'quit-window)
@@ -97,6 +98,7 @@
     (define-key map (kbd "g") #'emacs-agent-ui-refresh)
     (define-key map (kbd "RET") #'emacs-agent-view-approval-at-point)
     (define-key map (kbd "a") #'emacs-agent-approve-at-point)
+    (define-key map (kbd "p") #'emacs-agent-partially-approve-at-point)
     (define-key map (kbd "x") #'emacs-agent-reject-at-point)
     (define-key map (kbd "c") #'emacs-agent-cancel-approval-at-point)
     (define-key map (kbd "q") #'quit-window)
@@ -114,7 +116,7 @@
   (setq tabulated-list-padding 2)
   (setq tabulated-list-sort-key (cons "Created" t))
   (setq header-line-format
-        "Approve: a  Reject: x  Cancel: c  Details: RET. Partial accept is not supported.")
+        "Approve: a  Partial per-document: p  Reject: x  Cancel: c  Details: RET")
   (add-hook 'tabulated-list-revert-hook
             #'emacs-agent-ui--approval-entries nil t)
   (tabulated-list-init-header))
@@ -297,6 +299,32 @@
     (message "Rejected %s" id)
     (emacs-agent-ui-refresh)))
 
+(defun emacs-agent-partially-approve-at-point ()
+  "Approve selected documents from the request at point."
+  (interactive)
+  (let* ((workspace (emacs-agent-workspace-current))
+         (id (emacs-agent-ui--row-id))
+         (approval
+          (emacs-agent-workspace-approval-status workspace id))
+         (paths (plist-get approval :document_paths)))
+    (unless (plist-get approval :partial_accept_supported)
+      (user-error
+       "Partial acceptance is available only for multi-document checkpoints"))
+    (let ((selected
+           (completing-read-multiple
+            "Approve documents: " paths nil t)))
+      (unless selected
+        (user-error "Select at least one document"))
+      (let* ((result
+              (emacs-agent-workspace-approval-partial
+               workspace id selected))
+             (child-id
+              (plist-get result :derived_approval_request_id)))
+        (message
+         "Partially approved %s; retry selected documents with %s"
+         id child-id)
+        (emacs-agent-ui-refresh)))))
+
 (defun emacs-agent-cancel-approval-at-point ()
   "Cancel the pending or approved approval request at point."
   (interactive)
@@ -346,7 +374,11 @@
                   (insert "\nDiff:\n" diff)))
             (emacs-agent-changeset-error
              (insert "\nDiff: unavailable\n"))))
-        (insert "\nPartial accept: unsupported; reject and request a narrower operation.\n")
+        (if (plist-get approval :partial_accept_supported)
+            (insert
+             "\nPartial accept: press p in the approvals list to select documents.\n")
+          (insert
+           "\nPartial accept: unavailable for this operation; reject and request a narrower operation.\n"))
         (special-mode)))
     (pop-to-buffer buffer)))
 

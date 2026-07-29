@@ -60,18 +60,23 @@ HANDLER is called with (ARGUMENTS CONTEXT).  CLASS is a policy hint."
 
 (defun emacs-agent-schema--type-p (value type)
   "Return whether VALUE has JSON schema TYPE."
-  (pcase type
-    ("object" (and (listp value)
-                   (cl-every (lambda (item)
-                               (and (consp item) (symbolp (car item))))
-                             value)))
-    ("array" (or (listp value) (vectorp value)))
-    ("string" (stringp value))
-    ("integer" (integerp value))
-    ("number" (numberp value))
-    ("boolean" (memq value '(t :false)))
-    ("null" (eq value :null))
-    (_ t)))
+  (if (or (listp type) (vectorp type))
+      (seq-some
+       (lambda (candidate)
+         (emacs-agent-schema--type-p value candidate))
+       type)
+    (pcase type
+      ("object" (and (listp value)
+                     (cl-every (lambda (item)
+                                 (and (consp item) (symbolp (car item))))
+                               value)))
+      ("array" (or (listp value) (vectorp value)))
+      ("string" (stringp value))
+      ("integer" (integerp value))
+      ("number" (numberp value))
+      ("boolean" (memq value '(t :false)))
+      ("null" (eq value :null))
+      (_ t))))
 
 (defun emacs-agent-schema-validate (value schema &optional path)
   "Validate VALUE against the package's supported subset of SCHEMA.
@@ -97,10 +102,16 @@ PATH is used only to make errors actionable.  Return VALUE on success."
                   (list `((path . ,path) (reason . "required")
                           (property . ,key))))))
       (dolist (entry value)
-        (when-let* ((property (assq (car entry) properties)))
-          (emacs-agent-schema-validate
-           (cdr entry) (cdr property)
-           (concat path "." (symbol-name (car entry)))))))
+        (if-let* ((property (assq (car entry) properties)))
+            (emacs-agent-schema-validate
+             (cdr entry) (cdr property)
+             (concat path "." (symbol-name (car entry))))
+          (when (eq (alist-get 'additionalProperties schema) :false)
+            (signal 'emacs-agent-schema-error
+                    (list `((path . ,path)
+                            (reason . "additionalProperties")
+                            (property
+                             . ,(symbol-name (car entry))))))))))
     (when (and (equal type "array") items)
       (let ((index 0))
         (seq-doseq (item value)

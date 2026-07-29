@@ -126,6 +126,136 @@
            :status)
           'invalidated))))))
 
+(ert-deftest emacs-agent-ui-partial-approval-derives-exact-child ()
+  (emacs-agent-ui-test--workspace
+    (let* ((path-a "a.el")
+           (path-b "b.el"))
+      (write-region "a\n" nil (expand-file-name path-a root))
+      (write-region "b\n" nil (expand-file-name path-b root))
+      (let* ((document-a
+             (list
+               (cons 'path path-a)
+               (cons
+                'expected_revision
+                (emacs-agent-document-revision-for-path workspace path-a))))
+             (document-b
+              (list
+               (cons 'path path-b)
+               (cons
+                'expected_revision
+                (emacs-agent-document-revision-for-path workspace path-b))))
+             (arguments
+              (list (cons 'documents (list document-a document-b))))
+             (request
+              (emacs-agent-workspace-request-approval
+               workspace "workspace_checkpoint" arguments "credential"))
+             (id (plist-get request :approval_request_id))
+             (parent
+              (emacs-agent-workspace--approval workspace id))
+             (parent-expiry (+ (float-time) 5))
+             (_
+              (setf (emacs-agent-approval-expires-at parent)
+                    parent-expiry))
+             (pending
+              (emacs-agent-workspace-approval-status workspace id))
+             (partial
+              (emacs-agent-workspace-approval-partial
+               workspace id (list path-b)))
+             (child-id
+              (plist-get partial :derived_approval_request_id))
+             (narrowed
+              (list (cons 'documents (list document-b)))))
+        (should (plist-get pending :partial_accept_supported))
+        (should (equal (plist-get pending :document_paths)
+                       (list path-a path-b)))
+        (should (eq (plist-get partial :status) 'partially_approved))
+        (should (stringp child-id))
+        (should
+         (= (emacs-agent-approval-expires-at
+             (emacs-agent-workspace--approval workspace child-id))
+            parent-expiry))
+        (should
+         (eq
+          (plist-get
+           (emacs-agent-workspace-approval-status workspace child-id)
+           :status)
+          'approved))
+        (should-error
+         (emacs-agent-workspace-consume-approval
+          workspace id "workspace_checkpoint" narrowed "credential")
+         :type 'emacs-agent-approval-error)
+        (should-error
+         (emacs-agent-workspace-consume-approval
+          workspace child-id "workspace_checkpoint" arguments "credential")
+         :type 'emacs-agent-approval-error)
+        (should
+         (emacs-agent-workspace-consume-approval
+          workspace child-id "workspace_checkpoint" narrowed "credential"))
+        (should
+         (cl-find-if
+          (lambda (entry)
+            (and
+             (equal (plist-get entry :status) "partially_approved")
+             (equal (plist-get entry :paths) (list path-b))
+             (equal
+              (plist-get entry :derived_approval_request_id)
+              child-id)))
+          (emacs-agent-workspace-recent-activity workspace)))
+        (should (= 2 (length
+                      (alist-get
+                       'documents
+                       (emacs-agent-approval-arguments
+                        (emacs-agent-workspace--approval workspace id))))))))))
+
+(ert-deftest emacs-agent-ui-partial-approval-rejects-unsafe-selection ()
+  (emacs-agent-ui-test--workspace
+    (let* ((arguments
+            (list
+             :documents
+             (list
+              (list :path "a.el")
+              (list :path "b.el"))))
+           (request
+            (emacs-agent-workspace-request-approval
+             workspace "workspace_checkpoint" arguments "credential"))
+           (id (plist-get request :approval_request_id)))
+      (should-error
+       (emacs-agent-workspace-approval-partial
+        workspace id nil)
+       :type 'emacs-agent-approval-error)
+      (should-error
+       (emacs-agent-workspace-approval-partial
+        workspace id '("a.el" "b.el"))
+       :type 'emacs-agent-approval-error)
+      (should-error
+       (emacs-agent-workspace-approval-partial
+       workspace id '("outside.el"))
+       :type 'emacs-agent-approval-error))))
+
+(ert-deftest emacs-agent-ui-partial-approval-command-selects-documents ()
+  (emacs-agent-ui-test--workspace
+    (let* ((request
+            (emacs-agent-workspace-request-approval
+             workspace
+             "workspace_checkpoint"
+             '(:documents ((:path "a.el") (:path "b.el")))
+             "credential"))
+           (id (plist-get request :approval_request_id)))
+      (cl-letf (((symbol-function 'emacs-agent-ui--row-id)
+                 (lambda () id))
+                ((symbol-function 'completing-read-multiple)
+                 (lambda (&rest _ignored) '("b.el")))
+                ((symbol-function 'emacs-agent-ui-refresh) #'ignore)
+                ((symbol-function 'message) #'ignore))
+        (emacs-agent-partially-approve-at-point))
+      (let ((status
+             (emacs-agent-workspace-approval-status workspace id)))
+        (should (eq (plist-get status :status) 'partially_approved))
+        (should (equal (plist-get status :accepted_paths) '("b.el")))
+        (should
+         (stringp
+          (plist-get status :derived_approval_request_id)))))))
+
 (ert-deftest emacs-agent-ui-open-file-jumps-to-range ()
   (emacs-agent-ui-test--workspace
     (let ((path "jump.el"))
@@ -202,6 +332,9 @@
   (should
    (eq (lookup-key emacs-agent-approvals-mode-map (kbd "a"))
        #'emacs-agent-approve-at-point))
+  (should
+   (eq (lookup-key emacs-agent-approvals-mode-map (kbd "p"))
+       #'emacs-agent-partially-approve-at-point))
   (should
    (eq (lookup-key emacs-agent-approvals-mode-map (kbd "x"))
        #'emacs-agent-reject-at-point))

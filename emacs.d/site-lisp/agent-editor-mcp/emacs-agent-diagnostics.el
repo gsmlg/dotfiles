@@ -363,7 +363,7 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
       (list :path (emacs-agent-document-relative-path document)
             :document_revision current
             :diagnostics_revision revision
-            :providers sources
+            :providers (vconcat sources)
             :pending (and pending t)
             :stale (not (equal current revision))
             :diagnostics diagnostics))))

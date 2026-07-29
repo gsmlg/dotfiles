@@ -10,5 +10,8 @@ ${EMACS:=emacs} -nw --batch \
                               (user-init-file (expand-file-name "emacs.d/init.el"))
                               (load-path (delq default-directory load-path)))
                            (load-file user-init-file)
-                           (run-hooks (quote after-init-hook))))'
+                           (run-hooks (quote after-init-hook))
+                           (unless (memq (quote duskmoon-moonlight)
+                                         custom-enabled-themes)
+                             (error "Duskmoon Moonlight theme is not enabled"))))'
 echo "Startup successful"

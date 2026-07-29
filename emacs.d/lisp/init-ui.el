@@ -46,16 +46,16 @@
 ;;----------------------------------------------------------------------------
 ;; Load packages
 ;;----------------------------------------------------------------------------
-(use-package emacs-duskmoon-theme
-  :ensure nil
-  :init
-  (unless (package-installed-p 'emacs-duskmoon-theme)
-    (package-vc-install
-     '(emacs-duskmoon-theme
-       :url
-       "https://github.com/duskmoon-dev/emacs-duskmoon-theme.git")))
-  :config
-  (load-theme 'duskmoon-moonlight t))
+(unless (package-installed-p 'emacs-duskmoon-theme)
+  (package-vc-install
+   '(emacs-duskmoon-theme
+     :url
+     "https://github.com/duskmoon-dev/emacs-duskmoon-theme.git")))
+
+(require 'emacs-duskmoon-theme)
+(add-hook 'after-init-hook
+          (lambda () (load-theme 'duskmoon-moonlight t))
+          t)
 
 ;;------------------------------------------------------------------------------
 ;; Config modeline

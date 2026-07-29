@@ -7,6 +7,8 @@
 
 (require 'emacs-agent-editor)
 
+(setq emacs-agent-editor-port 9876)
+
 (defconst gsmlg/agent-editor-mcp-launch-directory
   (file-name-as-directory (expand-file-name default-directory))
   "Directory inherited by Emacs when this configuration was loaded.")

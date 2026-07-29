@@ -63,8 +63,16 @@ Stop the server with:
 This repository already loads the package from
 `emacs.d/lisp/init-agent-editor-mcp.el`. An Emacs daemon starts the server
 after initialization and binds it to the directory from which the daemon was
-launched. Interactive, non-daemon Emacs sessions load the package but do not
-start a server automatically.
+launched. The dotfiles configuration sets `emacs-agent-editor-port` to `9876`,
+so its MCP URL remains:
+
+```text
+http://127.0.0.1:9876/mcp
+```
+
+Interactive, non-daemon Emacs sessions load the package but do not start a
+server automatically. Only one daemon can bind the fixed port at a time;
+configure another port before starting an additional daemon.
 
 For predictable workspace isolation, start one named daemon from each project:
 
@@ -273,7 +281,7 @@ Core options can be set with `setq` or through
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `emacs-agent-editor-host` | `"127.0.0.1"` | Listener address; v0.2 only accepts IPv4 loopback. |
-| `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. |
+| `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. This dotfiles setup overrides it with `9876`. |
 | `emacs-agent-editor-endpoint` | `"/mcp"` | HTTP endpoint path. |
 | `emacs-agent-editor-allowed-origins` | `nil` | Allowed values for a present `Origin` header. |
 | `emacs-agent-editor-state-directory` | XDG state directory | Parent directory for private runtime state. |

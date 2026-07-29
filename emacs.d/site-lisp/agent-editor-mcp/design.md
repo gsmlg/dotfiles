@@ -31,6 +31,9 @@ authentication:        token authentication disabled
 The dotfiles integration loads the package for all Emacs sessions and
 automatically starts it only for daemon sessions. Runtime connection metadata
 is written to a mode-0600 file in a mode-0700, per-daemon state directory.
+This repository configures port 9876, producing the stable local endpoint
+`http://127.0.0.1:9876/mcp`; the package-level default remains an ephemeral
+port so other installations can choose their own binding.
 
 Review-mode approvals use an approve-then-retry flow. A protected tool returns
 an opaque approval request identifier. A human approves the exact normalized

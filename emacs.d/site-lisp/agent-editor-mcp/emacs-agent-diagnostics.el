@@ -23,16 +23,6 @@
 (declare-function flymake-diagnostic-type "flymake" (diagnostic))
 (declare-function flymake-diagnostics "flymake" (&optional beg end))
 (declare-function flymake-is-running "flymake" ())
-(declare-function flycheck-error-checker "flycheck" (error))
-(declare-function flycheck-error-column "flycheck" (error))
-(declare-function flycheck-error-end-column "flycheck" (error))
-(declare-function flycheck-error-end-line "flycheck" (error))
-(declare-function flycheck-error-fix "flycheck" (error))
-(declare-function flycheck-error-id "flycheck" (error))
-(declare-function flycheck-error-level "flycheck" (error))
-(declare-function flycheck-error-line "flycheck" (error))
-(declare-function flycheck-error-message "flycheck" (error))
-(declare-function flycheck-running-p "flycheck" ())
 (declare-function treesit-language-available-p "treesit" (language &optional quiet))
 (declare-function treesit-node-child "treesit" (node n &optional named))
 (declare-function treesit-node-child-count "treesit" (node &optional named))
@@ -43,8 +33,6 @@
 (declare-function treesit-parser-create "treesit" (language &optional buffer no-reuse))
 (declare-function treesit-parser-root-node "treesit" (parser))
 
-(defvar flycheck-current-errors)
-(defvar flycheck-mode)
 (defvar flymake-mode)
 
 (defcustom emacs-agent-diagnostics-default-wait-ms 1000
@@ -243,57 +231,6 @@ The return value is a cons of diagnostics and the pending state."
          diagnostics)))
     (cons (nreverse diagnostics) pending)))
 
-(defun emacs-agent-diagnostics--flycheck-position (line column)
-  "Convert Flycheck LINE and COLUMN to a public position."
-  (list :line (or line 1) :column (max 0 (1- (or column 1)))))
-
-(defun emacs-agent-diagnostics--flycheck (wait-seconds)
-  "Return Flycheck diagnostics after a bounded WAIT-SECONDS.
-The return value is a cons of diagnostics and the pending state."
-  (unless (and (featurep 'flycheck)
-               (bound-and-true-p flycheck-mode)
-               (boundp 'flycheck-current-errors)
-               (fboundp 'flycheck-running-p))
-    (emacs-agent-signal 'capability_unavailable
-                        :source "flycheck" :reason 'not_enabled))
-  (let ((pending
-         (emacs-agent-diagnostics--wait-while
-          #'flycheck-running-p wait-seconds))
-        diagnostics)
-    (dolist (error flycheck-current-errors)
-      (let* ((line (flycheck-error-line error))
-             (column (flycheck-error-column error))
-             (end-line (or (flycheck-error-end-line error) line))
-             (end-column
-              (or (flycheck-error-end-column error)
-                  (and column (1+ column))
-                  2))
-             (checker (flycheck-error-checker error))
-             (identifier (flycheck-error-id error)))
-        (push
-         (emacs-agent-diagnostics--make
-          "flycheck"
-          (pcase (flycheck-error-level error)
-            ('error "error")
-            ('warning "warning")
-            (_ "info"))
-          (or (flycheck-error-message error) "Flycheck diagnostic")
-          (cond
-           (identifier (format "%s" identifier))
-           (checker (format "%s" checker)))
-          (list
-           :start
-           (emacs-agent-diagnostics--flycheck-position line column)
-           :end
-           (emacs-agent-diagnostics--flycheck-position
-            end-line end-column))
-          nil
-          (and (flycheck-error-fix error)
-               (format "flycheck:%s:%s:%s"
-                       (or checker "unknown") (or line 1) (or column 1))))
-         diagnostics)))
-    (cons (nreverse diagnostics) pending)))
-
 ;;;###autoload
 (cl-defun emacs-agent-document-diagnostics
     (workspace path &key expected-revision sources wait-ms)
@@ -349,11 +286,6 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
           ("flymake"
            (pcase-let ((`(,found . ,still-running)
                         (emacs-agent-diagnostics--flymake wait-seconds)))
-             (setq diagnostics (nconc diagnostics found)
-                   pending (or pending still-running))))
-          ("flycheck"
-           (pcase-let ((`(,found . ,still-running)
-                        (emacs-agent-diagnostics--flycheck wait-seconds)))
              (setq diagnostics (nconc diagnostics found)
                    pending (or pending still-running))))
           (_

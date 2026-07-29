@@ -19,13 +19,127 @@ is_file_identical() {
   [ -f "$dest" ] && cmp -s "$src" "$dest"
 }
 
+# Resolve an existing file or directory without requiring GNU readlink.
+canonical_existing_path() {
+  local path="$1"
+  local directory
+  local basename
+
+  if [ -d "$path" ]; then
+    (cd "$path" && pwd -P)
+  elif [ -e "$path" ]; then
+    directory="$(cd "$(dirname "$path")" && pwd -P)"
+    basename="$(basename "$path")"
+    printf '%s/%s\n' "$directory" "$basename"
+  else
+    return 1
+  fi
+}
+
+# Resolve a symlink target relative to the directory containing the link.
+resolved_symlink_target() {
+  local link="$1"
+  local raw_target
+  local candidate
+  local directory
+
+  [ -L "$link" ] || return 1
+  raw_target="$(readlink "$link")"
+  if [[ "$raw_target" = /* ]]; then
+    candidate="$raw_target"
+  else
+    directory="$(cd "$(dirname "$link")" && pwd -P)"
+    candidate="$directory/$raw_target"
+  fi
+
+  if canonical_existing_path "$candidate" 2>/dev/null; then
+    return 0
+  fi
+
+  directory="$(dirname "$candidate")"
+  if [ -d "$directory" ]; then
+    directory="$(cd "$directory" && pwd -P)"
+    printf '%s/%s\n' "$directory" "$(basename "$candidate")"
+  else
+    printf '%s\n' "$candidate"
+  fi
+}
+
+symlink_points_to_path() {
+  local link="$1"
+  local target="$2"
+  local resolved_link
+  local resolved_target
+
+  [ -L "$link" ] || return 1
+  resolved_link="$(resolved_symlink_target "$link")"
+  resolved_target="$(canonical_existing_path "$target")"
+  [ "$resolved_link" = "$resolved_target" ]
+}
+
+next_backup_path() {
+  local path="$1"
+  local timestamp
+  local candidate
+  local suffix=0
+
+  timestamp="$(date '+%Y%m%d-%H%M%S')"
+  candidate="${path}.backup.${timestamp}"
+  while [ -e "$candidate" ] || [ -L "$candidate" ]; do
+    suffix=$((suffix + 1))
+    candidate="${path}.backup.${timestamp}.${suffix}"
+  done
+  printf '%s\n' "$candidate"
+}
+
+backup_emacs_path() {
+  local path="$1"
+  local backup
+
+  backup="$(next_backup_path "$path")"
+  mv "$path" "$backup"
+  echo "  ✓ Moved existing $path to $backup"
+}
+
 # Step 1: Emacs configuration
 echo "[1/5] Installing Emacs configuration..."
-if is_symlink_to "$HOME/.emacs" "$DOTFILES_DIR/emacs.d/init.el"; then
-  echo "  - Already linked ~/.emacs -> $DOTFILES_DIR/emacs.d/init.el (skipping)"
+emacs_source="$(canonical_existing_path "$DOTFILES_DIR/emacs.d")"
+emacs_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+emacs_link="$emacs_config_home/emacs"
+
+if [ ! -f "$emacs_source/early-init.el" ] || [ ! -f "$emacs_source/init.el" ]; then
+  echo "  ✗ Emacs source must contain early-init.el and init.el: $emacs_source" >&2
+  exit 1
+fi
+
+for legacy_path in "$HOME/.emacs" "$HOME/.emacs.el" "$HOME/.emacs.d"; do
+  if [ ! -e "$legacy_path" ] && [ ! -L "$legacy_path" ]; then
+    continue
+  fi
+
+  if symlink_points_to_path "$legacy_path" "$emacs_source" ||
+     symlink_points_to_path "$legacy_path" "$emacs_source/init.el"; then
+    rm "$legacy_path"
+    echo "  ✓ Removed legacy repository symlink $legacy_path"
+  else
+    backup_emacs_path "$legacy_path"
+  fi
+done
+
+mkdir -p "$emacs_config_home"
+if symlink_points_to_path "$emacs_link" "$emacs_source"; then
+  echo "  - Already linked $emacs_link -> $emacs_source (skipping)"
 else
-  ln -sf "$DOTFILES_DIR/emacs.d/init.el" "$HOME/.emacs"
-  echo "  ✓ Symlinked ~/.emacs -> $DOTFILES_DIR/emacs.d/init.el"
+  if [ -e "$emacs_link" ] || [ -L "$emacs_link" ]; then
+    backup_emacs_path "$emacs_link"
+  fi
+  ln -s "$emacs_source" "$emacs_link"
+  echo "  ✓ Symlinked $emacs_link -> $emacs_source"
+fi
+
+if [ ! -f "$emacs_link/early-init.el" ] || [ ! -f "$emacs_link/init.el" ]; then
+  echo "  ✗ Installed Emacs configuration is incomplete: $emacs_link" >&2
+  exit 1
 fi
 
 # Step 2: Email configuration

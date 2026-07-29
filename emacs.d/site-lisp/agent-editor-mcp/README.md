@@ -61,25 +61,37 @@ Stop the server with:
 ### Dotfiles integration
 
 This repository already loads the package from
-`emacs.d/lisp/init-agent-editor-mcp.el`. An Emacs daemon starts the server
-after initialization and binds it to the directory from which the daemon was
-launched. The dotfiles configuration sets `emacs-agent-editor-port` to `9876`,
-so its MCP URL remains:
+`emacs.d/lisp/gsmlg-agent.el`. Loading the configuration never starts a
+listener in batch mode, and autostart is disabled by default. Start the service
+explicitly with `M-x gsmlg-agent-start`, or opt in with
+`gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`.
+
+Every start requires an explicit workspace. Set `gsmlg-agent-workspace` or
+`EMACS_AGENT_WORKSPACE`; the integration deliberately does not capture the
+startup `default-directory`. Port `9876` remains the compatibility default and
+`EMACS_AGENT_PORT` can override it. The listener remains restricted to IPv4
+loopback, so the default MCP URL is:
 
 ```text
 http://127.0.0.1:9876/mcp
 ```
 
-Interactive, non-daemon Emacs sessions load the package but do not start a
-server automatically. Only one daemon can bind the fixed port at a time;
-configure another port before starting an additional daemon.
+Connection metadata is stored below
+`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/<daemon>/`, rather than
+inside the configuration checkout. `M-x gsmlg-agent-stop` stops only the MCP
+service; it never terminates Emacs or its daemon.
 
-For predictable workspace isolation, start one named daemon from each project:
+The package binds one workspace per Emacs process; it does not provide
+multi-workspace request routing. For predictable isolation, use one named
+daemon per explicit workspace:
 
 ```sh
-cd /path/to/workspace
-emacs --daemon=workspace-name
-emacsclient --socket-name=workspace-name -c
+EMACS_AGENT_WORKSPACE=/path/to/workspace \
+  EMACS_AGENT_AUTOSTART=1 \
+  emacs --daemon=workspace-name
+emacsclient \
+  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/workspace-name" \
+  -c
 ```
 
 ## Connecting

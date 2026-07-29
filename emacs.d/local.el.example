@@ -1,0 +1,41 @@
+;;; local.el.example --- Example machine-local GSMLG settings -*- lexical-binding: t; -*-
+
+;;; Commentary:
+;; Copy selected settings to:
+;;
+;;   ${XDG_CONFIG_HOME:-~/.config}/gsmlg/emacs-local.el
+;;
+;; or point GSMLG_EMACS_LOCAL at another file.  The tracked example is never
+;; loaded automatically.  Keep secrets and private identities out of Git.
+
+;;; Code:
+
+;; Host-specific user data.
+(setopt gsmlg-org-directory (expand-file-name "~/Documents/org/")
+        gsmlg-org-agenda-files
+        (expand-file-name ".agenda_files" gsmlg-org-directory)
+        gsmlg-org-mobile-directory nil
+        gsmlg-org-plantuml-jar-path nil)
+
+;; External tools come from Nix, devenv, direnv, or the project.  Overrides
+;; retain local/TRAMP execution because they are resolved near the buffer.
+(setopt gsmlg-eglot-command-overrides
+        '((elixir . ("expert" "--stdio"))
+          (python . ("basedpyright-langserver" "--stdio"))))
+
+;; Desktop and normal-process server startup are opt-in.  A daemon already
+;; provides an emacsclient server.
+(setopt gsmlg-desktop-save-enabled nil
+        gsmlg-server-autostart nil)
+
+;; Agent Editor MCP requires one explicit workspace per Emacs process.
+(setopt gsmlg-agent-autostart nil
+        gsmlg-agent-workspace nil
+        gsmlg-agent-port 9876)
+
+;; Optional fonts are applied only when present.
+(setopt gsmlg-default-font-family "Source Code Pro"
+        gsmlg-default-font-height 160
+        gsmlg-cjk-font-family "Hiragino Sans GB")
+
+;;; local.el.example ends here

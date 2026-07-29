@@ -1,89 +1,62 @@
-;;; init.el --- Configuration for init -*- lexical-binding: t; -*-
+;;; init.el --- GSMLG Emacs configuration orchestrator -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Configuration module init.
+;; Load responsibility-based modules in explicit dependency order.  Package
+;; installation and mutable paths are owned by their dedicated modules.
 
 ;;; Code:
 
-(setq gc-cons-threshold (* 100 1024 1024))
-(add-hook 'after-init-hook (lambda () (setq gc-cons-threshold (* 8 1024 1024))))
+(when (version< emacs-version "30.2")
+  (error "GSMLG Emacs requires GNU Emacs 30.2 or newer; found %s"
+         emacs-version))
 
-(setq user-emacs-directory
-      (file-name-directory
-       (file-truename (or load-file-name buffer-file-name (expand-file-name "~/.dotfiles/emacs.d/init.el")))))
-(setq custom-file (expand-file-name "custom.el" user-emacs-directory))
-(add-to-list 'load-path (expand-file-name "lisp" user-emacs-directory))
-;; (require 'init-benchmarking)
+(defconst gsmlg-init-directory
+  (file-name-as-directory
+   (file-name-directory (or load-file-name buffer-file-name)))
+  "Directory containing the active GSMLG Emacs configuration.")
 
-(defconst *spell-check-support-enabled* nil) ;; Enable with t if you prefer
-(defconst *is-a-mac* (eq system-type 'darwin))
-(defconst *is-a-win* (eq system-type 'windows-nt))
-(defconst *is-a-lin* (eq system-type 'gnu/linux))
+(dolist (directory '("lisp" "lisp/lang" "site-lisp/agent-editor-mcp"))
+  (add-to-list 'load-path (expand-file-name directory gsmlg-init-directory)))
 
-;; GCC 11 bundled with Emacs.app derives an invalid target on recent macOS.
-(when *is-a-mac*
-  (setenv "MACOSX_DEPLOYMENT_TARGET" "11.0"))
+(require 'gsmlg-paths)
+(require 'gsmlg-bootstrap)
 
-(require 'init-utils)
-(require 'init-site-lisp) ;; Must come before elpa, as it may provide package.el
+(require 'gsmlg-core)
+(require 'gsmlg-session)
+(require 'gsmlg-ui)
+(require 'gsmlg-completion)
+(require 'gsmlg-editing)
+(require 'gsmlg-tramp)
+(require 'gsmlg-project)
+(require 'gsmlg-vcs)
+(require 'gsmlg-eglot)
 
-;; (package-initialize)
+(require 'gsmlg-lang-elisp)
+(require 'gsmlg-lang-beam)
+(require 'gsmlg-lang-web)
+(require 'gsmlg-lang-systems)
+(require 'gsmlg-lang-scripting)
+(require 'gsmlg-lang-infra)
 
-(require 'init-elpa)
-(require 'init-ui)
-(require 'init-setting)
-(require 'init-ibuffer)
-(require 'init-helm)
-(require 'init-company)
-;(require 'init-sessions)
-(require 'init-flycheck)
+(require 'gsmlg-org)
+(require 'gsmlg-elfeed)
+(require 'gsmlg-agent)
 
-;;; programe
-(require 'init-lisp)
-(require 'init-javascript)
-(require 'init-web)
-(require 'init-go)
-(require 'init-ruby)
-(require 'init-rust)
-(require 'init-yaml)
-(require 'init-elixir)
-(require 'init-erlang)
-(require 'init-markdown)
-(require 'init-paredit)
-(require 'init-python)
-(require 'init-zig)
-(require 'init-nix)
-(require 'init-conf)
+;; Complete the configuration package phase before installing bindings that
+;; assert package keymaps and commands.
+(gsmlg-bootstrap-wait)
+(require 'gsmlg-keybindings)
+(gsmlg-lang-beam-register-auto-modes)
+(gsmlg-lang-web-register-auto-modes)
+(gsmlg-lang-systems-register-auto-modes)
+(gsmlg-lang-scripting-register-auto-modes)
+(gsmlg-lang-infra-register-auto-modes)
 
-(require 'init-git)
-(require 'init-project)
-(require 'init-lsp)
+(when (file-readable-p custom-file)
+  (load custom-file nil 'nomessage))
 
-;;; applications
-(require 'init-org)
-(require 'init-elfeed)
-(require 'init-agent-editor-mcp)
-;; (require 'init-email)
-;; (require 'init-music)
-
-
-(when *is-a-mac*
-  (gsmlg/mac-osx-remap-command))
-
-;;----------------------------------------------------------------------------
-;; Allow access from emacsclient
-;;----------------------------------------------------------------------------
-(require 'server)
-(unless (server-running-p)
-  (server-start))
-
-;;----------------------------------------------------------------------------
-;; Variables configured via the interactive 'customize' interface
-;;----------------------------------------------------------------------------
-(when (file-exists-p custom-file)
-  (load custom-file))
-
-(put 'set-goal-column 'disabled nil)
+(when (file-readable-p gsmlg-local-file)
+  (load gsmlg-local-file nil 'nomessage))
 
 (provide 'init)
 ;;; init.el ends here

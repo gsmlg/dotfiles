@@ -1,43 +1,41 @@
 # dotfiles
 
-Personal dotfiles collection for Emacs, Vim, Zsh, and Git configuration.
+Personal dotfiles for Emacs, Vim, Zsh, Git, mbsync, and msmtp.
 
-## Quick Start
+## Install
 
-```bash
-# Install all configurations
+```sh
 ./install.sh
-
-# Test Emacs configuration
-./test-emacs-startup.sh
 ```
 
-## Structure
+The installer links the Emacs configuration to
+`${XDG_CONFIG_HOME:-$HOME/.config}/emacs`, so GNU Emacs 30.2 or newer discovers
+`early-init.el` and `init.el` normally. Existing Emacs files and directories
+are moved to timestamped backups instead of being overwritten. The remaining
+dotfile installation behavior is unchanged.
 
-- **emacs.d/** - Emacs configuration with modular init files
-- **vimrc/** - Vim configuration with basic and extended setups
-- **oh-my-zsh/** - Zsh configuration and themes
-- **gitconfig** - Global Git settings
-- **mbsyncrc/msmtprc** - Email configuration
+The first Emacs startup bootstraps the pinned Elpaca package graph and needs
+Git plus network access. Subsequent startups use the installed builds and
+committed lock file without refreshing package sources.
 
-## Components
+See [`emacs.d/README.md`](emacs.d/README.md) for prerequisites, local
+configuration, tests, package maintenance, and recovery.
 
-### Emacs
-- Modular configuration in `emacs.d/init-*.el`
-- Package management via ELPA
-- Language-specific configurations (Elixir, Go, Ruby, etc.)
+## Repository structure
 
-### Vim
-- Basic and extended vimrc configurations
-- Plugin management via pathogen
-- Popular plugins included (NERDTree, lightline, etc.)
+- `emacs.d/` — Emacs 30.2+ configuration, tests, documentation, snippets, and
+  the bundled Agent Editor MCP package
+- `vimrc/` — basic and extended Vim configuration
+- `oh-my-zsh/` — Oh My Zsh configuration and themes
+- `gitconfig` and `gitignore_global` — Git defaults
+- `mbsyncrc` and `msmtprc` — mail transport configuration
 
-### Zsh
-- Oh My Zsh framework
-- Custom themes and plugins
-- Shell configuration and aliases
+## Test Emacs
 
-## Testing
+```sh
+./run-emacs-tests.sh
+```
 
-Run `./test-emacs-startup.sh` to verify Emacs loads correctly.
-
+The standalone startup, installer, lint, and Agent Editor commands are
+documented in
+[`emacs.d/README.md`](emacs.d/README.md).

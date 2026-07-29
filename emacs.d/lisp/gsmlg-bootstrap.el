@@ -36,6 +36,30 @@
 (defvar elpaca-use-package-mode)
 (defvar use-package-always-ensure)
 
+(defconst gsmlg-bootstrap-elpaca-subprocess-environment-form
+  '(progn
+     (setq gc-cons-percentage 1.0
+           print-level nil
+           print-circle nil)
+     (unless (fboundp #'zlib-decompress-region)
+       (defalias #'zlib-decompress-region
+         (lambda (start end &optional _allow-partial)
+           "Decompress the gzip data between START and END with gzip."
+           (unless (executable-find "gzip")
+             (error
+              "Emacs lacks zlib support and gzip is unavailable"))
+           (let ((coding-system-for-read 'no-conversion)
+                 (coding-system-for-write 'no-conversion)
+                 (status
+                  (call-process-region
+                   start end "gzip" t t nil "-d" "-c")))
+             (unless (and (integerp status) (zerop status))
+               (error "Gzip decompression failed with status %s" status)))))))
+  "Environment applied to Elpaca child Emacs processes.
+
+Some supported Emacs builds omit the optional zlib function used by Elpaca's
+tar transport.  Such child processes use the system gzip executable instead.")
+
 (defun gsmlg-bootstrap--read-lock-file ()
   "Read and validate the committed exact-revision Elpaca lock file."
   (unless (file-readable-p elpaca-lock-file)
@@ -154,6 +178,8 @@ Already installed packages continue to load normally."
 
 (add-hook 'after-init-hook #'elpaca-process-queues)
 (elpaca `(,@elpaca-order))
+(setopt elpaca-with-emacs-env-form
+        gsmlg-bootstrap-elpaca-subprocess-environment-form)
 
 (require 'use-package)
 (elpaca compat)

@@ -41,6 +41,9 @@ OTP-backed Erlang fallback use Elpaca's native exact-commit archive transport
 so bootstrap does not clone their full histories. Package sources and builds are
 stored under `${XDG_DATA_HOME:-~/.local/share}/emacs/elpaca/`; Elpaca's
 disposable cache is under `${XDG_CACHE_HOME:-~/.cache}/emacs/elpaca/`.
+Archive extraction uses Emacs's built-in zlib support when available. If the
+running Emacs omits that optional feature, `gzip` must be available on `PATH`;
+Elpaca child processes use it only as the decompression fallback.
 
 After the first bootstrap, normal startup reads installed builds and does not
 refresh archives or install packages. Verify this explicitly with:

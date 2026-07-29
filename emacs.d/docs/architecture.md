@@ -115,6 +115,12 @@ Elpaca and fetch the locked package sources. Set
 attempting the network; the resulting error explains that one connected
 bootstrap is required.
 
+Elpaca's archive worker normally uses Emacs's optional
+`zlib-decompress-region`. The bootstrap child-process environment supplies an
+external `gzip` fallback only when that function is unavailable, so minimal
+Emacs builds remain reproducible without changing package transport or cloning
+the full OTP history.
+
 The configuration waits only at two real phase boundaries: after establishing
 Elpaca's `use-package` integration, and after queuing declarations before maps
 and commands are asserted by the keybinding module.

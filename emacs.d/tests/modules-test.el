@@ -7,6 +7,9 @@
 
 (require 'test-helper)
 
+(declare-function zlib-decompress-region "zlib"
+                  (start end &optional allow-partial))
+
 (defconst gsmlg-test-required-features
   '(gsmlg-paths
     gsmlg-bootstrap
@@ -164,6 +167,33 @@
           (should-error
            (gsmlg-bootstrap-source-revision package)))
       (delete-directory root t))))
+
+(ert-deftest gsmlg-bootstrap-subprocess-can-decompress-without-emacs-zlib ()
+  "Archive workers should use gzip when Emacs lacks built-in zlib support."
+  (skip-unless (executable-find "gzip"))
+  (let ((original-function
+         (and (fboundp #'zlib-decompress-region)
+              (symbol-function #'zlib-decompress-region)))
+        (gc-cons-percentage gc-cons-percentage)
+        (print-circle print-circle)
+        (print-level print-level))
+    (unwind-protect
+        (progn
+          (fmakunbound #'zlib-decompress-region)
+          (eval elpaca-with-emacs-env-form t)
+          (should (fboundp #'zlib-decompress-region))
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (insert "locked archive\n")
+            (should
+             (zerop
+              (call-process-region
+               (point-min) (point-max) "gzip" t t nil "-c")))
+            (zlib-decompress-region (point-min) (point-max))
+            (should (equal (buffer-string) "locked archive\n"))))
+      (if original-function
+          (fset #'zlib-decompress-region original-function)
+        (fmakunbound #'zlib-decompress-region)))))
 
 (ert-deftest gsmlg-modules-all-use-lexical-binding ()
   "Every first-party Emacs Lisp file should enable lexical binding."

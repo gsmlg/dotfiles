@@ -36,6 +36,7 @@ site-lisp/package/
 /.smex-items
 /image-dired/
 /projectile*
+/projects
 /server
 /session*
 /eshell

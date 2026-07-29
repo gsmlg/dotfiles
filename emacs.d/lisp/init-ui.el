@@ -46,10 +46,16 @@
 ;;----------------------------------------------------------------------------
 ;; Load packages
 ;;----------------------------------------------------------------------------
-(use-package spacemacs-theme
-  :ensure t
+(use-package emacs-duskmoon-theme
+  :ensure nil
   :init
-  (load-theme 'spacemacs-dark t))
+  (unless (package-installed-p 'emacs-duskmoon-theme)
+    (package-vc-install
+     '(emacs-duskmoon-theme
+       :url
+       "https://github.com/duskmoon-dev/emacs-duskmoon-theme.git")))
+  :config
+  (load-theme 'duskmoon-moonlight t))
 
 ;;------------------------------------------------------------------------------
 ;; Config modeline

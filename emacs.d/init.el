@@ -20,6 +20,10 @@
 (defconst *is-a-win* (eq system-type 'windows-nt))
 (defconst *is-a-lin* (eq system-type 'gnu/linux))
 
+;; GCC 11 bundled with Emacs.app derives an invalid target on recent macOS.
+(when *is-a-mac*
+  (setenv "MACOSX_DEPLOYMENT_TARGET" "11.0"))
+
 (require 'init-utils)
 (require 'init-site-lisp) ;; Must come before elpa, as it may provide package.el
 

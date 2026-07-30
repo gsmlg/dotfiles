@@ -133,7 +133,7 @@ and commands are asserted by the keybinding module.
 | `gsmlg-bootstrap` | pinned Elpaca bootstrap, use-package integration, lock writing |
 | `gsmlg-core` | built-in editing defaults, UTF-8, EditorConfig, which-key, startup GC |
 | `gsmlg-session` | recent files, history, places, bookmarks, desktop policy, explicit server control |
-| `gsmlg-ui` | Duskmoon Moonlight, optional fonts, lightweight native mode line |
+| `gsmlg-ui` | Duskmoon Moonlight, optional Nerd Font glyphs, native mode line and file breadcrumb header |
 | `gsmlg-completion` | Vertico, Orderless, Marginalia, Consult, Embark, Corfu, Cape, Yasnippet |
 | `gsmlg-editing` | editing commands, Paredit behavior, vundo and editing packages, macOS remaps |
 | `gsmlg-keybindings` | prefix maps, compatibility wrappers, machine-readable key contract |
@@ -171,7 +171,9 @@ uses `C-;` and `C-c C-;`.
 Corfu presents `completion-at-point` results. Cape adds only low-priority
 fallback CAPFs, so a major mode or Eglot CAPF stays authoritative. Yasnippet
 is enabled in programming and text buffers. Terminal frames use
-corfu-terminal; no icon font is required.
+corfu-terminal.  `Symbols Nerd Font Mono` adds mode-line and breadcrumb
+glyphs when installed, with a text-only fallback for terminal frames and
+hosts where the font is unavailable.
 
 Automatic Eglot discovery runs from the late file-visiting hook, after envrc,
 local variables, and buffer-local project executable paths are active.

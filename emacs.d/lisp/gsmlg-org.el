@@ -230,12 +230,12 @@ This command retains the entrypoint used by the user's Alfred workflow."
     (org-capture)))
 
 (defun gsmlg-org-show-clock-in-header-line ()
-  "Show the current Org clock in the default header line."
-  (setq-default header-line-format '((" " org-mode-line-string " "))))
+  "Refresh the Org clock displayed in the default header line."
+  (force-mode-line-update t))
 
 (defun gsmlg-org-hide-clock-from-header-line ()
-  "Remove the current Org clock from the default header line."
-  (setq-default header-line-format nil))
+  "Refresh the default header line after the Org clock disappears."
+  (force-mode-line-update t))
 
 (defalias 'gsmlg/org-hide-other #'gsmlg-org-hide-other)
 (defalias 'bh/widen #'gsmlg-org-widen)

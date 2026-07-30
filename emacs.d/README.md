@@ -312,15 +312,17 @@ The component commands are:
 ./emacs.d/site-lisp/agent-editor-mcp/run_tests.sh
 ```
 
-To reuse a known-safe package data directory for the standalone startup test:
+The standalone startup test reuses the current XDG package data by default
+while keeping HOME, configuration, cache, state, and runtime data isolated:
 
 ```sh
-GSMLG_EMACS_STARTUP_MODE=reuse \
-GSMLG_EMACS_TEST_DATA_HOME=/safe/path \
 ./test-emacs-startup.sh
 ```
 
-`test-emacs-startup.sh` otherwise uses isolated temporary directories. The
+Override the reusable package data directory with
+`GSMLG_EMACS_TEST_DATA_HOME=/safe/path`. Force a completely fresh package
+bootstrap with `GSMLG_EMACS_STARTUP_MODE=fresh`; fresh mode uses temporary
+package data unless an explicitly safe test-root path is supplied. The
 offline pass sets `GSMLG_EMACS_OFFLINE=1` and blocks Emacs URL/network APIs,
 package.el operations, network Git subcommands, curl, and wget. A valid
 startup also verifies every realized Git repository or immutable source

@@ -8,7 +8,7 @@ if [[ -z "${EMACSCLIENT:-}" && "$emacs" == */* ]] &&
    [[ -x "$(dirname "$emacs")/emacsclient" ]]; then
   emacsclient="$(dirname "$emacs")/emacsclient"
 fi
-startup_mode="${GSMLG_EMACS_STARTUP_MODE:-fresh}"
+startup_mode="${GSMLG_EMACS_STARTUP_MODE:-reuse}"
 owns_test_root=0
 daemon_name=""
 daemon_socket=""
@@ -63,7 +63,13 @@ command -v "$emacsclient" >/dev/null 2>&1 ||
 
 test_home="$test_root/home"
 xdg_config_home="$test_root/config"
-xdg_data_home="${GSMLG_EMACS_TEST_DATA_HOME:-$test_root/data}"
+if [[ -n "${GSMLG_EMACS_TEST_DATA_HOME:-}" ]]; then
+  xdg_data_home="$GSMLG_EMACS_TEST_DATA_HOME"
+elif [[ "$startup_mode" == "reuse" ]]; then
+  xdg_data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+else
+  xdg_data_home="$test_root/data"
+fi
 xdg_cache_home="$test_root/cache"
 xdg_state_home="$test_root/state"
 xdg_runtime_dir="$test_root/runtime"

@@ -180,7 +180,7 @@
                                 "duskmoon-dev/emacs-duskmoon-theme" :files
                                 ("*.el") :type git :protocol https :inherit t
                                 :depth treeless :ref
-                                "728f6f76631e0b151ed5abe92581d5429ffa1038"))
+                                "96f16ce51abec81bfde90c347477c083e3ff9dbb"))
  (embark :source "elpaca-menu-lock-file" :recipe
          (:package "embark" :repo "oantolin/embark" :fetcher github :files
                    ("embark.el" "embark-org.el" "embark.texi") :source

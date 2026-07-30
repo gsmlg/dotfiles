@@ -12,6 +12,8 @@
 
 (declare-function set-fontset-font
                   "fontset" (name target font-spec &optional frame add))
+(defvar duskmoon-header-line-style)
+(defvar duskmoon-mode-line-style)
 (defvar org-mode-line-string)
 
 (defcustom gsmlg-default-font-family "Source Code Pro"
@@ -173,6 +175,9 @@
    :repo "duskmoon-dev/emacs-duskmoon-theme"
    :files ("*.el"))
   :demand t
+  :init
+  (setq duskmoon-mode-line-style 'vivid
+        duskmoon-header-line-style 'accent)
   :config
   (gsmlg-ui-enable-theme))
 

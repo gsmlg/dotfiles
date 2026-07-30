@@ -12,6 +12,11 @@
 (defvar org-mode-line-string)
 (defvar vc-mode)
 
+(ert-deftest gsmlg-ui-configures-duskmoon-bar-styles ()
+  "Duskmoon should own the configured mode and header line styles."
+  (should (eq duskmoon-mode-line-style 'vivid))
+  (should (eq duskmoon-header-line-style 'accent)))
+
 (ert-deftest gsmlg-ui-header-shows-project-relative-file-breadcrumb ()
   "The header should show clickable project-relative parent directories."
   (let* ((root (file-name-as-directory

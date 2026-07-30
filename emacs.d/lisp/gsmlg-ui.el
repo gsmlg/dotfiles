@@ -29,7 +29,7 @@
   :type 'string
   :group 'gsmlg)
 
-(defcustom gsmlg-nerd-font-family "Symbols Nerd Font Mono"
+(defcustom gsmlg-nerd-font-family "JetBrainsMono Nerd Font Mono"
   "Preferred Nerd Font family for UI glyphs."
   :type 'string
   :group 'gsmlg)

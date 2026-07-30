@@ -169,7 +169,7 @@ uses `C-;` and `C-c C-;`.
 
 Corfu presents `completion-at-point` results. Cape adds only low-priority
 fallback CAPFs, so a major mode or Eglot CAPF stays authoritative. Terminal
-frames use corfu-terminal.  `Symbols Nerd Font Mono` adds mode-line and
+frames use corfu-terminal.  `JetBrainsMono Nerd Font Mono` adds mode-line and
 breadcrumb glyphs when installed, with a text-only fallback for terminal
 frames and hosts where the font is unavailable.
 

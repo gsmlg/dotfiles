@@ -19,6 +19,8 @@
 (declare-function consult-yank-pop "consult" ())
 (declare-function corfu-next "corfu" ())
 (declare-function corfu-previous "corfu" ())
+(declare-function dired-find-file "dired" ())
+(declare-function dired-up-directory "dired" (&optional other-window))
 (declare-function eglot-code-actions "eglot" ())
 (declare-function eglot-rename "eglot" ())
 (declare-function embark-act "embark" ())
@@ -56,9 +58,11 @@
 (declare-function symbol-overlay-jump-prev "symbol-overlay" ())
 (declare-function vertico-next "vertico" ())
 (declare-function vertico-previous "vertico" ())
+(declare-function vundo "vundo" ())
 (declare-function which-key-add-keymap-based-replacements "which-key" (keymap &rest replacements))
 
 (defvar corfu-map)
+(defvar dired-mode-map)
 (defvar ert-results-mode-map)
 (defvar ielm-map)
 (defvar magit-mode-map)
@@ -111,6 +115,11 @@
     (:map global-map :key "C-o" :command gsmlg-open-line-with-reindent :status exact)
     (:map global-map :key "C-z" :command gsmlg-maybe-suspend-frame :status exact)
     (:map global-map :key "C-x C-b" :command ibuffer :status exact)
+    (:map global-map :key "C-x u" :command vundo :status semantic-replacement)
+    (:map dired-mode-map :key "C-l" :command dired-up-directory :status exact
+          :feature dired)
+    (:map dired-mode-map :key "C-j" :command dired-find-file :status exact
+          :feature dired)
     (:map global-map :key "M-`" :command ns-next-frame :status exact :platform darwin)
     (:map global-map :key "M-h" :command ns-do-hide-emacs :status exact :platform darwin)
     (:map global-map :key "M-˙" :command ns-do-hide-others :status exact :platform darwin)
@@ -162,7 +171,8 @@
     (:map gsmlg-project-prefix-map :key "k" :command project-kill-buffers :status semantic-replacement)
     (:map gsmlg-project-prefix-map :key "c" :command project-compile :status semantic-replacement)
     (:map gsmlg-project-prefix-map :key "e" :command project-eshell :status intentional-deviation)
-    (:map gsmlg-project-prefix-map :key "s" :command project-shell :status intentional-deviation)
+    (:map gsmlg-project-prefix-map :key "s" :command gsmlg-project-search :status intentional-deviation)
+    (:map gsmlg-project-prefix-map :key "S" :command project-eshell :status intentional-deviation)
     (:map gsmlg-project-prefix-map :key "!" :command project-shell-command :status semantic-replacement)
     (:map gsmlg-project-prefix-map :key "&" :command project-async-shell-command :status semantic-replacement)
     (:map gsmlg-project-prefix-map :key "?" :command xref-find-references :status semantic-replacement)
@@ -253,7 +263,8 @@ needed before asserting an alternate keyboard profile.")
   "k" #'project-kill-buffers
   "c" #'project-compile
   "e" #'project-eshell
-  "s" #'project-shell
+  "s" #'gsmlg-project-search
+  "S" #'project-eshell
   "!" #'project-shell-command
   "&" #'project-async-shell-command
   "?" #'xref-find-references
@@ -400,6 +411,17 @@ history APIs."
   "Install the legacy ERT rerun binding."
   (keymap-set ert-results-mode-map "g" #'ert-results-rerun-all-tests))
 
+(defun gsmlg--configure-dired-keys ()
+  "Install the legacy Dired directory navigation bindings."
+  (keymap-set dired-mode-map "C-l" #'dired-up-directory)
+  (keymap-set dired-mode-map "C-j" #'dired-find-file)
+  (add-hook 'dired-mode-hook #'gsmlg-dired-install-navigation-keys))
+
+(defun gsmlg-dired-install-navigation-keys ()
+  "Install directory navigation keys in the current Dired buffer."
+  (keymap-local-set "C-l" #'dired-up-directory)
+  (keymap-local-set "C-j" #'dired-find-file))
+
 (defun gsmlg--configure-symbol-overlay-keys ()
   "Install occurrence navigation in `symbol-overlay-mode-map'."
   (keymap-set symbol-overlay-mode-map "M-n" #'symbol-overlay-jump-next)
@@ -422,7 +444,7 @@ history APIs."
     gsmlg-project-prefix-map
     "p" "switch project" "f" "find file" "b" "switch buffer"
     "d" "dired" "k" "kill buffers" "c" "compile" "e" "eshell"
-    "s" "shell" "?" "find references" "g" "ripgrep"
+    "s" "ripgrep" "S" "eshell" "?" "find references" "g" "ripgrep"
     "I" "list buffers" "o" "search project" "q" "switch project"
     "r" "replace regexp" "v" "VC directory")
   (which-key-add-keymap-based-replacements
@@ -458,6 +480,7 @@ history APIs."
 (keymap-global-set "C-o" #'gsmlg-open-line-with-reindent)
 (keymap-global-set "C-z" #'gsmlg-maybe-suspend-frame)
 (keymap-global-set "C-x C-b" #'ibuffer)
+(keymap-global-set "C-x u" #'vundo)
 
 (keymap-global-set "M-x" #'execute-extended-command)
 (keymap-global-set "C-x C-m" #'execute-extended-command)
@@ -513,6 +536,8 @@ history APIs."
   (gsmlg--configure-ielm-keys))
 (with-eval-after-load 'ert
   (gsmlg--configure-ert-keys))
+(with-eval-after-load 'dired
+  (gsmlg--configure-dired-keys))
 (with-eval-after-load 'symbol-overlay
   (gsmlg--configure-symbol-overlay-keys))
 (with-eval-after-load 'paredit

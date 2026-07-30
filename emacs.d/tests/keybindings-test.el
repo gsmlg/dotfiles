@@ -72,10 +72,18 @@
   (should (eq (lookup-key global-map (key-parse "C-, r"))
               gsmlg-refactor-prefix-map)))
 
+(ert-deftest gsmlg-dired-buffers-install-navigation-keys ()
+  "Dired buffers should install the legacy directory navigation keys."
+  (require 'dired)
+  (with-temp-buffer
+    (dired-mode default-directory)
+    (should (eq (key-binding (key-parse "C-l")) #'dired-up-directory))
+    (should (eq (key-binding (key-parse "C-j")) #'dired-find-file))))
+
 (ert-deftest gsmlg-project-prefix-commands-are-interactive ()
   "Every retained project-prefix target is an interactive command."
   (should (featurep 'gsmlg-project))
-  (dolist (key '("p" "f" "b" "d" "D" "k" "c" "e" "s" "!" "&"
+  (dolist (key '("p" "f" "b" "d" "D" "k" "c" "e" "s" "S" "!" "&"
                  "?" "g" "I" "o" "q" "r" "v"))
     (should (commandp (lookup-key gsmlg-project-prefix-map
                                   (key-parse key))))))

@@ -55,6 +55,9 @@ Status meanings:
 | Global | `C-o` | `gsmlg/open-line-with-reindent` | `gsmlg-open-line-with-reindent` | Exact | The old public name remains an alias. |
 | Global | `C-z` | `gsmlg/maybe-suspend-frame` | `gsmlg-maybe-suspend-frame` | Exact | Still avoids hiding a graphical macOS frame and suspends elsewhere. |
 | Global | `C-x C-b` | `ibuffer` | `ibuffer` | Exact | Unchanged. |
+| Global | `C-x u` | `undo-tree-visualize` | `vundo` | Semantic replacement | Preserves the visual undo-history entry point using the maintained native-undo frontend. |
+| Dired | `C-l` | `dired-up-directory` | `dired-up-directory` | Exact | Returns to the parent directory. |
+| Dired | `C-j` | `dired-find-file` | `dired-find-file` | Exact | Enters the directory at point or visits the file at point. |
 | Global | `C-;` | Unassigned | `embark-act` | Intentional deviation | Embark uses a nonconflicting key because `C-.` remains mark activation. |
 | Global | `C-c C-;` | Unassigned | `embark-dwim` | Intentional deviation | Adds the companion Embark action without taking a legacy key. |
 
@@ -97,7 +100,8 @@ marker's live buffer, and supplies the last query as Consult's initial input.
 | `C-c p` | `k` | `projectile-kill-buffers` | `project-kill-buffers` | Semantic replacement | Direct built-in equivalent. |
 | `C-c p` | `c` | `projectile-command-map` lifecycle prefix | `project-compile` | Semantic replacement | Preserves project compilation as a direct built-in command. |
 | `C-c p` | `e` | `projectile-recentf` | `project-eshell` | Intentional deviation | The required modern prefix reserves `e` for a project-local Eshell. |
-| `C-c p` | `s` | Projectile search prefix | `project-shell` | Intentional deviation | The required modern prefix reserves `s` for a project-local shell. |
+| `C-c p` | `s` | Projectile search prefix | `gsmlg-project-search` | Semantic replacement | Searches project contents with Consult Ripgrep at `project-root`. |
+| `C-c p` | `S` | Unassigned | `project-eshell` | Intentional deviation | Opens Eshell at the project root. |
 | `C-c p` | `!` | `projectile-run-shell-command-in-root` | `project-shell-command` | Semantic replacement | Built-in project command. |
 | `C-c p` | `&` | `projectile-run-async-shell-command-in-root` | `project-async-shell-command` | Semantic replacement | Built-in project command. |
 | `C-c p` | `?` | `projectile-find-references` | `xref-find-references` | Semantic replacement | Uses Xref with the active Eglot/project backend. |

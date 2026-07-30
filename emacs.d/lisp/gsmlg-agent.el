@@ -54,7 +54,7 @@ in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
 
 (defun gsmlg-agent--resolved-port ()
   "Return the configured Agent Editor MCP port."
-  (if-let ((value (getenv "EMACS_AGENT_PORT")))
+  (if-let* ((value (getenv "EMACS_AGENT_PORT")))
       (let ((port
              (and (string-match-p "\\`[[:digit:]]+\\'" value)
                   (string-to-number value))))
@@ -82,7 +82,7 @@ in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
 (defun gsmlg-agent--autostart-enabled-p ()
   "Return non-nil when Agent Editor MCP autostart is explicitly enabled."
   (or gsmlg-agent-autostart
-      (when-let ((value (getenv "EMACS_AGENT_AUTOSTART")))
+      (when-let* ((value (getenv "EMACS_AGENT_AUTOSTART")))
         (member (downcase (string-trim value))
                 '("1" "true" "yes" "on")))))
 

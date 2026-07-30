@@ -233,6 +233,9 @@ otherwise be blank."
   (with-eval-after-load 'nxml-mode
     (keymap-unset nxml-mode-map key t)))
 
+(defvar mac-command-modifier)
+(defvar mac-option-modifier)
+
 (defun gsmlg-mac-osx-remap-command ()
   "Use Command as Meta and install the Apple-keyboard macOS bindings."
   (interactive)

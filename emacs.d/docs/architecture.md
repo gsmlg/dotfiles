@@ -240,11 +240,10 @@ frame size, position, and window layout, saves without an exit prompt, and is
 controlled by `gsmlg-desktop-save-enabled`; its default filter excludes remote
 files.
 
-Normal startup does not call `server-start`. Use `M-x gsmlg-server-start` or
-set `gsmlg-server-autostart`/`GSMLG_EMACS_SERVER=1` for an interactive
+Normal interactive startup calls `server-start` by default. Set
+`gsmlg-server-autostart` to `nil` in the local override to disable this for a
 non-daemon process. A daemon already provides its own server, and batch mode
-always refuses to start one. Server authentication files live under XDG
-state.
+always refuses to start one. Server authentication files live under XDG state.
 
 ## Agent Editor MCP model
 

@@ -193,17 +193,16 @@ remote desktop buffers are not restored by default.
 
 ## Server and daemon behavior
 
-A normal GUI or terminal process does not start an Emacs server by default.
-Start one explicitly:
+A normal interactive GUI or terminal process starts an Emacs server by
+default. Start one explicitly if autostart has been disabled:
 
 ```text
 M-x gsmlg-server-start
 ```
 
-Set `gsmlg-server-autostart` in the local file or
-`GSMLG_EMACS_SERVER=1` to opt in for an interactive, non-daemon process. Named
-daemons already provide an emacsclient server. Batch mode never opens a server
-socket.
+Set `gsmlg-server-autostart` to `nil` in the local file to opt out for an
+interactive, non-daemon process. Named daemons already provide an emacsclient
+server. Batch mode never opens a server socket.
 
 Optional desktop persistence is controlled by
 `gsmlg-desktop-save-enabled` and is off by default.

@@ -17,7 +17,7 @@
   :group 'gsmlg)
 
 (defcustom gsmlg-server-autostart
-  (equal (getenv "GSMLG_EMACS_SERVER") "1")
+  t
   "Whether a normal interactive GUI session should start an Emacs server.
 
 Daemon sessions already own a server.  Batch sessions always ignore this

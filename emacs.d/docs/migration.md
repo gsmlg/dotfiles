@@ -22,10 +22,9 @@ path. Repeating the installer leaves the correct link unchanged.
 gone; only `lisp/`, `lisp/lang/`, and the exact Agent Editor MCP directory are
 added to `load-path`.
 
-Normal startup no longer starts an Emacs server. Use `M-x
-gsmlg-server-start`, or explicitly enable `gsmlg-server-autostart` or
-`GSMLG_EMACS_SERVER=1`. Daemons already provide their own server, and batch
-mode cannot start one.
+Normal interactive startup starts an Emacs server by default. Set
+`gsmlg-server-autostart` to `nil` in the local override to disable it. Daemons
+already provide their own server, and batch mode cannot start one.
 
 ## Package and state migration
 

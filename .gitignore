@@ -18,3 +18,4 @@ lint-messages.txt
 \.agents/*
 \.codex/*
 \.cursor/*
+\.trees/

@@ -18,6 +18,13 @@
       gc-cons-threshold most-positive-fixnum
       gc-cons-percentage 0.6)
 
+(when (and (eq system-type 'darwin)
+           (not (getenv "MACOSX_DEPLOYMENT_TARGET")))
+  ;; GCC 11's libgccjit misidentifies recent Darwin releases and asks clang
+  ;; for a nonexistent macOS deployment target.  Native compilation runs in
+  ;; child Emacs processes, so pass them the application bundle's minimum.
+  (setenv "MACOSX_DEPLOYMENT_TARGET" "11.0"))
+
 (defvar gsmlg-early-init-loaded t
   "Non-nil after the GSMLG early init file has loaded.")
 

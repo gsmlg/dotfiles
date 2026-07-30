@@ -133,6 +133,9 @@ startup_assertions='
     (error "GNU Emacs 30.2 or newer is required, found %s" emacs-version))
   (unless (and (featurep (quote early-init)) (featurep (quote init)))
     (error "early-init.el and init.el did not both load"))
+  (when (eq system-type (quote darwin))
+    (unless (getenv "MACOSX_DEPLOYMENT_TARGET")
+      (error "Native compilation lacks the macOS deployment target guard")))
   (when (boundp (quote native-comp-eln-load-path))
     (let ((expected-cache
            (file-truename

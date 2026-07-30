@@ -11,7 +11,7 @@
 
 (declare-function emacs-agent-editor-running-p "emacs-agent-editor" ())
 (declare-function emacs-agent-editor-start
-                  "emacs-agent-editor" (workspace &optional port))
+                  "emacs-agent-editor" (&optional port))
 (declare-function emacs-agent-editor-stop "emacs-agent-editor" ())
 (defvar emacs-agent-editor-host)
 (defvar emacs-agent-editor-state-directory)
@@ -37,18 +37,10 @@
   :type '(integer 1 65535)
   :group 'gsmlg-agent)
 
-(defcustom gsmlg-agent-workspace nil
-  "Workspace used when Agent Editor MCP starts without an explicit directory.
-`EMACS_AGENT_WORKSPACE' takes precedence over this value."
-  :type '(choice (const :tag "Require an explicit workspace" nil)
-                 directory)
-  :group 'gsmlg-agent)
-
 (defcustom gsmlg-agent-autostart nil
   "Whether to start Agent Editor MCP after interactive Emacs startup.
-Autostart still requires an explicit workspace from
-`EMACS_AGENT_WORKSPACE' or `gsmlg-agent-workspace', and is always disabled
-in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
+Autostart is always disabled in batch mode.  `EMACS_AGENT_AUTOSTART' can
+also enable autostart."
   :type 'boolean
   :group 'gsmlg-agent)
 
@@ -63,21 +55,6 @@ in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
            "EMACS_AGENT_PORT must be an integer from 1 through 65535"))
         port)
     gsmlg-agent-port))
-
-(defun gsmlg-agent--resolved-workspace (&optional workspace)
-  "Return an absolute directory name for WORKSPACE or configured fallback."
-  (let* ((environment-workspace (getenv "EMACS_AGENT_WORKSPACE"))
-         (directory
-          (cond
-           ((and workspace (not (string-empty-p workspace))) workspace)
-           ((and environment-workspace
-                 (not (string-empty-p environment-workspace)))
-            environment-workspace)
-           ((and gsmlg-agent-workspace
-                 (not (string-empty-p gsmlg-agent-workspace)))
-            gsmlg-agent-workspace))))
-    (when directory
-      (file-name-as-directory (expand-file-name directory)))))
 
 (defun gsmlg-agent--autostart-enabled-p ()
   "Return non-nil when Agent Editor MCP autostart is explicitly enabled."
@@ -102,16 +79,12 @@ in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
     (user-error "Agent Editor MCP is unavailable; inspect startup messages")))
 
 ;;;###autoload
-(defun gsmlg-agent-start (&optional workspace)
-  "Start Agent Editor MCP for WORKSPACE."
-  (interactive "DWorkspace: ")
+(defun gsmlg-agent-start ()
+  "Start the project-optional Agent Editor MCP runtime."
+  (interactive)
   (gsmlg-agent--ensure-package)
-  (let ((directory (gsmlg-agent--resolved-workspace workspace)))
-    (unless directory
-      (user-error
-       "Set `gsmlg-agent-workspace' or EMACS_AGENT_WORKSPACE first"))
-    (gsmlg-agent--configure-package)
-    (emacs-agent-editor-start directory (gsmlg-agent--resolved-port))))
+  (gsmlg-agent--configure-package)
+  (emacs-agent-editor-start (gsmlg-agent--resolved-port)))
 
 ;;;###autoload
 (defun gsmlg-agent-stop ()
@@ -123,18 +96,16 @@ in batch mode.  `EMACS_AGENT_AUTOSTART' can also enable autostart."
 (defun gsmlg-agent-autostart-maybe ()
   "Start Agent Editor MCP when explicit interactive autostart is enabled."
   (unless noninteractive
-    (let ((workspace (gsmlg-agent--resolved-workspace)))
-      (when (and (gsmlg-agent--autostart-enabled-p)
-                 workspace
-                 gsmlg-agent-package-available-p
-                 (fboundp #'emacs-agent-editor-running-p)
-                 (not (emacs-agent-editor-running-p)))
-        (condition-case error-data
-            (gsmlg-agent-start workspace)
-          (error
-           (message "Agent Editor MCP autostart failed: %s"
-                    (error-message-string error-data))
-           nil))))))
+    (when (and (gsmlg-agent--autostart-enabled-p)
+               gsmlg-agent-package-available-p
+               (fboundp #'emacs-agent-editor-running-p)
+               (not (emacs-agent-editor-running-p)))
+      (condition-case error-data
+          (gsmlg-agent-start)
+        (error
+         (message "Agent Editor MCP autostart failed: %s"
+                  (error-message-string error-data))
+         nil)))))
 
 (defalias 'gsmlg/agent-editor-mcp-autostart
   #'gsmlg-agent-autostart-maybe)

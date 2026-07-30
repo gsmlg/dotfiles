@@ -142,7 +142,7 @@ and commands are asserted by the keybinding module.
 | `gsmlg-tramp` | compute-near-data process helpers and remote state policy |
 | `gsmlg-org` | agenda, capture, TODO, clock, Babel, Pomodoro and Org presentation |
 | `gsmlg-elfeed` | tracked feed source and XDG-backed Elfeed database |
-| `gsmlg-agent` | explicit Agent Editor MCP workspace, port, autostart and XDG state |
+| `gsmlg-agent` | project-optional Agent Editor MCP lifecycle, port, autostart and XDG state |
 | `gsmlg-lang-*` | non-overlapping file dispatch and tree-sitter/classic fallbacks |
 
 ## XDG storage model
@@ -250,14 +250,14 @@ always refuses to start one. Server authentication files live under XDG state.
 Agent Editor MCP binds to `127.0.0.1` only. Port 9876 is the compatibility
 default and `EMACS_AGENT_PORT` may override it. Loading the configuration does
 not start a listener. Start it with `M-x gsmlg-agent-start`, or opt into
-autostart with `gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART` after selecting
-an explicit workspace through `gsmlg-agent-workspace` or
-`EMACS_AGENT_WORKSPACE`.
+autostart with `gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`.
 
-The integration does not capture startup `default-directory`. The bundled
-package binds one workspace per Emacs process and does not route requests
-across multiple workspaces. Run one named daemon per explicit workspace when
-isolation is needed. Connection metadata lives below
+One Emacs process owns one editor runtime, one mutation queue, and one
+canonical document registry. It can manage direct absolute local files and
+zero or more projects registered explicitly through MCP. Projects supply
+semantic and relative-path context; they are never implicit request state and
+do not own buffers. The recommended deployment is one named `agent-editor`
+daemon with one endpoint. Connection metadata lives below
 `${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/`. Stopping MCP with
 `M-x gsmlg-agent-stop` stops only the listener, never the Emacs daemon. A
 listener failure is reported without aborting Emacs startup.

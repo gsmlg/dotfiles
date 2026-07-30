@@ -11,7 +11,6 @@
 
 (require 'cl-lib)
 (require 'imenu)
-(require 'project)
 (require 'seq)
 (require 'subr-x)
 (require 'xref)
@@ -20,6 +19,8 @@
 (require 'emacs-agent-document)
 (require 'emacs-agent-edit)
 (require 'emacs-agent-policy)
+(require 'emacs-agent-project)
+(require 'emacs-agent-runtime)
 (require 'emacs-agent-transaction)
 
 (declare-function eglot--lsp-position-to-point "eglot")
@@ -57,7 +58,7 @@ its returned value before previewing or applying it."
 
 (defconst emacs-agent-semantic-supported-tools
   '("emacs_agent_document_symbols"
-    "emacs_agent_workspace_symbols"
+    "emacs_agent_project_symbols"
     "emacs_agent_symbol_definition"
     "emacs_agent_symbol_references"
     "emacs_agent_editor_context_get"
@@ -146,7 +147,7 @@ AVAILABLE is converted to a JSON boolean and PROVIDER names its adapter."
 (defun emacs-agent-semantic-runtime-capabilities (&optional buffer)
   "Report supported semantic tools and providers active for BUFFER.
 
-BUFFER may be one buffer or a list of workspace buffers.  It defaults to the
+BUFFER may be one buffer or a list of candidate buffers.  It defaults to the
 current buffer; the sentinel `:none' explicitly probes no buffer.
 `supported_tools' is the deterministic module surface and does not imply a
 provider is currently active.
@@ -222,7 +223,7 @@ requests."
               "emacs_agent_document_symbols"
               imenu-provider "imenu")
              (emacs-agent-semantic--tool-availability
-              "emacs_agent_workspace_symbols"
+              "emacs_agent_project_symbols"
               xref-provider "xref")
              (emacs-agent-semantic--tool-availability
               "emacs_agent_symbol_definition"
@@ -280,21 +281,56 @@ requests."
       capability (error-message-string error-data)))))
 
 (defun emacs-agent-semantic--assert-revision
-    (workspace path expected-revision)
-  "Return current document for PATH in WORKSPACE after revision validation.
-EXPECTED-REVISION must identify its authoritative content."
-  (let* ((document (emacs-agent-document-open workspace path))
+    (runtime target expected-revision)
+  "Return TARGET's document in RUNTIME after revision validation.
+EXPECTED-REVISION must identify the authoritative content."
+  (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (current (emacs-agent-document-revision document)))
     (unless (equal current expected-revision)
       (emacs-agent-signal
-       'revision_conflict :path path
+       'revision_conflict
+       :path (emacs-agent-resolved-target-canonical-path target)
        :expected_revision expected-revision
        :current_revision current :requires_reread t))
     document))
 
-(defun emacs-agent-semantic--uri-path (workspace uri)
-  "Return workspace-relative path for LSP URI in WORKSPACE."
+(defun emacs-agent-semantic--target-alist (target)
+  "Return public path metadata for resolved TARGET as an alist."
+  `((path . ,(emacs-agent-resolved-target-canonical-path target))
+    (project_id . ,(emacs-agent-resolved-target-project-id target))
+    (relative_path . ,(emacs-agent-resolved-target-relative-path target))))
+
+(defun emacs-agent-semantic--external-target
+    (runtime context-target absolute)
+  "Resolve ABSOLUTE in RUNTIME using explicit CONTEXT-TARGET metadata.
+
+When CONTEXT-TARGET names a project and ABSOLUTE is inside that project,
+preserve that explicit project context.  Other paths remain direct absolute
+targets; registered projects are never inferred."
+  (let ((project-id
+         (and context-target
+              (emacs-agent-resolved-target-project-id context-target))))
+    (if (and project-id (not (file-name-absolute-p absolute)))
+        (emacs-agent-project-resolve-target
+         runtime absolute :project-id project-id)
+      (let* ((direct
+              (emacs-agent-project-resolve-target runtime absolute))
+             (canonical
+              (emacs-agent-resolved-target-canonical-path direct)))
+        (if (not project-id)
+            direct
+          (let* ((project (emacs-agent-project-get runtime project-id))
+                 (root (emacs-agent-project-canonical-root project)))
+            (if (emacs-agent-policy--inside-root-p canonical root)
+                (emacs-agent-project-resolve-target
+                 runtime canonical :project-id project-id)
+              direct)))))))
+
+(defun emacs-agent-semantic--uri-target
+    (runtime context-target uri)
+  "Return a policy-checked target for LSP URI in RUNTIME.
+CONTEXT-TARGET supplies only explicit project rendering context."
   (unless (stringp uri)
     (emacs-agent-semantic--unavailable
      'workspace_edit 'invalid_document_uri))
@@ -304,18 +340,18 @@ EXPECTED-REVISION must identify its authoritative content."
               (eglot-uri-to-path uri)
             (error
              (setq uri-error (error-message-string error-data))
-             nil)))
-         (root (emacs-agent-policy--root workspace)))
+             nil))))
     (unless (and absolute (file-name-absolute-p absolute))
       (emacs-agent-semantic--unavailable
        'workspace_edit
        (list 'unsupported_document_uri :uri uri :error uri-error)))
-    (let ((relative (file-relative-name (file-truename absolute) root)))
-      (emacs-agent-policy-resolve workspace relative)
-      relative)))
+    (emacs-agent-semantic--external-target
+     runtime context-target absolute)))
 
-(defun emacs-agent-semantic--workspace-edit-entries (workspace workspace-edit)
-  "Convert LSP WORKSPACE-EDIT into path/edit entries for WORKSPACE."
+(defun emacs-agent-semantic--workspace-edit-entries
+    (runtime context-target workspace-edit)
+  "Convert LSP WORKSPACE-EDIT into policy-checked entries in RUNTIME.
+CONTEXT-TARGET carries optional explicit project metadata."
   (let ((document-changes
          (emacs-agent-semantic--field workspace-edit 'documentChanges))
         (changes (emacs-agent-semantic--field workspace-edit 'changes))
@@ -332,8 +368,9 @@ EXPECTED-REVISION must identify its authoritative content."
               (emacs-agent-semantic--unavailable
                'workspace_edit 'resource_operations_unsupported))
             (push
-             (list :path
-                   (emacs-agent-semantic--uri-path workspace uri)
+             (list :target
+                   (emacs-agent-semantic--uri-target
+                    runtime context-target uri)
                    :edits (append edits nil))
              entries)))
       (let ((pairs changes))
@@ -350,8 +387,9 @@ EXPECTED-REVISION must identify its authoritative content."
               (emacs-agent-semantic--unavailable
                'workspace_edit 'invalid_changes_map))
             (push
-             (list :path
-                   (emacs-agent-semantic--uri-path workspace uri)
+             (list :target
+                   (emacs-agent-semantic--uri-target
+                    runtime context-target uri)
                    :edits (append edits nil))
              entries)))))
     (nreverse entries)))
@@ -405,17 +443,20 @@ EXPECTED-REVISION must identify its authoritative content."
           (buffer-string))))))
 
 (defun emacs-agent-semantic--workspace-edit-plan
-    (workspace workspace-edit operation linepos-function)
-  "Create an atomic transaction plan for LSP WORKSPACE-EDIT in WORKSPACE.
+    (runtime context-target workspace-edit operation linepos-function)
+  "Create an atomic transaction plan for LSP WORKSPACE-EDIT in RUNTIME.
+CONTEXT-TARGET supplies explicit project metadata for contained paths.
 OPERATION names the recorded operation and LINEPOS-FUNCTION decodes LSP
 character positions."
   (let (items)
     (dolist
         (entry
          (emacs-agent-semantic--workspace-edit-entries
-          workspace workspace-edit))
-      (let* ((path (plist-get entry :path))
-             (document (emacs-agent-document-open workspace path))
+          runtime context-target workspace-edit))
+      (let* ((target (plist-get entry :target))
+             (path
+              (emacs-agent-resolved-target-canonical-path target))
+             (document (emacs-agent-document-open runtime target))
              (_ (emacs-agent-document-reconcile document))
              (revision (emacs-agent-document-revision document))
              (buffer (emacs-agent-document-buffer document))
@@ -426,45 +467,76 @@ character positions."
                   (buffer-substring-no-properties
                    (point-min) (point-max)))))
              (after
-              (emacs-agent-semantic--apply-lsp-text-edits
-               buffer (plist-get entry :edits) linepos-function)))
+              (emacs-agent-transaction--assert-text-result
+               path
+               (emacs-agent-semantic--apply-lsp-text-edits
+                buffer (plist-get entry :edits) linepos-function))))
         (push
          (emacs-agent-transaction-item--make
-          :path (emacs-agent-document-relative-path document)
+          :target target
+          :path path
           :document document :expected-revision revision
           :before before :after after :operation operation
           :diff (emacs-agent-changeset--diff-text path before after))
          items)))
     (emacs-agent-transaction-plan--make
-     :workspace workspace :items (nreverse items))))
+     :runtime runtime :items (nreverse items))))
 
-(defun emacs-agent-semantic--cache-plan (workspace kind plan)
-  "Cache PLAN for WORKSPACE under KIND and return its ID."
+(defun emacs-agent-semantic--cache-plan (runtime kind plan)
+  "Cache PLAN for RUNTIME under KIND and return its ID."
   (let ((id (emacs-agent-semantic--id "semantic:")))
     (puthash
      id
-     (list :workspace (emacs-agent-policy--root workspace)
+     (list :runtime runtime
+           :instance-id (emacs-agent-runtime-instance-id runtime)
+           :server-epoch (emacs-agent-runtime-server-epoch runtime)
            :kind kind :plan plan
            :expires
            (+ (float-time) emacs-agent-semantic-preview-ttl))
      emacs-agent-semantic--previews)
     id))
 
-(defun emacs-agent-semantic--take-plan (workspace preview-id kind)
-  "Consume PREVIEW-ID for WORKSPACE and KIND."
+(defun emacs-agent-semantic--runtime-state-p (runtime state)
+  "Return non-nil when STATE belongs to the exact RUNTIME instance."
+  (and (eq (plist-get state :runtime) runtime)
+       (equal (plist-get state :instance-id)
+              (emacs-agent-runtime-instance-id runtime))
+       (equal (plist-get state :server-epoch)
+              (emacs-agent-runtime-server-epoch runtime))))
+
+(defun emacs-agent-semantic--take-plan (runtime preview-id kind)
+  "Consume PREVIEW-ID for RUNTIME and KIND."
   (let ((state
          (and (stringp preview-id)
               (gethash preview-id emacs-agent-semantic--previews))))
-    (remhash preview-id emacs-agent-semantic--previews)
     (unless (and state
-                 (equal (plist-get state :workspace)
-                        (emacs-agent-policy--root workspace))
+                 (emacs-agent-semantic--runtime-state-p runtime state)
                  (eq (plist-get state :kind) kind)
                  (> (plist-get state :expires) (float-time)))
       (emacs-agent-signal
        'revision_conflict :reason 'invalid_preview
        :requires_reread t))
+    (remhash preview-id emacs-agent-semantic--previews)
     (plist-get state :plan)))
+
+;;;###autoload
+(defun emacs-agent-semantic-clear (&optional runtime)
+  "Clear cached semantic previews and actions belonging to RUNTIME.
+When RUNTIME is nil, clear all semantic runtime state."
+  (dolist (registry
+           (list emacs-agent-semantic--previews
+                 emacs-agent-semantic--actions))
+    (if (null runtime)
+        (clrhash registry)
+      (let (ids)
+        (maphash
+         (lambda (id state)
+           (when (eq (plist-get state :runtime) runtime)
+             (push id ids)))
+         registry)
+        (dolist (id ids)
+          (remhash id registry)))))
+  t)
 
 (defun emacs-agent-semantic--plan-preview (preview-id operation plan)
   "Return public preview for PREVIEW-ID, OPERATION, and PLAN."
@@ -595,73 +667,94 @@ character positions."
       "disk"))
    (t "buffer")))
 
-(defun emacs-agent-semantic--xref-item
-    (workspace item identifier &optional relation)
-  "Convert xref ITEM for IDENTIFIER in WORKSPACE.
+(defun emacs-agent-semantic--xref-location-file (location)
+  "Return the local file represented by xref LOCATION, or nil."
+  (cond
+   ((and (fboundp 'xref-file-location-p)
+         (xref-file-location-p location))
+    (xref-file-location-file location))
+   (t
+    (when-let* ((marker
+                 (condition-case nil
+                     (xref-location-marker location)
+                   (error nil)))
+                (buffer (and (markerp marker) (marker-buffer marker))))
+      (buffer-file-name buffer)))))
 
-RELATION, when non-nil, describes the reference classification.  Return nil
-for locations outside the bound workspace."
-  (catch 'outside-workspace
+(defun emacs-agent-semantic--xref-item
+    (runtime context-target item identifier &optional relation project-only)
+  "Convert xref ITEM for IDENTIFIER in RUNTIME.
+
+CONTEXT-TARGET supplies optional explicit project metadata.  RELATION, when
+non-nil, describes the reference classification.  When PROJECT-ONLY is
+non-nil, discard results outside that explicit project."
+  (catch 'excluded
     (let* ((location (xref-item-location item))
            (source (emacs-agent-semantic--xref-location-source location))
-           (marker
-            (condition-case nil
-                (xref-location-marker location)
-              (error nil)))
-           (buffer (and (markerp marker) (marker-buffer marker))))
-      (unless (buffer-live-p buffer)
-        (throw 'outside-workspace nil))
-      (with-current-buffer buffer
-        (let* ((file (or buffer-file-name
-                         (throw 'outside-workspace nil)))
-               (canonical
-                (condition-case nil
-                    (file-truename file)
-                  (file-error (throw 'outside-workspace nil))))
-               (root (emacs-agent-policy--root workspace)))
-          (unless (file-in-directory-p canonical root)
-            (throw 'outside-workspace nil))
-          (let* ((path (file-relative-name canonical root))
-                 (document (emacs-agent-document-open workspace path))
-                 (_ (emacs-agent-document-reconcile document))
-                 (position (marker-position marker))
-                 (end
-                  (min (+ position (length identifier))
-                       (save-excursion
-                         (goto-char position)
-                         (line-end-position)))))
-            (save-restriction
-              (widen)
+           (file (or (emacs-agent-semantic--xref-location-file location)
+                     (throw 'excluded nil)))
+           (target
+            (emacs-agent-semantic--external-target
+             runtime context-target file)))
+      (when
+          (and project-only
+               (not
+                (equal
+                 (emacs-agent-resolved-target-project-id target)
+                 (emacs-agent-resolved-target-project-id context-target))))
+        (throw 'excluded nil))
+      ;; Resolve and authorize before asking xref to visit the location.
+      (let* ((document (emacs-agent-document-open runtime target))
+             (_ (emacs-agent-document-reconcile document))
+             (marker
+              (condition-case nil
+                  (xref-location-marker location)
+                (error nil)))
+             (buffer (and (markerp marker) (marker-buffer marker))))
+        (unless (buffer-live-p buffer)
+          (throw 'excluded nil))
+        (with-current-buffer buffer
+          (save-restriction
+            (widen)
+            (let* ((position (marker-position marker))
+                   (end
+                    (min (+ position (length identifier))
+                         (save-excursion
+                           (goto-char position)
+                           (line-end-position)))))
               (save-excursion
                 (goto-char position)
-                `((path . ,path)
-                  (range . ,(emacs-agent-semantic--range position end))
-                  (preview
-                   . ,(buffer-substring-no-properties
-                       (line-beginning-position) (line-end-position)))
-                  (summary . ,(xref-item-summary item))
-                  (kind
-                   . ,(emacs-agent-semantic--kind
-                       (xref-item-summary item) nil position))
-                  (relation . ,relation)
-                  (source . ,source)
-                  (revision
-                   . ,(emacs-agent-document-revision document)))))))))))
+                (append
+                 (emacs-agent-semantic--target-alist target)
+                 `((range
+                    . ,(emacs-agent-semantic--range position end))
+                   (preview
+                    . ,(buffer-substring-no-properties
+                        (line-beginning-position) (line-end-position)))
+                   (summary . ,(xref-item-summary item))
+                   (kind
+                    . ,(emacs-agent-semantic--kind
+                        (xref-item-summary item) nil position))
+                   (relation . ,relation)
+                   (source . ,source)
+                   (revision
+                    . ,(emacs-agent-document-revision document))))))))))))
 
 (defun emacs-agent-semantic--xref-items
-    (workspace items identifier &optional relation)
-  "Convert xref ITEMS for IDENTIFIER in WORKSPACE and optional RELATION."
+    (runtime context-target items identifier &optional relation project-only)
+  "Convert xref ITEMS for IDENTIFIER in RUNTIME.
+CONTEXT-TARGET, RELATION, and PROJECT-ONLY are passed to the item converter."
   (delq nil
         (mapcar
          (lambda (item)
            (emacs-agent-semantic--xref-item
-            workspace item identifier relation))
+            runtime context-target item identifier relation project-only))
          items)))
 
 ;;;###autoload
-(defun emacs-agent-semantic-document-symbols (workspace path)
-  "Return the native imenu symbol tree for PATH in WORKSPACE."
-  (let* ((document (emacs-agent-document-open workspace path))
+(defun emacs-agent-semantic-document-symbols (runtime target)
+  "Return the native imenu symbol tree for TARGET in RUNTIME."
+  (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document)))
     (with-current-buffer buffer
@@ -677,11 +770,11 @@ for locations outside the bound workspace."
 
 ;;;###autoload
 (defun emacs-agent-semantic-definition
-    (workspace path position &optional identifier)
-  "Return native xref definitions from PATH at POSITION in WORKSPACE.
+    (runtime target position &optional identifier)
+  "Return native xref definitions from TARGET at POSITION in RUNTIME.
 
 IDENTIFIER, when non-nil, overrides the identifier at POSITION."
-  (let* ((document (emacs-agent-document-open workspace path))
+  (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document)))
     (with-current-buffer buffer
@@ -702,18 +795,18 @@ IDENTIFIER, when non-nil, overrides the identifier at POSITION."
                       'symbol_definition
                       (error-message-string error-data))))))
             (emacs-agent-semantic--xref-items
-             workspace items identifier "definition")))))))
+             runtime target items identifier "definition")))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-references
-    (workspace path position &optional identifier)
-  "Return native xref references from PATH at POSITION in WORKSPACE.
+    (runtime target position &optional identifier)
+  "Return native xref references from TARGET at POSITION in RUNTIME.
 
 IDENTIFIER, when non-nil, overrides the identifier at POSITION.  Xref does not
 provide portable read/write classification or completeness guarantees, so
 results are explicitly marked as possibly incomplete and use the neutral
 `reference' relation."
-  (let* ((document (emacs-agent-document-open workspace path))
+  (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document)))
     (with-current-buffer buffer
@@ -735,38 +828,43 @@ results are explicitly marked as possibly incomplete and use the neutral
                       (error-message-string error-data))))))
             `((references
                . ,(emacs-agent-semantic--xref-items
-                   workspace items identifier "reference"))
+                   runtime target items identifier "reference"))
               (possibly_incomplete . t)
               (source . "xref"))))))))
 
 ;;;###autoload
-(defun emacs-agent-semantic-workspace-symbols
-    (workspace path query &optional kind path-prefix limit)
-  "Search native xref symbols in WORKSPACE using PATH as backend anchor.
+(defun emacs-agent-project-symbols
+    (runtime project-id path query &optional kind path-prefix limit)
+  "Search native xref symbols in RUNTIME for PROJECT-ID.
+PATH is the explicitly project-scoped backend anchor.
 
 QUERY is passed to the active xref backend.  KIND and PATH-PREFIX restrict the
 converted results, and LIMIT defaults to 100 and is capped at 500.  Xref does
 not expose portable completeness guarantees, so the result is marked possibly
 incomplete."
-  (let* ((document (emacs-agent-document-open workspace path))
+  (let* ((_project (emacs-agent-project-get runtime project-id))
+         (target
+          (emacs-agent-project-resolve-target
+           runtime path :project-id project-id))
+         (document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document))
          (limit (min 500 (max 0 (or limit 100)))))
     (unless (and (stringp query) (not (string-empty-p query)))
-      (emacs-agent-semantic--unavailable 'workspace_symbols 'invalid_query))
+      (emacs-agent-semantic--unavailable 'project_symbols 'invalid_query))
     (with-current-buffer buffer
       (let* ((backend
-              (emacs-agent-semantic--xref-backend 'workspace_symbols))
+              (emacs-agent-semantic--xref-backend 'project_symbols))
              (items
               (condition-case error-data
                   (xref-backend-apropos backend query)
                 ((cl-no-applicable-method error)
                  (emacs-agent-semantic--unavailable
-                  'workspace_symbols
+                  'project_symbols
                   (error-message-string error-data)))))
              (symbols
               (emacs-agent-semantic--xref-items
-               workspace items query "symbol"))
+               runtime target items query "symbol" t))
              (filtered
               (seq-filter
                (lambda (symbol)
@@ -775,7 +873,9 @@ incomplete."
                       (equal kind (alist-get 'kind symbol)))
                   (or (null path-prefix)
                       (string-prefix-p
-                       path-prefix (alist-get 'path symbol)))))
+                       path-prefix
+                       (or (alist-get 'relative_path symbol)
+                           (alist-get 'path symbol))))))
                symbols)))
         `((symbols . ,(seq-take filtered limit))
           (possibly_incomplete . t)
@@ -783,17 +883,17 @@ incomplete."
 
 ;;;###autoload
 (defun emacs-agent-semantic-rename-preview
-    (workspace path position new-name expected-revision)
-  "Preview a native semantic rename in WORKSPACE.
+    (runtime target position new-name expected-revision)
+  "Preview a native semantic rename for TARGET in RUNTIME.
 
-PATH and POSITION identify the symbol.  NEW-NAME is sent only to the active
+TARGET and POSITION identify the symbol.  NEW-NAME is sent only to the active
 Eglot server, and EXPECTED-REVISION guards the source document.  The returned
-preview ID freezes the resulting workspace edit for a later atomic apply."
+preview ID freezes the resulting LSP WorkspaceEdit for atomic application."
   (unless (and (stringp new-name) (not (string-empty-p new-name)))
     (emacs-agent-signal 'invalid_argument :field 'new_name))
   (let* ((document
           (emacs-agent-semantic--assert-revision
-           workspace path expected-revision))
+           runtime target expected-revision))
          (buffer (emacs-agent-document-buffer document)))
     (with-current-buffer buffer
       (save-restriction
@@ -814,24 +914,24 @@ preview ID freezes the resulting workspace edit for a later atomic apply."
                    'symbol_rename))
                  (plan
                   (emacs-agent-semantic--workspace-edit-plan
-                   workspace workspace-edit 'symbol-rename
+                   runtime target workspace-edit 'symbol-rename
                    linepos-function))
                  (preview-id
                   (emacs-agent-semantic--cache-plan
-                   workspace 'symbol-rename plan)))
+                   runtime 'symbol-rename plan)))
             (emacs-agent-semantic--plan-preview
              preview-id 'symbol-rename plan)))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-rename-apply
-    (workspace preview-id &optional checkpoint request-context)
-  "Atomically apply a frozen semantic rename PREVIEW-ID in WORKSPACE.
+    (runtime preview-id &optional checkpoint request-context)
+  "Atomically apply a frozen semantic rename PREVIEW-ID in RUNTIME.
 
-CHECKPOINT and REQUEST-CONTEXT are forwarded to the workspace transaction.
+CHECKPOINT and REQUEST-CONTEXT are forwarded to the runtime transaction.
 No new language-server request is made during application."
   (emacs-agent-transaction-apply
    (emacs-agent-semantic--take-plan
-   workspace preview-id 'symbol-rename)
+    runtime preview-id 'symbol-rename)
    nil checkpoint request-context))
 
 (defun emacs-agent-semantic--code-action-classification (action)
@@ -852,13 +952,15 @@ No new language-server request is made during application."
      (command (emacs-agent-semantic--field command 'command)))))
 
 (defun emacs-agent-semantic--cache-action
-    (workspace classification plan command disabled)
-  "Cache a code action for WORKSPACE and return its opaque identifier.
+    (runtime classification plan command disabled)
+  "Cache a code action for RUNTIME and return its opaque identifier.
 CLASSIFICATION, PLAN, COMMAND, and DISABLED describe its safe execution."
   (let ((id (emacs-agent-semantic--id "action:")))
     (puthash
      id
-     (list :workspace (emacs-agent-policy--root workspace)
+     (list :runtime runtime
+           :instance-id (emacs-agent-runtime-instance-id runtime)
+           :server-epoch (emacs-agent-runtime-server-epoch runtime)
            :classification classification
            :plan plan :command command :disabled disabled
            :expires
@@ -867,8 +969,8 @@ CLASSIFICATION, PLAN, COMMAND, and DISABLED describe its safe execution."
     id))
 
 (defun emacs-agent-semantic--public-code-action
-    (workspace action linepos-function)
-  "Return safe metadata for LSP ACTION in WORKSPACE."
+    (runtime target action linepos-function)
+  "Return safe metadata for LSP ACTION in RUNTIME for TARGET."
   (let* ((classification
           (emacs-agent-semantic--code-action-classification action))
          (edit (emacs-agent-semantic--field action 'edit))
@@ -877,10 +979,10 @@ CLASSIFICATION, PLAN, COMMAND, and DISABLED describe its safe execution."
          (plan
           (and edit
                (emacs-agent-semantic--workspace-edit-plan
-                workspace edit 'code-action linepos-function)))
+                runtime target edit 'code-action linepos-function)))
          (action-id
           (emacs-agent-semantic--cache-action
-           workspace classification plan command disabled))
+           runtime classification plan command disabled))
          (preview (and plan (emacs-agent-transaction-apply plan t))))
     `((action_id . ,action-id)
       (title . ,(or (emacs-agent-semantic--field action 'title) ""))
@@ -900,15 +1002,15 @@ CLASSIFICATION, PLAN, COMMAND, and DISABLED describe its safe execution."
 
 ;;;###autoload
 (defun emacs-agent-semantic-code-actions
-    (workspace path range expected-revision &optional kind)
-  "Return safe native code actions for RANGE in PATH and WORKSPACE.
+    (runtime target range expected-revision &optional kind)
+  "Return safe native code actions for RANGE in TARGET and RUNTIME.
 
 EXPECTED-REVISION guards the query.  KIND optionally restricts the LSP action
-kind.  Results are classified without executing commands; only workspace
-edits are converted into frozen atomic transaction plans."
+kind.  Results are classified without executing commands; only LSP
+WorkspaceEdits are converted into frozen atomic transaction plans."
   (let* ((document
           (emacs-agent-semantic--assert-revision
-           workspace path expected-revision))
+           runtime target expected-revision))
          (buffer (emacs-agent-document-buffer document))
          (start-position
           (emacs-agent-semantic--field range 'start))
@@ -948,23 +1050,22 @@ edits are converted into frozen atomic transaction plans."
              . ,(mapcar
                  (lambda (action)
                    (emacs-agent-semantic--public-code-action
-                    workspace action linepos-function))
+                    runtime target action linepos-function))
                  (append actions nil)))))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-code-action-apply
-    (workspace action-id &optional checkpoint request-context)
-  "Atomically apply pure-edit code ACTION-ID in WORKSPACE.
+    (runtime action-id &optional checkpoint request-context)
+  "Atomically apply pure-edit code ACTION-ID in RUNTIME.
 
 Actions containing commands are never executed here and instead signal
 `approval_required'.  CHECKPOINT and REQUEST-CONTEXT are passed to the
-workspace transaction for pure edits."
+runtime transaction for pure edits."
   (let ((state
          (and (stringp action-id)
               (gethash action-id emacs-agent-semantic--actions))))
     (unless (and state
-                 (equal (plist-get state :workspace)
-                        (emacs-agent-policy--root workspace))
+                 (emacs-agent-semantic--runtime-state-p runtime state)
                  (> (plist-get state :expires) (float-time)))
       (emacs-agent-signal
        'revision_conflict :reason 'invalid_action
@@ -988,15 +1089,15 @@ workspace transaction for pure edits."
 
 ;;;###autoload
 (defun emacs-agent-semantic-format-range-preview
-    (workspace path range expected-revision)
-  "Preview native Eglot formatting for RANGE in PATH and WORKSPACE.
+    (runtime target range expected-revision)
+  "Preview native Eglot formatting for RANGE in TARGET and RUNTIME.
 
 EXPECTED-REVISION guards the source.  Formatter selection and options come
 only from the active Emacs/Eglot configuration; callers cannot provide a
 program or command.  The returned preview ID freezes the text edits."
   (let* ((document
           (emacs-agent-semantic--assert-revision
-           workspace path expected-revision))
+           runtime target expected-revision))
          (buffer (emacs-agent-document-buffer document))
          (start-position
           (emacs-agent-semantic--field range 'start))
@@ -1041,30 +1142,39 @@ program or command.  The returned preview ID freezes the text edits."
                  (vector
                   (list :textDocument (list :uri uri)
                         :edits edits))))
-               (plan
-                (emacs-agent-semantic--workspace-edit-plan
-                 workspace workspace-edit 'format-range
-                 linepos-function))
-               (preview-id
-                (emacs-agent-semantic--cache-plan
-                 workspace 'format-range plan)))
+                 (plan
+                  (emacs-agent-semantic--workspace-edit-plan
+                   runtime target workspace-edit 'format-range
+                   linepos-function))
+                 (preview-id
+                  (emacs-agent-semantic--cache-plan
+                   runtime 'format-range plan)))
           (emacs-agent-semantic--plan-preview
            preview-id 'format-range plan))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-format-range-apply
-    (workspace preview-id &optional checkpoint request-context)
-  "Atomically apply a frozen range-format PREVIEW-ID in WORKSPACE.
+    (runtime preview-id &optional checkpoint request-context)
+  "Atomically apply a frozen range-format PREVIEW-ID in RUNTIME.
 
-CHECKPOINT and REQUEST-CONTEXT are forwarded to the workspace transaction.
+CHECKPOINT and REQUEST-CONTEXT are forwarded to the runtime transaction.
 The formatter is not invoked again during application."
   (emacs-agent-transaction-apply
    (emacs-agent-semantic--take-plan
-    workspace preview-id 'format-range)
+    runtime preview-id 'format-range)
    nil checkpoint request-context))
 
-(defun emacs-agent-semantic--context-redaction-reason (workspace buffer)
-  "Return a reason to redact BUFFER in WORKSPACE, or nil."
+(defun emacs-agent-semantic--context-target
+    (runtime buffer &optional project-id)
+  "Resolve BUFFER's file in RUNTIME with optional explicit PROJECT-ID."
+  (when-let* ((file (buffer-file-name buffer)))
+    (emacs-agent-project-resolve-target
+     runtime file :project-id project-id)))
+
+(defun emacs-agent-semantic--context-redaction-reason
+    (runtime buffer &optional project-id)
+  "Return a reason to redact BUFFER in RUNTIME, or nil.
+PROJECT-ID is the only project context considered."
   (with-current-buffer buffer
     (cond
      ((or (minibufferp buffer)
@@ -1072,69 +1182,47 @@ The formatter is not invoked again during application."
       "minibuffer")
      (emacs-agent-semantic-sensitive-buffer "sensitive_buffer")
      (buffer-file-name
-      (let* ((root (emacs-agent-policy--root workspace))
-             (canonical
-              (condition-case nil
-                  (file-truename buffer-file-name)
-                (file-error nil))))
-        (cond
-         ((or (null canonical)
-              (not (file-in-directory-p canonical root)))
-          "outside_workspace")
-         ((condition-case nil
-              (progn
-                (emacs-agent-policy-resolve
-                 workspace (file-relative-name canonical root))
-                nil)
-            (emacs-agent-error t))
-          "sensitive_path")))))))
-
-(defun emacs-agent-semantic--context-project (workspace)
-  "Return the current project root when it is contained in WORKSPACE."
-  (when-let* ((project (condition-case nil
-                           (project-current nil default-directory)
-                         (error nil)))
-              (project-root
-               (condition-case nil
-                   (file-truename (project-root project))
-                 (error nil)))
-              (workspace-root (emacs-agent-policy--root workspace)))
-    (when (or (equal (directory-file-name project-root)
-                     (directory-file-name workspace-root))
-              (file-in-directory-p project-root workspace-root))
-      project-root)))
+      (condition-case nil
+          (progn
+            (emacs-agent-semantic--context-target
+             runtime buffer project-id)
+            nil)
+        (emacs-agent-error (symbol-name 'sensitive_path)))))))
 
 ;;;###autoload
-(defun emacs-agent-semantic-editor-context (workspace &optional buffer)
-  "Return safe editor metadata for BUFFER in WORKSPACE.
+(defun emacs-agent-semantic-editor-context
+    (runtime &optional buffer project-id)
+  "Return safe editor metadata for BUFFER in RUNTIME.
 
 BUFFER defaults to the current buffer.  No buffer text is returned.  Sensitive,
-minibuffer, denied-path, and out-of-workspace buffers return only workspace and
-redaction metadata."
+minibuffer, and denied-path buffers return only runtime and redaction metadata.
+PROJECT-ID, when non-nil, is explicit rendering context; no project is
+inferred from `default-directory' or `project-current'."
+  (unless (emacs-agent-runtime-p runtime)
+    (emacs-agent-signal 'runtime_not_started))
+  (when project-id
+    (emacs-agent-project-get runtime project-id))
   (setq buffer (or buffer (current-buffer)))
-  (let* ((root (emacs-agent-policy--root workspace))
-         (reason
+  (let ((reason
           (and (buffer-live-p buffer)
                (emacs-agent-semantic--context-redaction-reason
-                workspace buffer))))
+                runtime buffer project-id))))
     (cond
      ((not (buffer-live-p buffer))
-      `((workspace . ,root)
+      `((instance_id . ,(emacs-agent-runtime-instance-id runtime))
         (redacted . t)
         (redaction_reason . "dead_buffer")))
      (reason
-      `((workspace . ,root)
+      `((instance_id . ,(emacs-agent-runtime-instance-id runtime))
         (redacted . t)
         (redaction_reason . ,reason)))
      (t
       (with-current-buffer buffer
         (save-restriction
           (widen)
-          (let* ((canonical
-                  (and buffer-file-name
-                       (file-truename buffer-file-name)))
-                 (path
-                  (and canonical (file-relative-name canonical root)))
+          (let* ((target
+                  (emacs-agent-semantic--context-target
+                   runtime buffer project-id))
                  (window (get-buffer-window buffer t))
                  (visible
                   (and (window-live-p window)
@@ -1145,27 +1233,33 @@ redaction metadata."
                   (and mark-active (mark t) (/= (point) (mark t))
                        (emacs-agent-semantic--range
                         (region-beginning) (region-end)))))
-            `((workspace . ,root)
+            `((instance_id . ,(emacs-agent-runtime-instance-id runtime))
               (redacted . :false)
               (buffer
-               . ((name . ,(buffer-name buffer))
-                  (path . ,path)
-                  (modified . ,(if (buffer-modified-p) t :false))))
+               . ,(append
+                   `((name . ,(buffer-name buffer)))
+                   (if target
+                       (emacs-agent-semantic--target-alist target)
+                     '((path . nil)
+                       (project_id . nil)
+                       (relative_path . nil)))
+                   `((modified
+                      . ,(if (buffer-modified-p) t :false)))))
               (point . ,(emacs-agent-semantic--public-position (point)))
               (active_region . ,region)
               (visible_range . ,visible)
-              (major_mode . ,(symbol-name major-mode))
-              (project . ,(emacs-agent-semantic--context-project
-                            workspace))))))))))
+              (major_mode . ,(symbol-name major-mode))))))))))
 
 (defun emacs-agent-semantic--format-state
-    (workspace path expected-revision)
-  "Return validated formatting state for PATH in WORKSPACE.
+    (runtime target expected-revision)
+  "Return validated formatting state for TARGET in RUNTIME.
 EXPECTED-REVISION must identify the authoritative buffer."
   (unless (functionp emacs-agent-semantic-format-function)
     (emacs-agent-semantic--unavailable 'format_document
                                        'no_trusted_formatter))
-  (let* ((document (emacs-agent-document-open workspace path))
+  (let* ((path
+          (emacs-agent-resolved-target-canonical-path target))
+         (document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (revision (emacs-agent-document-revision document))
          (buffer (emacs-agent-document-buffer document)))
@@ -1207,35 +1301,40 @@ EXPECTED-REVISION must identify the authoritative buffer."
 
 ;;;###autoload
 (defun emacs-agent-semantic-format-preview
-    (workspace path expected-revision)
-  "Preview trusted formatting of PATH at EXPECTED-REVISION in WORKSPACE.
+    (runtime target expected-revision)
+  "Preview trusted formatting of TARGET at EXPECTED-REVISION in RUNTIME.
 
 The configured formatter receives an immutable string and cannot be selected
 by a client.  This function never mutates the document."
   (let* ((state
           (emacs-agent-semantic--format-state
-           workspace path expected-revision))
+           runtime target expected-revision))
          (before (plist-get state :before))
-         (after (plist-get state :after)))
-    `((path . ,path)
-      (revision . ,(plist-get state :revision))
-      (changed . ,(if (equal before after) :false t))
-      (diff
-       . ,(emacs-agent-changeset--diff-text path before after)))))
+         (after (plist-get state :after))
+         (path
+          (emacs-agent-resolved-target-canonical-path target)))
+    (append
+     (emacs-agent-semantic--target-alist target)
+     `((revision . ,(plist-get state :revision))
+       (changed . ,(if (equal before after) :false t))
+       (diff
+        . ,(emacs-agent-changeset--diff-text path before after))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-format-apply
-    (workspace path expected-revision &optional checkpoint)
-  "Apply trusted formatting to PATH at EXPECTED-REVISION in WORKSPACE.
+    (runtime target expected-revision &optional checkpoint)
+  "Apply trusted formatting to TARGET at EXPECTED-REVISION in RUNTIME.
 
 CHECKPOINT has the same meaning as in `emacs-agent-edit-apply'.  The write uses
 the normal guarded edit path, so revision checks, undo, saving, and change-set
 recording remain centralized."
   (let* ((state
           (emacs-agent-semantic--format-state
-           workspace path expected-revision))
+           runtime target expected-revision))
          (before (plist-get state :before))
          (after (plist-get state :after))
+         (path
+          (emacs-agent-resolved-target-canonical-path target))
          (buffer
           (emacs-agent-document-buffer (plist-get state :document)))
          (restriction
@@ -1250,14 +1349,27 @@ recording remain centralized."
                 (and (= old-min (point-min))
                      (= old-max (point-max))))))))
     (if (equal before after)
-        (list :path path
-              :previous_revision expected-revision
-              :new_revision expected-revision
-              :changed :false
-              :diff "")
+        (let* ((result
+                (emacs-agent-edit-apply
+                 runtime target expected-revision
+                 '(((start . ((line . 1) (column . 0)))
+                    (end . ((line . 1) (column . 0)))
+                    (new_text . "")
+                    (expected_text . "")))
+                 checkpoint)))
+          (setq result (plist-put result :edit_count 0))
+          (setq result
+                (plist-put
+                 result :changed
+                 (if (plist-get result :modified) t :false)))
+          (plist-put
+           result :diff
+           (emacs-agent-changeset--diff-text
+            path before
+            (emacs-agent-document--buffer-content buffer))))
       (let ((result
              (emacs-agent-edit-apply
-              workspace path expected-revision
+              runtime target expected-revision
               `(((start . ((line . 1) (column . 0)))
                  (end . ,(plist-get state :end))
                  (new_text . ,after)
@@ -1273,9 +1385,12 @@ recording remain centralized."
              (min (cdr restriction) (point-max)))))
         (append
          result
-         (list :changed t
+         (list :changed
+               (if (plist-get result :modified) t :false)
                :diff
-               (emacs-agent-changeset--diff-text path before after)))))))
+               (emacs-agent-changeset--diff-text
+                path before
+                (emacs-agent-document--buffer-content buffer))))))))
 
 (provide 'emacs-agent-semantic)
 ;;; emacs-agent-semantic.el ends here

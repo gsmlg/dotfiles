@@ -19,7 +19,7 @@
 
 (defconst emacs-agent-protocol-versions '("2026-07-28" "2025-11-25"))
 (defconst emacs-agent-server-name "emacs-agent-editor")
-(defconst emacs-agent-server-version "0.2.0")
+(defconst emacs-agent-server-version "0.3.0")
 
 (defvar emacs-agent-protocol-tool-observer nil
   "Optional callback for bounded tool execution metadata.

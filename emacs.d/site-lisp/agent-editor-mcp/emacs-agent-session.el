@@ -2,7 +2,7 @@
 
 ;;; Commentary:
 
-;; Compatibility sessions never own buffers or workspace state.
+;; Compatibility sessions never own buffers or editor runtime state.
 
 ;;; Code:
 

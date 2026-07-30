@@ -74,7 +74,7 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
                  (capabilities . ,(emacs-agent-protocol-capabilities))
                  (serverInfo . ,(emacs-agent-protocol-server-info))
                  (instructions
-                  . "Use Emacs Agent Editor tools for workspace source files.")))
+                  . "Use Emacs Agent Editor tools for direct local files and optional explicitly registered projects.")))
               `(("Mcp-Session-Id" . ,(emacs-agent-session-id session))))))
           ("notifications/initialized"
            (setf (emacs-agent-session-initialized session) t)

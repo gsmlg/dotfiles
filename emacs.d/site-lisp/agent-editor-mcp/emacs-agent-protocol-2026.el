@@ -131,7 +131,7 @@ Use HTTP-REQUEST, RPC-REQUEST, META, OPERATION, and ARGUMENTS."
                    (capabilities
                     . ,(emacs-agent-protocol-capabilities))
                    (instructions
-                    . "Use Emacs Agent Editor tools for workspace source files.")
+                    . "Use Emacs Agent Editor tools for direct local files and optional explicitly registered projects.")
                    (ttlMs . 60000)
                    (cacheScope . "private")))))
               ("tools/list"

@@ -8,6 +8,8 @@
 
 (require 'cl-lib)
 (require 'emacs-agent-document)
+(require 'emacs-agent-project)
+(require 'emacs-agent-runtime)
 
 (defvar emacs-agent-edit-record-function nil
   "Optional function called after an edit.
@@ -130,66 +132,91 @@ revision, and the new revision.  Its return value becomes `changeset_id'.")
                    (emacs-agent-edit-range-end range))
     (insert (emacs-agent-edit-range-new-text range))))
 
-(defun emacs-agent-edit--checkpoint-p (workspace requested)
-  "Return whether WORKSPACE requires or permits REQUESTED checkpointing."
-  (or requested
-      (and (not (stringp workspace))
-           (fboundp 'emacs-agent-workspace-save-policy)
-           (eq (emacs-agent-workspace-save-policy workspace) 'immediate))))
+(defun emacs-agent-edit--assert-text-result (path text)
+  "Reject unsafe resulting TEXT for canonical PATH."
+  (when (string-match-p (string 0) text)
+    (emacs-agent-signal
+     'unsupported_document_type :path path :reason 'binary))
+  (when (> (string-bytes text)
+           emacs-agent-policy-maximum-document-bytes)
+    (emacs-agent-signal 'document_too_large :path path))
+  text)
 
-(defun emacs-agent-edit--assert-mutation-allowed (workspace path)
-  "Reject mutation of PATH when WORKSPACE is paused or read-only."
-  (when (and (not (stringp workspace))
-             (fboundp 'emacs-agent-workspace-paused-p)
-             (emacs-agent-workspace-paused-p workspace))
-    (emacs-agent-signal 'workspace_paused :path path))
-  (when (and (not (stringp workspace))
-             (fboundp 'emacs-agent-workspace-access-mode)
-             (eq (emacs-agent-workspace-access-mode workspace) 'read-only))
-    (emacs-agent-signal 'path_denied :path path :reason 'read-only-workspace)))
+(defun emacs-agent-edit--checkpoint-p (runtime requested)
+  "Return whether RUNTIME requires or permits REQUESTED checkpointing."
+  (or requested
+      (eq (emacs-agent-runtime-save-policy runtime) 'immediate)))
+
+(defun emacs-agent-edit--assert-mutation-allowed (runtime target)
+  "Reject mutation of TARGET when RUNTIME is paused or read-only."
+  (let ((path (emacs-agent-resolved-target-canonical-path target)))
+    (when (emacs-agent-runtime-paused-p runtime)
+      (emacs-agent-signal 'runtime_paused :path path))
+    (when (eq (emacs-agent-runtime-access-mode runtime) 'read-only)
+      (emacs-agent-signal
+       'path_denied :path path :reason 'read-only-runtime))))
+
+(defun emacs-agent-edit--revalidate-target (runtime target)
+  "Re-resolve TARGET in RUNTIME and reject an identity change."
+  (let ((current
+         (emacs-agent-project-resolve-target
+          runtime
+          (emacs-agent-resolved-target-input-path target)
+          :project-id
+          (emacs-agent-resolved-target-project-id target))))
+    (unless
+        (equal
+         (emacs-agent-resolved-target-canonical-path current)
+         (emacs-agent-resolved-target-canonical-path target))
+      (emacs-agent-signal
+       'external_change_conflict
+       :path (emacs-agent-resolved-target-canonical-path target)
+       :reason 'target_identity_changed))
+    (emacs-agent-policy-assert-document-target runtime current)))
 
 (defun emacs-agent-edit--record-changeset
-    (workspace document before after previous-revision new-revision checkpoint)
-  "Record a completed edit in WORKSPACE and return its change-set ID.
+    (runtime document before after previous-revision new-revision checkpoint)
+  "Record a completed edit in RUNTIME and return its change-set ID.
 DOCUMENT changed from BEFORE to AFTER and PREVIOUS-REVISION to NEW-REVISION.
 CHECKPOINT is non-nil when the resulting document was saved."
   (cond
    ((functionp emacs-agent-edit-record-function)
     (funcall emacs-agent-edit-record-function
              document before after previous-revision new-revision))
-   ((and (not (stringp workspace))
-         (fboundp 'emacs-agent-changeset-record))
-    (let ((changeset
-           (emacs-agent-changeset-record
-            workspace
-            :operations
-            (list (list :operation 'document_apply_edits
-                        :path (emacs-agent-document-relative-path document)))
-            :touched-documents
-            (list (emacs-agent-document-relative-path document))
-            :base-revisions
-            (list (cons (emacs-agent-document-relative-path document)
-                        previous-revision))
-            :final-revisions
-            (list (cons (emacs-agent-document-relative-path document)
-                        new-revision))
-            :before-snapshots
-            (list (cons (emacs-agent-document-relative-path document)
-                        before))
-            :checkpoint-state (and checkpoint 'checkpointed))))
+   ((fboundp 'emacs-agent-changeset-record)
+    (let* ((path (emacs-agent-document-canonical-path document))
+           (changeset
+            (emacs-agent-changeset-record
+             runtime
+             :operations
+             (list (list :operation 'document_apply_edits
+                         :path path))
+             :touched-documents (list path)
+             :base-revisions
+             (list (cons path previous-revision))
+             :final-revisions
+             (list (cons path new-revision))
+             :before-snapshots
+             (list (cons path before))
+             :checkpoint-state (and checkpoint 'checkpointed))))
       (when (fboundp 'emacs-agent-changeset-changeset-id)
         (emacs-agent-changeset-changeset-id changeset))))))
 
 ;;;###autoload
 (defun emacs-agent-edit-apply
-    (workspace path expected-revision edits &optional checkpoint)
-  "Atomically apply guarded EDITS to PATH in WORKSPACE.
+    (runtime target expected-revision edits &optional checkpoint)
+  "Atomically apply guarded EDITS to TARGET in RUNTIME.
 
 EXPECTED-REVISION must equal the current document revision.  When CHECKPOINT is
 non-nil, run the normal save path before returning."
-  (emacs-agent-edit--assert-mutation-allowed workspace path)
-  (setq checkpoint (emacs-agent-edit--checkpoint-p workspace checkpoint))
-  (let* ((document (emacs-agent-document-open workspace path))
+  (unless (and (emacs-agent-runtime-p runtime)
+               (emacs-agent-resolved-target-p target))
+    (signal 'wrong-type-argument
+            (list 'emacs-agent-resolved-target target)))
+  (emacs-agent-edit--assert-mutation-allowed runtime target)
+  (setq checkpoint (emacs-agent-edit--checkpoint-p runtime checkpoint))
+  (let* ((path (emacs-agent-resolved-target-canonical-path target))
+         (document (emacs-agent-document-open runtime target))
          (_ (when (emacs-agent-document-degraded document)
               (emacs-agent-signal
                'external_change_conflict :path path
@@ -200,7 +227,7 @@ non-nil, run the normal save path before returning."
     (unless (equal expected-revision current-revision)
       (emacs-agent-signal
        'revision_conflict
-       :path (emacs-agent-document-relative-path document)
+       :path path
        :expected_revision expected-revision
        :current_revision current-revision
        :modified_by 'buffer
@@ -215,74 +242,84 @@ non-nil, run the normal save path before returning."
                        (widen)
                        (buffer-substring-no-properties
                         (point-min) (point-max))))
+             (planned-after
+              (with-temp-buffer
+                (insert before)
+                (emacs-agent-edit--apply-ranges ranges)
+                (buffer-string)))
+             (planned-modified (not (equal before planned-after)))
              (window-state (emacs-agent-edit--snapshot-windows buffer))
              (saved-point (copy-marker (point)))
              (saved-mark (and (mark t) (copy-marker (mark t))))
              (saved-mark-active mark-active)
              (saved-restriction (cons (point-min-marker) (point-max-marker)))
-             after new-revision changeset-id)
+             after new-revision changeset-id modified group)
+        (emacs-agent-edit--assert-text-result path planned-after)
         (unwind-protect
             (save-selected-window
               (save-current-buffer
                 (with-current-buffer buffer
                   (undo-boundary)
                   (condition-case error-data
-                      (atomic-change-group
-                        (save-restriction
-                          (widen)
-                          (emacs-agent-edit--apply-ranges ranges)
-                          (when (save-excursion
-                                  (goto-char (point-min))
-                                  (search-forward (string 0) nil t))
-                            (emacs-agent-signal
-                             'unsupported_document_type
-                             :path path :reason 'binary))
-                          (when (> (string-bytes
-                                    (buffer-substring-no-properties
-                                     (point-min) (point-max)))
-                                   emacs-agent-policy-maximum-document-bytes)
-                            (emacs-agent-signal
-                             'document_too_large :path path)))
+                      (progn
+                        (when planned-modified
+                          (setq group (prepare-change-group))
+                          (activate-change-group group)
+                          (save-restriction
+                            (widen)
+                            (emacs-agent-edit--apply-ranges ranges)))
                         (when checkpoint
-                          (emacs-agent-policy-resolve workspace path)
-                          (save-buffer)))
+                          (emacs-agent-edit--revalidate-target
+                           runtime target)
+                          (emacs-agent-document-checkpoint document))
+                        (when group
+                          (accept-change-group group)
+                          (setq group nil)))
                     (emacs-agent-error
+                     (when group
+                       (let ((details
+                              (emacs-agent-error-details error-data)))
+                         (if (plist-get details :partial_completion)
+                             (accept-change-group group)
+                           (cancel-change-group group)))
+                       (setq group nil))
+                     (let ((code (emacs-agent-error-code error-data))
+                           (details
+                            (emacs-agent-error-details error-data)))
+                       (when (or
+                              (eq code 'save_failed)
+                              (plist-get details
+                                         :reconciliation_required))
+                         (setf
+                          (emacs-agent-document-degraded document) t
+                          (emacs-agent-runtime-health-state runtime)
+                          'degraded)))
                      (signal (car error-data) (cdr error-data)))
                     (error
-                     (if checkpoint
-                       (progn
-                       (setf (emacs-agent-document-degraded document) t
-                             (emacs-agent-document-disk-fingerprint document)
-                             (emacs-agent-document--disk-fingerprint
-                              (emacs-agent-document-canonical-path document)))
-                       (when (and (not (stringp workspace))
-                                  (fboundp
-                                   'emacs-agent-workspace-health-state))
-                         (setf
-                          (emacs-agent-workspace-health-state workspace)
-                          'degraded))
-                       (emacs-agent-signal
-                        'save_failed :path path
-                        :message (error-message-string error-data)
-                        :reconciliation_required t
-                              :filesystem_rollback_guaranteed nil))
-                       (signal (car error-data) (cdr error-data)))))
+                     (when group
+                       (cancel-change-group group)
+                       (setq group nil))
+                     (signal (car error-data) (cdr error-data))))
                   (undo-boundary)
                   (save-restriction
                     (widen)
                     (setq after (buffer-substring-no-properties
                                  (point-min) (point-max))))
+                  (emacs-agent-edit--assert-text-result path after)
                   (setq new-revision
                         (emacs-agent-document-revision document))
-                  (setf (emacs-agent-document-disk-fingerprint document)
-                        (emacs-agent-document--disk-fingerprint
-                         (emacs-agent-document-canonical-path document)))
-                  (setq changeset-id
-                        (emacs-agent-edit--record-changeset
-                         workspace document before after current-revision
-                         new-revision checkpoint))
-                  (setf (emacs-agent-document-last-changeset-id document)
-                        changeset-id))))
+                  (setq modified (not (equal before after)))
+                  (when modified
+                    (setq changeset-id
+                          (emacs-agent-edit--record-changeset
+                           runtime document before after current-revision
+                           new-revision checkpoint))
+                    (setf (emacs-agent-document-last-changeset-id document)
+                          changeset-id)))))
+          (when group
+            (with-current-buffer buffer
+              (ignore-errors (cancel-change-group group)))
+            (setq group nil))
           (when (buffer-live-p buffer)
             (with-current-buffer buffer
               (widen)
@@ -298,16 +335,19 @@ non-nil, run the normal save path before returning."
           (when saved-mark (set-marker saved-mark nil))
           (set-marker (car saved-restriction) nil)
           (set-marker (cdr saved-restriction) nil))
-        (list :path (emacs-agent-document-relative-path document)
-              :changeset_id changeset-id
-              :previous_revision current-revision
-              :new_revision new-revision
-              :checkpointed (not (buffer-modified-p buffer))
-              :edit_count (length ranges)
-              :diff_summary
-              (list :before_chars (length before)
-                    :after_chars (length after))
-              :diagnostics_state "not_requested")))))
+        (append
+         (emacs-agent-document-output-fields target)
+         (list
+          :changeset_id changeset-id
+          :previous_revision current-revision
+          :new_revision new-revision
+          :checkpointed (not (buffer-modified-p buffer))
+          :modified (and modified t)
+          :edit_count (length ranges)
+          :diff_summary
+          (list :before_chars (length before)
+                :after_chars (length after))
+          :diagnostics_state "not_requested"))))))
 
 (provide 'emacs-agent-edit)
 ;;; emacs-agent-edit.el ends here

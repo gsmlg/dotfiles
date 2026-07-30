@@ -151,7 +151,6 @@ test_environment=(
   "GSMLG_EMACS_OFFLINE=1"
   "GSMLG_EMACS_LOCAL="
   "EMACS_AGENT_AUTOSTART="
-  "EMACS_AGENT_WORKSPACE="
   "GSMLG_CONFIG_ROOT=$repo_root/emacs.d"
   "GSMLG_COMPILE_OUTPUT=$compile_output"
 )

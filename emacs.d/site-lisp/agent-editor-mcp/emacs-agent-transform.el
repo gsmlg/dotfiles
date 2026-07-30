@@ -14,7 +14,7 @@
 
 (cl-defstruct (emacs-agent-transform-plan
                (:constructor emacs-agent-transform-plan--make))
-  kind workspace document path expected-revision before after edits ranges diff
+  kind runtime target document path expected-revision before after edits ranges diff
   match-count)
 
 (defun emacs-agent-transform--position (document point)
@@ -35,9 +35,10 @@
       (buffer-substring-no-properties (point-min) (point-max)))))
 
 (defun emacs-agent-transform--open-current
-    (workspace path expected-revision)
-  "Open PATH in WORKSPACE and validate EXPECTED-REVISION."
-  (let ((document (emacs-agent-document-open workspace path)))
+    (runtime target expected-revision)
+  "Open TARGET in RUNTIME and validate EXPECTED-REVISION."
+  (let* ((path (emacs-agent-resolved-target-canonical-path target))
+         (document (emacs-agent-document-open runtime target)))
     (when (emacs-agent-document-degraded document)
       (emacs-agent-signal
        'external_change_conflict :path path
@@ -47,12 +48,17 @@
       (unless (equal expected-revision current)
         (emacs-agent-signal
          'revision_conflict
-         :path (emacs-agent-document-relative-path document)
+         :path path
          :expected_revision expected-revision
          :current_revision current
          :modified_by 'buffer
          :requires_reread t)))
     document))
+
+(defun emacs-agent-transform--patch-label (target)
+  "Return the strict unified-diff label accepted for TARGET."
+  (or (emacs-agent-resolved-target-relative-path target)
+      (emacs-agent-resolved-target-canonical-path target)))
 
 (defun emacs-agent-transform--replace-after (before replacements new-text)
   "Return BEFORE with REPLACEMENTS changed to NEW-TEXT.
@@ -347,15 +353,16 @@ REPLACE-ALL and EXPECTED-OCCURRENCES have the same meaning as in
 
 ;;;###autoload
 (cl-defun emacs-agent-transform-plan-replace
-    (workspace path expected-revision old-text new-text
-               &key replace-all expected-occurrences)
-  "Plan an exact OLD-TEXT replacement with NEW-TEXT in PATH.
-WORKSPACE and EXPECTED-REVISION identify the authoritative buffer.
+    (runtime target expected-revision old-text new-text
+             &key replace-all expected-occurrences)
+  "Plan an exact OLD-TEXT replacement with NEW-TEXT in TARGET.
+RUNTIME and EXPECTED-REVISION identify the authoritative buffer.
 REPLACE-ALL permits multiple matches.  EXPECTED-OCCURRENCES, when non-nil,
 must equal the exact literal match count."
-  (let* ((document
+  (let* ((path (emacs-agent-resolved-target-canonical-path target))
+         (document
           (emacs-agent-transform--open-current
-           workspace path expected-revision))
+           runtime target expected-revision))
          (before (emacs-agent-transform--contents document))
          (text-plan
           (emacs-agent-transform-replace-text
@@ -366,7 +373,7 @@ must equal the exact literal match count."
          (selected (plist-get text-plan :matches))
          (count (plist-get text-plan :match_count))
          (after (plist-get text-plan :after))
-             edits ranges)
+         edits ranges)
     (dolist (match selected)
       (let* ((start (1+ (car match)))
              (end (1+ (cdr match)))
@@ -382,9 +389,10 @@ must equal the exact literal match count."
         (push (list :start start-position :end end-position) ranges)))
     (emacs-agent-transform-plan--make
      :kind 'replace
-     :workspace workspace
+     :runtime runtime
+     :target target
      :document document
-     :path (emacs-agent-document-relative-path document)
+     :path path
      :expected-revision expected-revision
      :before before
      :after after
@@ -392,26 +400,27 @@ must equal the exact literal match count."
      :ranges (nreverse ranges)
      :diff
      (emacs-agent-changeset--diff-text
-      (emacs-agent-document-relative-path document) before after)
+      path before after)
      :match-count count)))
 
 ;;;###autoload
 (cl-defun emacs-agent-transform-plan-patch
-    (workspace path expected-revision patch &key (fuzz 0))
-  "Plan strict single-file unified PATCH for PATH in WORKSPACE.
+    (runtime target expected-revision patch &key (fuzz 0))
+  "Plan strict single-file unified PATCH for TARGET in RUNTIME.
 FUZZ must be zero; context and source line numbers are always exact."
   (unless (and (integerp fuzz) (zerop fuzz))
     (emacs-agent-signal
      'invalid_argument :field 'fuzz :reason 'fuzzy_patch_not_supported))
-  (let* ((document
+  (let* ((path (emacs-agent-resolved-target-canonical-path target))
+         (patch-label (emacs-agent-transform--patch-label target))
+         (document
           (emacs-agent-transform--open-current
-           workspace path expected-revision))
-         (relative-path (emacs-agent-document-relative-path document))
+           runtime target expected-revision))
          (before (emacs-agent-transform--contents document))
-         (hunks (emacs-agent-transform--parse-patch relative-path patch))
+         (hunks (emacs-agent-transform--parse-patch patch-label patch))
          (after
           (emacs-agent-transform--apply-hunks
-           relative-path expected-revision before hunks))
+           path expected-revision before hunks))
          (source-lines (emacs-agent-transform--lines before))
          ranges)
     (when (equal before after)
@@ -439,9 +448,10 @@ FUZZ must be zero; context and source line numbers are always exact."
              (emacs-agent-transform--position document (point-max)))))
       (emacs-agent-transform-plan--make
        :kind 'patch
-       :workspace workspace
+       :runtime runtime
+       :target target
        :document document
-       :path relative-path
+       :path path
        :expected-revision expected-revision
        :before before
        :after after
@@ -452,14 +462,14 @@ FUZZ must be zero; context and source line numbers are always exact."
               :new_text after
               :expected_text before))
        :ranges (nreverse ranges)
-       :diff (emacs-agent-changeset--diff-text relative-path before after)))))
+       :diff (emacs-agent-changeset--diff-text path before after)))))
 
 (defun emacs-agent-transform--validate-plan (plan)
   "Revalidate PLAN against its authoritative buffer."
   (let* ((document
           (emacs-agent-transform--open-current
-           (emacs-agent-transform-plan-workspace plan)
-           (emacs-agent-transform-plan-path plan)
+           (emacs-agent-transform-plan-runtime plan)
+           (emacs-agent-transform-plan-target plan)
            (emacs-agent-transform-plan-expected-revision plan)))
          (current (emacs-agent-transform--contents document)))
     (unless (equal current (emacs-agent-transform-plan-before plan))
@@ -470,24 +480,40 @@ FUZZ must be zero; context and source line numbers are always exact."
 
 (defun emacs-agent-transform--result (plan &optional edit-result)
   "Return the public result for PLAN and optional EDIT-RESULT."
-  (let ((applied (and edit-result t)))
-    (list
-     :path (emacs-agent-transform-plan-path plan)
-     :old_revision (emacs-agent-transform-plan-expected-revision plan)
-     :new_revision
-     (if applied
-         (plist-get edit-result :new_revision)
-       (emacs-agent-transform-plan-expected-revision plan))
-     :changeset_id (and applied (plist-get edit-result :changeset_id))
-     :applied applied
-     :checkpointed (and applied (plist-get edit-result :checkpointed))
-     :modified
-     (not (equal (emacs-agent-transform-plan-before plan)
-                 (emacs-agent-transform-plan-after plan)))
-     :match_count (emacs-agent-transform-plan-match-count plan)
-     :ranges (emacs-agent-transform-plan-ranges plan)
-     :diff (emacs-agent-transform-plan-diff plan)
-     :truncated nil)))
+  (let* ((applied (and edit-result t))
+         (effective-after
+          (and
+           applied
+           (emacs-agent-document--buffer-content
+            (emacs-agent-document-buffer
+             (emacs-agent-transform-plan-document plan))))))
+    (append
+     (emacs-agent-document-output-fields
+      (emacs-agent-transform-plan-target plan))
+     (list
+      :old_revision (emacs-agent-transform-plan-expected-revision plan)
+      :new_revision
+      (if applied
+          (plist-get edit-result :new_revision)
+        (emacs-agent-transform-plan-expected-revision plan))
+      :changeset_id (and applied (plist-get edit-result :changeset_id))
+      :applied applied
+      :checkpointed (and applied (plist-get edit-result :checkpointed))
+      :modified
+      (if applied
+          (and (plist-get edit-result :modified) t)
+        (not (equal (emacs-agent-transform-plan-before plan)
+                    (emacs-agent-transform-plan-after plan))))
+      :match_count (emacs-agent-transform-plan-match-count plan)
+      :ranges (emacs-agent-transform-plan-ranges plan)
+      :diff
+      (if applied
+          (emacs-agent-changeset--diff-text
+           (emacs-agent-transform-plan-path plan)
+           (emacs-agent-transform-plan-before plan)
+           effective-after)
+        (emacs-agent-transform-plan-diff plan))
+      :truncated nil))))
 
 ;;;###autoload
 (defun emacs-agent-transform-apply (plan &optional dry-run checkpoint)
@@ -510,8 +536,8 @@ CHECKPOINT is forwarded to the normal guarded edit path."
           (unwind-protect
               (setq result
                     (emacs-agent-edit-apply
-                     (emacs-agent-transform-plan-workspace plan)
-                     (emacs-agent-transform-plan-path plan)
+                     (emacs-agent-transform-plan-runtime plan)
+                     (emacs-agent-transform-plan-target plan)
                      (emacs-agent-transform-plan-expected-revision plan)
                      (emacs-agent-transform-plan-edits plan)
                      checkpoint))
@@ -528,27 +554,27 @@ CHECKPOINT is forwarded to the normal guarded edit path."
 
 ;;;###autoload
 (cl-defun emacs-agent-transform-replace
-    (workspace path expected-revision old-text new-text
-               &key replace-all expected-occurrences dry-run checkpoint)
-  "Plan and apply an exact text replacement for PATH in WORKSPACE.
+    (runtime target expected-revision old-text new-text
+             &key replace-all expected-occurrences dry-run checkpoint)
+  "Plan and apply an exact text replacement for TARGET in RUNTIME.
 Arguments are as for `emacs-agent-transform-plan-replace'.  DRY-RUN validates
 and returns the exact preview without changing the buffer."
   (emacs-agent-transform-apply
    (emacs-agent-transform-plan-replace
-    workspace path expected-revision old-text new-text
+    runtime target expected-revision old-text new-text
     :replace-all replace-all
     :expected-occurrences expected-occurrences)
    dry-run checkpoint))
 
 ;;;###autoload
 (cl-defun emacs-agent-transform-apply-patch
-    (workspace path expected-revision patch
-               &key (fuzz 0) dry-run checkpoint)
-  "Plan and apply strict single-file unified PATCH to PATH in WORKSPACE.
+    (runtime target expected-revision patch
+             &key (fuzz 0) dry-run checkpoint)
+  "Plan and apply strict single-file unified PATCH to TARGET in RUNTIME.
 FUZZ must be zero.  DRY-RUN returns the exact preview without mutation."
   (emacs-agent-transform-apply
    (emacs-agent-transform-plan-patch
-    workspace path expected-revision patch :fuzz fuzz)
+    runtime target expected-revision patch :fuzz fuzz)
    dry-run checkpoint))
 
 (provide 'emacs-agent-transform)

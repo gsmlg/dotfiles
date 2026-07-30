@@ -106,7 +106,6 @@ test_environment=(
   "XDG_RUNTIME_DIR=$xdg_runtime_dir"
   "GSMLG_EMACS_LOCAL="
   "EMACS_AGENT_AUTOSTART="
-  "EMACS_AGENT_WORKSPACE="
 )
 
 printf '==> Installing the Emacs configuration into an isolated HOME\n'

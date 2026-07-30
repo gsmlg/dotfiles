@@ -158,16 +158,15 @@ longer receives Elfeed database files.
 
 The Agent Editor package itself remains vendored, but the old unconditional
 integration is gone. Batch startup never opens its listener. Interactive
-autostart is also off unless explicitly enabled, and every start requires a
-workspace from `gsmlg-agent-workspace`, `EMACS_AGENT_WORKSPACE`, or the
-interactive command argument. Startup `default-directory` is not captured as
-a hidden workspace.
+autostart is also off unless explicitly enabled. Version 0.3 removes the
+legacy startup directory setting and starts a project-optional editor runtime
+without consulting `default-directory`.
 
 Port 9876 remains the compatibility default, with `EMACS_AGENT_PORT` as an
-override, and the listener remains bound to `127.0.0.1`. The package supports
-one workspace per Emacs process; use one named daemon per explicit workspace
-instead of assuming multi-workspace request routing. `M-x gsmlg-agent-stop`
-stops the MCP listener without stopping the Emacs daemon.
+override, and the listener remains bound to `127.0.0.1`. One runtime accepts
+direct absolute local files and any number of explicitly registered projects.
+`M-x gsmlg-agent-stop` stops the MCP listener without stopping the Emacs
+daemon.
 
 ## Disabled mail and music
 

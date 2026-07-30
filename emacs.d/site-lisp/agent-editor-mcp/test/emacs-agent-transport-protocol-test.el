@@ -1,5 +1,11 @@
 ;;; emacs-agent-transport-protocol-test.el --- Transport/protocol tests -*- lexical-binding: t; -*-
 
+;;; Commentary:
+
+;; Tests for HTTP framing, MCP profiles, sessions, and request handling.
+
+;;; Code:
+
 (require 'ert)
 (require 'emacs-agent-protocol)
 (require 'emacs-agent-request)
@@ -57,6 +63,44 @@
     (should (alist-get
              'io\.modelcontextprotocol/serverInfo
              (alist-get '_meta (alist-get 'result decoded))))))
+
+(ert-deftest emacs-agent-protocol-instructions-describe-v03-targets ()
+  (emacs-agent-session-clear)
+  (unwind-protect
+      (let* ((modern-response
+              (emacs-agent-protocol-handle-http-request
+               (emacs-agent-test--modern-request "server/discover" nil)))
+             (modern
+              (json-parse-string
+               (decode-coding-string
+                (emacs-agent-protocol-response-body modern-response)
+                'utf-8)
+               :object-type 'alist))
+             (legacy-response
+              (emacs-agent-protocol-handle-http-request
+               (emacs-agent-test--legacy-request
+                "initialize"
+                '((protocolVersion . "2025-11-25")
+                  (capabilities . ())
+                  (clientInfo . ((name . "ert") (version . "1"))))
+                nil 1)))
+             (legacy
+              (json-parse-string
+               (decode-coding-string
+                (emacs-agent-protocol-response-body legacy-response)
+                'utf-8)
+               :object-type 'alist))
+             (instructions
+              (list
+               (alist-get 'instructions (alist-get 'result modern))
+               (alist-get 'instructions (alist-get 'result legacy)))))
+        (dolist (instruction instructions)
+          (should (stringp instruction))
+          (should (string-match-p "direct local files" instruction))
+          (should
+           (string-match-p "explicitly registered projects" instruction))
+          (should-not (string-match-p "\\_<workspace\\_>" instruction))))
+    (emacs-agent-session-clear)))
 
 (ert-deftest emacs-agent-protocol-tool-list-and-call-encode-arrays ()
   (unwind-protect

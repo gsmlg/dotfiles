@@ -136,9 +136,10 @@ Do not override the user's SSH control settings.
 - Optional Babel libraries and host-specific paths must not make startup fail.
 - Batch mode must start neither an Emacs server nor Agent Editor MCP.
 - Normal GUI startup must not create a server unless explicitly enabled.
-- Agent Editor MCP autostart is opt-in and requires an explicit workspace.
-- The bundled MCP implementation serves one workspace per Emacs process. Do
-  not claim multi-workspace routing; use one named daemon per workspace.
+- Agent Editor MCP autostart is opt-in and starts a project-optional runtime.
+- The bundled MCP implementation supports direct absolute files and zero or
+  more explicitly registered projects in one Emacs process. Never introduce
+  implicit current-project request state.
 - Run the package's own test suite after any integration or package change.
 
 ## Installer safety

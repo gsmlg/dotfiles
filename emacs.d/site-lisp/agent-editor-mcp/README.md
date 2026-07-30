@@ -1,30 +1,41 @@
 # Emacs Agent Editor MCP
 
-Emacs Agent Editor exposes a running Emacs instance as a local HTTP MCP
+Emacs Agent Editor v0.3 exposes a running Emacs instance as a local HTTP MCP
 server for software-development agents. The agent and the human use the same
 Emacs buffers, so unsaved edits, undo history, major modes, save hooks, and
 external file changes have one authoritative owner.
 
-The current implementation covers guarded exact replacement and unified
-patching, atomic multi-buffer edits, diagnostics, buffer-aware search,
-change-set review, Eglot/Xref semantics, trusted formatting, and the
-keyboard-driven approval UI described in [design.md](design.md).
+One server owns one long-running editor runtime. It starts with no project and
+can then manage:
+
+- direct local files addressed by canonical absolute path;
+- zero or more projects registered explicitly through MCP;
+- atomic edits spanning projects and direct files;
+- runtime-wide changes, approvals, activity, and mutation serialization.
+
+A project supplies an optional root for file enumeration, search, aggregate
+diagnostics, symbols, and relative document paths. It is not required for
+startup or ordinary file editing, and there is no current-project protocol
+state.
+
+See [design.md](design.md) for the architecture and safety invariants.
 
 ## Requirements
 
-- Emacs 29.1 or newer
-- A local workspace directory
-- `ripgrep` for asynchronous workspace search, when available
+- GNU Emacs 30.2 or newer
+- `ripgrep` for asynchronous project search, when available
 - Eglot/Xref providers for language-server semantic tools
 - Tree-sitter Python or YAML grammars for their parser diagnostics
 
 Search falls back to an Emacs implementation when `ripgrep` is unavailable.
 The server is pure Emacs Lisp and has no external MCP service.
 
+Remote/TRAMP paths are not supported by this server version.
+
 ## Quick start
 
-Add the package directory to `load-path`, load the package, and start one
-server for one workspace:
+Add the package directory to `load-path`, load the package, and start the
+project-optional runtime:
 
 ```elisp
 (add-to-list
@@ -36,309 +47,371 @@ server for one workspace:
 (setq emacs-agent-editor-access-mode 'autonomous
       emacs-agent-editor-save-policy 'immediate)
 
-(emacs-agent-editor-start "/path/to/workspace")
+(emacs-agent-editor-start)
 ```
 
-The port defaults to `0`, so the operating system selects an available port.
-To use a fixed port:
+The package port defaults to `0`, so the operating system selects an available
+port. Pass a fixed port for one invocation:
 
 ```elisp
-(setq emacs-agent-editor-port 9876)
+(emacs-agent-editor-start 9876)
 ```
 
-or pass it for one invocation:
-
-```elisp
-(emacs-agent-editor-start "/path/to/workspace" 9876)
-```
-
-Stop the server with:
+Stop only the MCP service with:
 
 ```elisp
 (emacs-agent-editor-stop)
 ```
 
-### Dotfiles integration
+Stopping clears runtime, project, session, tool, cursor, and connection state.
+It leaves Emacs and visiting buffers running.
 
-This repository already loads the package from
-`emacs.d/lisp/gsmlg-agent.el`. Loading the configuration never starts a
-listener in batch mode, and autostart is disabled by default. Start the service
-explicitly with `M-x gsmlg-agent-start`, or opt in with
-`gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`.
+## Addressing files and projects
 
-Every start requires an explicit workspace. Set `gsmlg-agent-workspace` or
-`EMACS_AGENT_WORKSPACE`; the integration deliberately does not capture the
-startup `default-directory`. Port `9876` remains the compatibility default and
-`EMACS_AGENT_PORT` can override it. The listener remains restricted to IPv4
-loopback, so the default MCP URL is:
+### Direct absolute file
 
-```text
-http://127.0.0.1:9876/mcp
+No project registration is needed:
+
+```json
+{
+  "name": "emacs_agent_document_read",
+  "arguments": {
+    "path": "/home/user/.config/emacs/init.el"
+  }
+}
 ```
 
-Connection metadata is stored below
-`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/<daemon>/`, rather than
-inside the configuration checkout. `M-x gsmlg-agent-stop` stops only the MCP
-service; it never terminates Emacs or its daemon.
+Use the returned opaque revision in a guarded mutation:
 
-The package binds one workspace per Emacs process; it does not provide
-multi-workspace request routing. For predictable isolation, use one named
-daemon per explicit workspace:
+```json
+{
+  "name": "emacs_agent_document_apply_edits",
+  "arguments": {
+    "path": "/home/user/.config/emacs/init.el",
+    "expected_revision": "rev:...",
+    "edits": [
+      {
+        "start": {"line": 1, "column": 0},
+        "end": {"line": 1, "column": 0},
+        "new_text": ";; managed by Emacs\n"
+      }
+    ]
+  }
+}
+```
+
+### One project
+
+Register an absolute local directory:
+
+```json
+{
+  "name": "emacs_agent_project_open",
+  "arguments": {
+    "root": "/home/user/src/example"
+  }
+}
+```
+
+The result contains an opaque `project_id`. A relative path always carries
+that ID explicitly:
+
+```json
+{
+  "name": "emacs_agent_document_read",
+  "arguments": {
+    "project_id": "project_abc",
+    "path": "lib/example.ex"
+  }
+}
+```
+
+Project operations also require the ID:
+
+```json
+{
+  "name": "emacs_agent_project_search",
+  "arguments": {
+    "project_id": "project_abc",
+    "query": "GenServer"
+  }
+}
+```
+
+Registering a directory does not switch the human's selected project, buffer,
+window, or frame. Plain directories are supported when `project.el` does not
+detect a native project.
+
+### Multiple projects
+
+Register each root independently:
+
+```text
+project_open(/home/user/src/service-a) -> project_a
+project_open(/home/user/src/service-b) -> project_b
+```
+
+Both IDs remain valid concurrently. Every request supplies its own project
+context; a previous request never selects context for a later one.
+
+`emacs_agent_editor_apply_edits` can atomically combine project-relative
+targets and direct absolute targets. All paths and revisions are validated
+before any buffer changes.
+
+Closing a project unregisters only its semantic context. It does not kill
+buffers, discard edits, delete change sets, or prevent later direct access to
+the same canonical file.
+
+## Dotfiles integration
+
+This repository loads the package from `emacs.d/lisp/gsmlg-agent.el`.
+Loading the configuration never starts a listener in batch mode, and
+autostart is disabled by default.
+
+Start the service without a directory prompt:
+
+```text
+M-x gsmlg-agent-start
+```
+
+The integration uses port `9876` by default. `EMACS_AGENT_PORT` overrides the
+port, and `gsmlg-agent-autostart` or `EMACS_AGENT_AUTOSTART=1` opts into
+interactive startup. `M-x gsmlg-agent-stop` stops MCP without terminating
+Emacs.
+
+The recommended deployment is one dedicated named daemon, one endpoint, and
+many optional projects:
 
 ```sh
-EMACS_AGENT_WORKSPACE=/path/to/workspace \
-  EMACS_AGENT_AUTOSTART=1 \
-  emacs --daemon=workspace-name
+EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
+
 emacsclient \
-  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/workspace-name" \
+  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/agent-editor" \
   -c
 ```
 
+Multiple daemons remain possible when a user wants process isolation, but
+project isolation does not require them.
+
 ## Connecting
 
-At startup, the server writes private connection metadata to:
+At startup, the server atomically writes private connection metadata below:
 
 ```text
 ${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json
 ```
 
-For a normal interactive Emacs instance, `<daemon>` is `interactive`. A named
-daemon uses its daemon name. The containing directory has mode `0700` and the
-metadata file has mode `0600`.
+This dotfiles integration instead configures the parent directory below
+`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/`. A normal interactive
+instance uses `interactive`; a named daemon uses its daemon name. The
+containing directory has mode `0700` and the file has mode `0600`.
 
-The file contains:
+Schema version 2 contains editor-runtime identity, not project state:
 
 ```json
 {
-  "schema_version": 1,
-  "daemon": "workspace-name",
+  "schema_version": 2,
+  "instance_id": "editor_abc",
+  "daemon": "agent-editor",
   "pid": 12345,
-  "workspace": "/path/to/workspace/",
-  "endpoint": "http://127.0.0.1:54321/mcp",
+  "endpoint": "http://127.0.0.1:9876/mcp",
   "token_authentication": false,
   "protocol_versions": ["2026-07-28", "2025-11-25"],
-  "started_at": "2026-07-28T08:00:00Z"
+  "filesystem_scope": "unrestricted",
+  "started_at": "2026-07-30T12:00:00Z"
 }
 ```
 
-Token authentication is disabled by default, so the `token` field is omitted.
-When token authentication is enabled, `token_authentication` is `true` and
-the file also contains a `token` field. Clients should read the connection
-file each time they connect. Revoking the writer rotates an enabled token,
-rewrites this file, and invalidates existing credentials and legacy sessions.
+The dynamic project list is obtained with `emacs_agent_project_list`; it is
+not serialized in the connection file.
 
-Do not copy the connection file into a repository or expose an enabled token
-in logs.
+Token authentication is disabled by default, so `token` is omitted. When
+enabled, `token_authentication` is true and the file also contains the token.
+Clients should reread the connection file whenever they connect. Revoking the
+writer rotates an enabled token, rewrites the file, and invalidates legacy
+sessions.
 
-### Discovery example
-
-The modern protocol profile uses MCP method headers and per-request metadata:
-
-```sh
-connection="${XDG_STATE_HOME:-$HOME/.local/state}/emacs-agent-editor/workspace-name/connection.json"
-endpoint="$(jq -r .endpoint "$connection")"
-
-curl "$endpoint" \
-  -H "Content-Type: application/json" \
-  -H "MCP-Protocol-Version: 2026-07-28" \
-  -H "Mcp-Method: server/discover" \
-  --data-binary '{
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "server/discover",
-    "params": {
-      "_meta": {
-        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientInfo": {
-          "name": "example-client",
-          "version": "1.0"
-        },
-        "io.modelcontextprotocol/clientCapabilities": {}
-      }
-    }
-  }'
-```
-
-When token authentication is enabled, also read the token and add the
-authorization header:
-
-```sh
-token="$(jq -r .token "$connection")"
-authorization="Authorization: Bearer $token"
-```
-
-Then add `-H "$authorization"` to the `curl` command above.
+Do not copy connection metadata into a repository or expose a token in logs.
 
 ## Protocol profiles
 
-The endpoint supports two wire profiles:
+The loopback `/mcp` endpoint preserves both wire profiles:
 
-- `2026-07-28`: stateless requests with standard MCP HTTP headers and
-  per-request client metadata.
-- `2025-11-25`: compatibility profile using `initialize`,
+- `2026-07-28`: stateless requests with MCP HTTP headers and per-request
+  client metadata.
+- `2025-11-25`: compatibility flow using `initialize`,
   `notifications/initialized`, and `Mcp-Session-Id`.
 
-Both profiles expose the same editor tool registry. When token authentication
-is enabled, every request must include `Authorization: Bearer <token>`. The
-v0.2 listener accepts only `127.0.0.1`.
+Both profiles expose the same v0.3 tool registry. When authentication is
+enabled, every request must include `Authorization: Bearer <token>`.
 
 ## Tools
 
+Every name below uses the `emacs_agent_` prefix on the wire.
+
 | Area | Tools |
 | --- | --- |
-| Workspace | `workspace_info`, `workspace_files`, `workspace_search`, `workspace_apply_edits`, `workspace_checkpoint`, `workspace_sync`, `workspace_diff`, `workspace_modified_documents`, `workspace_diagnostics`, `workspace_symbols` |
+| Editor runtime | `editor_info`, `editor_apply_edits`, `editor_checkpoint`, `editor_sync`, `editor_diff`, `editor_modified_documents`, `editor_context_get` |
+| Projects | `project_open`, `project_list`, `project_info`, `project_close`, `project_files`, `project_search`, `project_diagnostics`, `project_symbols` |
 | Documents | `document_read`, `document_status`, `document_apply_edits`, `document_replace`, `document_apply_patch`, `document_create`, `document_move`, `document_delete`, `document_diagnostics`, `document_symbols` |
 | Change sets | `changeset_list`, `changeset_get`, `changeset_rollback` |
 | Semantics | `symbol_definition`, `symbol_references`, `symbol_rename`, `code_actions` |
 | Formatting | `format_document`, `format_range` |
-| Collaboration | `editor_context_get`, `approval_status`, `approval_cancel` |
+| Collaboration | `approval_status`, `approval_cancel` |
 
-Every name above has the `emacs_agent_` prefix on the wire. Unsupported native
-language capabilities fail with `CAPABILITY_UNAVAILABLE`; text search is never
-presented as semantic rename or reference analysis.
+`editor_info` reports runtime identity, policies, health, registered project
+count, managed document count, protocols, supported tools, and runtime
+capabilities. It does not select or report a current project.
 
-Document revisions are opaque. A mutating client must first read a document,
-then send the returned revision as `expected_revision`. If the buffer or file
-changes in the meantime, the mutation fails and the client must reread.
+Unsupported native language capabilities fail with
+`CAPABILITY_UNAVAILABLE`; text search is never presented as semantic rename
+or reference analysis.
+
+## Document and edit contract
+
+The canonical absolute path is document identity. Addressing the same file
+directly and through `project_id` plus a relative path reuses one visiting
+buffer, document object, revision, undo history, and change-set history.
+
+Document-bearing results include:
+
+```text
+path           canonical absolute path
+project_id     supplied context or false
+relative_path project-relative path or false
+```
+
+Rules for inputs:
+
+- `path` is always required.
+- An absolute local `path` does not require a project.
+- A relative `path` requires `project_id`.
+- An absolute path supplied with `project_id` must be inside that project.
+- A relative move destination requires `new_project_id`.
+- Parent traversal, remote paths, and symlink escapes are rejected.
+
+Revisions are opaque. A mutating client reads the document first, then sends
+the returned revision as `expected_revision`. If a human, another request, or
+the filesystem changes the document, the mutation fails and the client must
+reread.
 
 Positions use one-based logical lines and zero-based Emacs-character columns.
-Ranges are half-open. Tabs count as one character; columns are not display
-columns or UTF-8/UTF-16 offsets. CRLF is represented as logical newlines while
-the document coding system preserves its EOL style. All edits refer to the
-same `expected_revision`, are validated together, and are applied in
-descending position order. Overlaps and multiple inserts at the same position
-are rejected.
+Ranges are half-open. Tabs count as one character; columns are not display,
+UTF-8, or UTF-16 offsets. CRLF is represented as logical newlines while the
+buffer preserves its coding system and EOL style.
 
-Exact replacement, patching, workspace edits, semantic rename, and formatting
-support preview/dry-run flows. Rename and range formatting return a frozen
-preview identifier that must be supplied to the apply call. Code actions are
-classified; only pure workspace edits can be applied. Language-server commands
-are never executed.
+All edits in a request refer to the same expected revision, are validated
+together, and are applied in descending position order. Overlaps and
+same-position inserts are rejected. Multi-document mutations are atomic and
+form one meaningful undo unit per document.
 
-`workspace_apply_edits.documents[].edits[]` uses exact replacement fields
-`old_text`, `new_text`, optional `replace_all`, and optional
-`expected_occurrences`. Workspace transactions are always atomic; `atomic`
-may be omitted or set to `true`, while `false` is rejected.
+Exact replacement, strict patching, semantic rename, code actions, and
+formatting support guarded preview/dry-run behavior. Semantic previews are
+frozen and bound to revisions. Language-server commands are never executed.
 
-Core write results consistently include `old_revision`, `new_revision`,
-`changeset_id`, `applied`, `checkpointed`, `modified`, `diff`, and
-`truncated`. Here `modified` means that the operation changed, or in dry-run
-would change, authoritative content; it is not the buffer's current dirty
-flag. A dry-run reports the currently observed revision because it does not
-mutate the buffer. Multi-document operations return per-document revisions
-and use `false` for a singular revision that is not applicable. P0/P1 tools
-advertise required output fields and nested array schemas, and live results
-are validated against those schemas before they are returned. Invalid input
-uses JSON-RPC `-32602`; a server-side output contract failure instead uses
-`-32603` with `OUTPUT_SCHEMA_VIOLATION`, the tool name, and schema path.
+Write results include revision, change-set, checkpoint, modification, diff,
+and truncation metadata. Live results are validated against the advertised
+output schema before they are returned.
 
-`workspace_info.supported_tools` lists the registered tool surface.
-`workspace_info.runtime_capabilities` separately reports whether the current
-Imenu, Xref, Eglot, trusted-formatter, and editor providers are actually
-available. A registered semantic tool can therefore remain supported while
-returning `CAPABILITY_UNAVAILABLE` until its provider is active.
-
-Public tool errors contain an uppercase stable `code`, `message`, `retryable`,
-nested `details`, and a compatibility `legacy_code`.
-
-## Workspace and save policies
+## Runtime and save policies
 
 `emacs-agent-editor-access-mode` controls mutations:
 
-- `read-only`: reject all mutating tools.
-- `review`: allow ordinary guarded editing, but require approve-then-retry for
-  move, delete, checkpoint, and rollback operations.
-- `autonomous`: allow guarded mutations without interactive approval.
+- `read-only`: reject all mutations.
+- `review`: require human approval for sensitive lifecycle and persistence
+  operations.
+- `autonomous`: permit guarded mutations without interactive approval.
 
 `emacs-agent-editor-save-policy` controls persistence:
 
 - `immediate`: save successful creates and edits immediately.
-- `manual`: keep creates and edits in buffers until explicitly checkpointed.
-- `explicit-per-call`: checkpoint only when the tool request asks for it.
+- `manual`: retain buffer changes until an explicit checkpoint.
+- `explicit-per-call`: checkpoint only when the request asks for it.
 
-Buffers are the live source of truth. Saving is a checkpoint to the
-filesystem. External changes reload a clean buffer; a simultaneous external
-change and unsaved buffer edit produces a reconciliation conflict.
+Buffers remain the live source of truth. Saving is a filesystem checkpoint.
+External changes reload a clean buffer; an external change concurrent with
+unsaved buffer edits produces a reconciliation conflict.
 
-Each successful mutation creates a change set containing revision guards,
-before-images in memory, and a frozen unified diff. Rollback is allowed only
-while every affected document still matches the recorded final revision.
-Change-set contents persist for the lifetime of the Emacs daemon; restarting
-the daemon intentionally invalidates revisions, cursors, previews, approvals,
-and in-memory rollback history.
+Each successful mutation creates a runtime-scoped change set with revision
+guards, in-memory before-images, and a frozen unified diff. Guarded rollback
+is available only while every affected document still matches the recorded
+final revision. Runtime restart intentionally invalidates revisions, cursors,
+previews, approvals, and rollback history.
+
+## Filesystem policy
+
+`emacs-agent-policy-filesystem-scope` supports:
+
+- `unrestricted`: allow local files accessible to the Emacs OS user, subject
+  to all deny rules and access mode.
+- `allowlist`: additionally require every canonical path to be inside
+  `emacs-agent-policy-allowed-roots`.
+
+Project registration never bypasses this policy. All existing and create/move
+targets are canonicalized before authorization; missing targets are resolved
+through their nearest existing ancestor to prevent symlink escapes.
+
+The server continues to reject repository metadata, environment secret files,
+credential basenames/extensions, binary files, special files, oversized
+documents, and remote paths. `emacs-agent-policy-denied-paths` adds canonical
+path globs or predicates.
+
+Direct-file access broadens authority compared with a root-confined server.
+Use `allowlist` for a narrower deployment, and run the daemon as an OS user
+whose filesystem permissions match the intended agent authority.
 
 ## Human controls
 
-Useful interactive commands:
-
 | Command | Action |
 | --- | --- |
-| `M-x emacs-agent-editor-status` | Show server status and connection-file path. |
-| `M-x emacs-agent-editor-start` | Start a server for a selected workspace. |
-| `M-x emacs-agent-editor-stop` | Stop the server and remove connection metadata. |
-| `M-x emacs-agent-editor-pause` | Pause mutations while retaining read access. |
+| `M-x emacs-agent-editor-status` | Show runtime identity, project count, and connection file. |
+| `M-x emacs-agent-editor-start` | Start with zero registered projects. |
+| `M-x emacs-agent-editor-stop` | Stop MCP and remove connection metadata. |
+| `M-x emacs-agent-editor-pause` | Pause all mutations while retaining read access. |
 | `M-x emacs-agent-editor-resume` | Resume mutations. |
-| `M-x emacs-agent-editor-revoke-writer` | Pause mutations, rotate an enabled token, and clear sessions. |
-| `M-x emacs-agent-show-activity` | Show requests and pending approvals. |
-| `M-x emacs-agent-show-changes` | Show recorded change sets. |
+| `M-x emacs-agent-editor-revoke-writer` | Pause, rotate an enabled token, and clear sessions. |
+| `M-x emacs-agent-show-activity` | Show runtime activity and pending approvals. |
+| `M-x emacs-agent-show-changes` | Show runtime change sets. |
 | `M-x emacs-agent-show-approvals` | Review approval details and TTL state. |
 
-The activity buffer provides:
-
-- `a`: approve the operation at point
-- `p`: partially approve selected documents when supported
-- `x`: reject it
-- `P` / `R`: pause or resume mutations
-- `k`: revoke the writer credential
-- `g`: refresh
-
-The changes buffer provides:
-
-- `RET`: visit the first affected file
-- `d`: view the frozen diff
-- `c`: checkpoint affected modified buffers
-- `r`: roll back the change set
-- `v`: mark it reviewed
-- `P` / `R`: pause or resume mutations
-- `g`: refresh
-
-The approvals buffer shows redacted operation impact and supports approve,
-reject, cancel, and safe per-document partial acceptance for multi-document
-checkpoint requests. Partial acceptance derives a new, parameter-bound child
-approval for the selected proper subset; it never mutates the original
-approval. Operations that cannot be safely split remain all-or-nothing.
-Change-set diff buffers are read-only, can refresh, and can highlight current
-hunks in their source buffers.
+The activity, changes, and approval buffers provide keyboard controls for
+approve/reject/cancel, partial document approval where safe, pause/resume,
+credential revocation, checkpoint, rollback, review, diff display, file
+visiting, and hunk highlighting. Human display abbreviates paths; runtime
+state retains canonical absolute paths.
 
 ## Configuration
 
-Core options can be set with `setq` or through
-`M-x customize-group RET emacs-agent-editor RET`.
+Core options are available under `M-x customize-group RET
+emacs-agent-editor RET`.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `emacs-agent-editor-host` | `"127.0.0.1"` | Listener address; v0.2 only accepts IPv4 loopback. |
-| `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. This dotfiles setup overrides it with `9876`. |
+| `emacs-agent-editor-host` | `"127.0.0.1"` | IPv4 loopback listener address. |
+| `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. |
 | `emacs-agent-editor-endpoint` | `"/mcp"` | HTTP endpoint path. |
-| `emacs-agent-editor-allowed-origins` | `nil` | Allowed values for a present `Origin` header. |
-| `emacs-agent-editor-state-directory` | XDG state directory | Parent directory for private runtime state. |
+| `emacs-agent-editor-allowed-origins` | `nil` | Exact allowlist for a present `Origin` header. |
+| `emacs-agent-editor-state-directory` | XDG state | Parent directory for private runtime state. |
 | `emacs-agent-editor-access-mode` | `autonomous` | `read-only`, `review`, or `autonomous`. |
 | `emacs-agent-editor-save-policy` | `immediate` | `immediate`, `manual`, or `explicit-per-call`. |
-| `emacs-agent-editor-token-authentication-enabled` | `nil` | Require bearer-token authentication for MCP requests. |
-| `emacs-agent-editor-bearer-token` | `nil` | When authentication is enabled, use this fixed token or generate one when nil. |
+| `emacs-agent-editor-token-authentication-enabled` | `nil` | Require bearer authentication. |
+| `emacs-agent-editor-bearer-token` | `nil` | Fixed token, or generate one when nil. |
+| `emacs-agent-policy-filesystem-scope` | `unrestricted` | Direct-file authority mode. |
+| `emacs-agent-policy-allowed-roots` | `nil` | Canonical roots permitted in `allowlist` mode. |
+| `emacs-agent-policy-denied-paths` | `nil` | Additional denied path globs or predicates. |
 | `emacs-agent-policy-maximum-document-bytes` | 4 MiB | Maximum managed document size. |
 | `emacs-agent-journal-enabled` | `nil` | Enable the redacted JSONL activity journal. |
-| `emacs-agent-semantic-format-function` | `nil` | Trusted string-in/string-out document formatter configured by the Emacs user. |
+| `emacs-agent-semantic-format-function` | `nil` | Trusted string-in/string-out formatter. |
 
-Example:
+Example restricted configuration:
 
 ```elisp
 (setq emacs-agent-editor-access-mode 'review
       emacs-agent-editor-save-policy 'manual
       emacs-agent-editor-token-authentication-enabled t
-      ;; Omit this setting to generate a fresh token at startup.
-      emacs-agent-editor-bearer-token
-      (getenv "AGENT_EDITOR_MCP_TOKEN")
+      emacs-agent-policy-filesystem-scope 'allowlist
+      emacs-agent-policy-allowed-roots
+      '("/home/user/src/" "/home/user/.config/emacs/")
       emacs-agent-editor-allowed-origins
       '("http://127.0.0.1:3000")
       emacs-agent-journal-enabled t)
@@ -346,53 +419,45 @@ Example:
 
 The optional journal is stored in the private daemon state directory. Source
 content, before-images, authorization data, credentials, and bearer tokens are
-removed before journal entries are serialized.
+removed before serialization.
 
 ## Security model
 
-Version 0.2 applies the following boundaries:
+Version 0.3 provides:
 
-- Loopback-only listener.
-- Optional bearer authentication, disabled by default.
-- Optional exact origin allowlist.
-- Content-length framing with bounded headers and bodies.
-- Strict UTF-8 and JSON-RPC validation.
-- Canonical workspace path checks, including symlink containment.
-- Denial of repository metadata, common secret files, binary files, special
-  files, and oversized documents.
-- Serialized mutations with revision checks and external-change
-  reconciliation.
-- Request cancellation when a client disconnects.
-- Private state directories and credential files.
+- IPv4 loopback-only HTTP;
+- optional bearer authentication and exact origin allowlisting;
+- bounded content-length framing and strict UTF-8/JSON-RPC validation;
+- canonical, symlink-safe filesystem authorization;
+- secret, metadata, binary, special-file, size, and remote-path denial;
+- runtime-serialized mutations with optimistic revision guards;
+- external-change reconciliation and request cancellation;
+- private, atomically rewritten connection metadata;
+- schema validation for tool inputs and outputs.
 
 With token authentication disabled, any local process able to connect to the
-loopback port can call the endpoint. Enable token authentication when the
-local machine or process boundary is not sufficiently trusted.
+port can call the endpoint. Enable authentication when the local process
+boundary is not sufficiently trusted.
 
-The server is intended for trusted local agents. It is not an
-internet-facing service.
+The server is for trusted local agents. It is not an internet-facing service.
 
 ## Development
 
-Run the package test suite:
+Run the package suite:
 
 ```sh
 emacs.d/site-lisp/agent-editor-mcp/run_tests.sh
 ```
 
-After changing Emacs Lisp in this repository, also run:
+After changing integration code, also run:
 
 ```sh
 ./test-emacs-startup.sh
 ./lint-emacs-config.sh
 ```
 
-The test suite covers transport framing and authentication, both protocol
-profiles, revision and reconciliation behavior, Unicode/tab/CRLF positions,
-exact replacement and strict patching, multi-buffer atomicity, diagnostics,
-buffer-aware search, native semantic previews, lifecycle operations, change
-sets, approval replay/expiry, credential redaction, rollback, journaling, and
-the review UI.
-
-See [design.md](design.md) for the complete architecture, protocol contracts,
-security rationale, and deferred roadmap.
+The suite covers transport/authentication, both protocol profiles, runtime and
+project lifecycle, canonical target resolution, revision/reconciliation,
+Unicode/tab/CRLF positions, guarded transformations, cross-document
+atomicity, diagnostics, buffer-aware search, semantic previews, change sets,
+approval binding/expiry, redaction, rollback, journaling, and human controls.

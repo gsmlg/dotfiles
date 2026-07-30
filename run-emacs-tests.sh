@@ -77,7 +77,6 @@ env \
   "GSMLG_EMACS_OFFLINE=1" \
   "GSMLG_EMACS_LOCAL=" \
   "EMACS_AGENT_AUTOSTART=" \
-  "EMACS_AGENT_WORKSPACE=" \
   "$emacs" -Q --batch \
   --eval "(setq user-emacs-directory
                 (file-name-as-directory

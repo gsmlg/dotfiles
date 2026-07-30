@@ -167,7 +167,7 @@ Install formatters used by Apheleia in the same project environment. The
 interactive `gsmlg-format-buffer` command uses a configured Apheleia formatter
 or active Eglot formatting; no competing format-on-save hooks are enabled.
 
-Consult project search and Agent Editor workspace search benefit from
+Consult project search and Agent Editor project search benefit from
 `ripgrep`. envrc integration requires `direnv`. The Agent package has an
 Emacs fallback for search when ripgrep is unavailable.
 
@@ -209,9 +209,8 @@ Optional desktop persistence is controlled by
 
 ## Agent Editor MCP
 
-Agent Editor MCP autostart is off by default and always off in batch mode. Set
-an explicit workspace with `gsmlg-agent-workspace` or
-`EMACS_AGENT_WORKSPACE`, then run:
+Agent Editor MCP autostart is off by default and always off in batch mode. No
+project or startup directory is required; run:
 
 ```text
 M-x gsmlg-agent-start
@@ -221,16 +220,15 @@ The listener is loopback-only. Port 9876 is the compatibility default;
 `EMACS_AGENT_PORT` overrides it. To opt into interactive autostart, set
 `gsmlg-agent-autostart` or `EMACS_AGENT_AUTOSTART=1`.
 
-The package supports one workspace per Emacs process, not multi-workspace
-request routing. Prefer one named daemon per workspace:
+The recommended deployment is one dedicated named daemon, one MCP endpoint,
+and zero or more projects registered through MCP after startup. Direct
+absolute local files do not require project registration:
 
 ```sh
-EMACS_AGENT_WORKSPACE=/path/to/workspace \
-  EMACS_AGENT_AUTOSTART=1 \
-  emacs --daemon=workspace-name
+EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
 
 emacsclient \
-  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/workspace-name" \
+  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/agent-editor" \
   -c
 ```
 
@@ -239,7 +237,7 @@ Connection metadata is written below
 gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup catches
 MCP failures so they cannot prevent the editor from opening. See the bundled
 [Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
-protocol and editing model.
+project registration, direct-file, protocol, and editing model.
 
 ## Package updates
 

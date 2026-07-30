@@ -28,9 +28,8 @@
 (setopt gsmlg-desktop-save-enabled nil
         gsmlg-server-autostart nil)
 
-;; Agent Editor MCP requires one explicit workspace per Emacs process.
+;; Agent Editor MCP starts one project-optional editor runtime.
 (setopt gsmlg-agent-autostart nil
-        gsmlg-agent-workspace nil
         gsmlg-agent-port 9876)
 
 ;; Optional fonts are applied only when present.

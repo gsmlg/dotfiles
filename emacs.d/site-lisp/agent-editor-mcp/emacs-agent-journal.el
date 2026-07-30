@@ -9,15 +9,15 @@
 
 (require 'json)
 (require 'subr-x)
-(require 'emacs-agent-workspace)
+(require 'emacs-agent-runtime)
 
 (defcustom emacs-agent-journal-enabled nil
-  "Whether workspace activity should be appended to a JSON Lines journal."
+  "Whether runtime activity should be appended to a JSON Lines journal."
   :type 'boolean
   :group 'emacs-agent-editor)
 
 (defcustom emacs-agent-journal-file-name "journal.jsonl"
-  "File name used inside a workspace state directory."
+  "File name used inside a runtime state directory."
   :type 'string
   :group 'emacs-agent-editor)
 
@@ -37,32 +37,32 @@
    (or (getenv "XDG_STATE_HOME")
        (expand-file-name ".local/state" (or (getenv "HOME") "~")))))
 
-(defun emacs-agent-journal--directory (workspace)
-  "Return WORKSPACE's private state directory."
-  (or (emacs-agent-workspace-state-directory workspace)
+(defun emacs-agent-journal--directory (runtime)
+  "Return RUNTIME's private state directory."
+  (or (emacs-agent-runtime-state-directory runtime)
       (expand-file-name
        (format "emacs-agent-editor/%s/"
-               (emacs-agent-workspace-workspace-id workspace))
+               (emacs-agent-runtime-instance-id runtime))
        (emacs-agent-journal--state-root))))
 
-(defun emacs-agent-journal-open (&optional workspace)
-  "Prepare and return the journal path for WORKSPACE."
-  (let* ((workspace (or workspace (emacs-agent-workspace-current)))
-         (directory (emacs-agent-journal--directory workspace))
+(defun emacs-agent-journal-open (&optional runtime)
+  "Prepare and return the journal path for RUNTIME."
+  (let* ((runtime (or runtime (emacs-agent-runtime-current)))
+         (directory (emacs-agent-journal--directory runtime))
          (path (expand-file-name emacs-agent-journal-file-name directory)))
     (make-directory directory t)
     (set-file-modes directory #o700)
     (unless (file-exists-p path)
       (write-region "" nil path nil 'silent))
     (set-file-modes path #o600)
-    (puthash (emacs-agent-workspace-workspace-id workspace)
+    (puthash (emacs-agent-runtime-instance-id runtime)
              path emacs-agent-journal-files)
     path))
 
-(defun emacs-agent-journal-close (&optional workspace)
-  "Forget the journal handle for WORKSPACE."
-  (let ((workspace (or workspace (emacs-agent-workspace-current))))
-    (remhash (emacs-agent-workspace-workspace-id workspace)
+(defun emacs-agent-journal-close (&optional runtime)
+  "Forget the journal handle for RUNTIME."
+  (let ((runtime (or runtime (emacs-agent-runtime-current))))
+    (remhash (emacs-agent-runtime-instance-id runtime)
              emacs-agent-journal-files)
     t))
 
@@ -114,8 +114,8 @@
     (vconcat (mapcar #'emacs-agent-journal--redact value)))
    (t value)))
 
-(defun emacs-agent-journal-write (workspace event)
-  "Append redacted EVENT metadata for WORKSPACE.
+(defun emacs-agent-journal-write (runtime event)
+  "Append redacted EVENT metadata for RUNTIME.
 
 Return the redacted event.  Nothing is written when journaling is disabled."
   (let* ((entry
@@ -123,15 +123,15 @@ Return the redacted event.  Nothing is written when journaling is disabled."
            (append
             (list :timestamp
                   (format-time-string "%Y-%m-%dT%H:%M:%S.%3NZ" nil t)
-                  :workspace
-                  (emacs-agent-workspace-workspace-id workspace))
+                  :runtime_instance_id
+                  (emacs-agent-runtime-instance-id runtime))
             event)))
          (path
           (or (gethash
-               (emacs-agent-workspace-workspace-id workspace)
+               (emacs-agent-runtime-instance-id runtime)
                emacs-agent-journal-files)
               (when emacs-agent-journal-enabled
-                (emacs-agent-journal-open workspace)))))
+                (emacs-agent-journal-open runtime)))))
     (when (and emacs-agent-journal-enabled path)
       (let ((coding-system-for-write 'utf-8-unix))
         (write-region

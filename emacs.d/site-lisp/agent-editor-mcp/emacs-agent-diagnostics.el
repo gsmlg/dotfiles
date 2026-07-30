@@ -14,7 +14,8 @@
 (require 'subr-x)
 (require 'emacs-agent-document)
 (require 'emacs-agent-policy)
-(require 'emacs-agent-workspace)
+(require 'emacs-agent-project)
+(require 'emacs-agent-runtime)
 
 (declare-function flymake-diagnostic-backend "flymake" (diagnostic))
 (declare-function flymake-diagnostic-beg "flymake" (diagnostic))
@@ -46,22 +47,22 @@
   :group 'emacs-agent-editor)
 
 (defcustom emacs-agent-diagnostics-default-limit 50
-  "Default workspace diagnostics document count per page."
+  "Default project diagnostics document count per page."
   :type 'integer
   :group 'emacs-agent-editor)
 
 (defcustom emacs-agent-diagnostics-maximum-limit 200
-  "Hard workspace diagnostics document count per page."
+  "Hard project diagnostics document count per page."
   :type 'integer
   :group 'emacs-agent-editor)
 
 (defcustom emacs-agent-diagnostics-cursor-lifetime 300
-  "Seconds for which a workspace diagnostics cursor remains valid."
+  "Seconds for which a project diagnostics cursor remains valid."
   :type 'integer
   :group 'emacs-agent-editor)
 
 (defvar emacs-agent-diagnostics-cursors (make-hash-table :test #'equal)
-  "Opaque cursor state for paged workspace diagnostics.")
+  "Opaque cursor state for paged project diagnostics.")
 
 (defun emacs-agent-diagnostics--position ()
   "Return the current buffer position in the public position format."
@@ -171,7 +172,7 @@ CODE, RANGE, RELATED-INFORMATION, and ACTION-ID are included when non-nil."
              (not (equal expected-revision current-revision)))
     (emacs-agent-signal
      'revision_conflict
-     :path (emacs-agent-document-relative-path document)
+     :path (emacs-agent-document-canonical-path document)
      :expected_revision expected-revision
      :current_revision current-revision
      :modified_by 'buffer
@@ -233,11 +234,12 @@ The return value is a cons of diagnostics and the pending state."
 
 ;;;###autoload
 (cl-defun emacs-agent-document-diagnostics
-    (workspace path &key expected-revision sources wait-ms)
-  "Return revision-bound diagnostics for PATH in WORKSPACE.
+    (runtime target &key expected-revision sources wait-ms)
+  "Return revision-bound diagnostics for TARGET in RUNTIME.
 EXPECTED-REVISION, when non-nil, guards the read.  SOURCES defaults to the
 safe parser.  WAIT-MS is accepted for provider parity and is bounded."
-  (let* ((document (emacs-agent-document-open workspace path))
+  (let* ((path (emacs-agent-resolved-target-canonical-path target))
+         (document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (revision (emacs-agent-document-revision document))
          (sources (or sources '("parser")))
@@ -258,7 +260,7 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
             ((let ((extension
                     (downcase
                      (or (file-name-extension
-                          (emacs-agent-document-relative-path document))
+                          path)
                          ""))))
                (cond
                 ((equal extension "json")
@@ -282,7 +284,7 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
             (t
              (emacs-agent-signal
               'capability_unavailable :source source
-              :path (emacs-agent-document-relative-path document)))))
+              :path path))))
           ("flymake"
            (pcase-let ((`(,found . ,still-running)
                         (emacs-agent-diagnostics--flymake wait-seconds)))
@@ -292,13 +294,15 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
            (emacs-agent-signal 'capability_unavailable :source source)))))
     (let ((current (emacs-agent-document-revision document)))
       (setf (emacs-agent-document-diagnostics-revision document) revision)
-      (list :path (emacs-agent-document-relative-path document)
-            :document_revision current
-            :diagnostics_revision revision
-            :providers (vconcat sources)
-            :pending (and pending t)
-            :stale (not (equal current revision))
-            :diagnostics diagnostics))))
+      (append
+       (emacs-agent-document-output-fields target)
+       (list
+        :document_revision current
+        :diagnostics_revision revision
+        :providers (vconcat sources)
+        :pending (and pending t)
+        :stale (not (equal current revision))
+        :diagnostics diagnostics)))))
 
 (defun emacs-agent-diagnostics--increment-summary (summary severity)
   "Increment SEVERITY in SUMMARY and return SUMMARY."
@@ -324,16 +328,13 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
                      path excludes)))))
    paths))
 
-(defun emacs-agent-diagnostics--workspace-paths (workspace)
-  "Return safe parser-supported project paths in WORKSPACE."
-  (let* ((root (emacs-agent-workspace-root workspace))
-         (default-directory root)
-         (project (or (emacs-agent-workspace-project workspace)
-                      (project-current nil root)))
+(defun emacs-agent-diagnostics--project-paths (runtime project)
+  "Return safe parser-supported relative paths for PROJECT in RUNTIME."
+  (let* ((root (emacs-agent-project-canonical-root project))
+         (project-object (emacs-agent-project-project-object project))
          (files
-          (if project
-              (project-files project)
-            (directory-files-recursively root "." nil nil t)))
+          (project-files project-object))
+         (project-id (emacs-agent-project-project-id project))
          paths)
     (dolist (file files)
       (let* ((absolute
@@ -345,49 +346,66 @@ safe parser.  WAIT-MS is accepted for provider parity and is bounded."
         (when (and (member extension '("el" "json" "py" "yaml" "yml"))
                    (condition-case nil
                        (progn
-                         (emacs-agent-policy-assert-document
-                          workspace relative)
+                         (emacs-agent-policy-assert-document-target
+                          runtime
+                          (emacs-agent-project-resolve-target
+                           runtime relative :project-id project-id))
                          t)
                      (emacs-agent-error nil)))
           (push relative paths))))
     (sort (delete-dups paths) #'string<)))
 
+(defun emacs-agent-diagnostics--normalize-project-paths
+    (runtime project-id paths)
+  "Return project-relative PATHS resolved for PROJECT-ID in RUNTIME."
+  (mapcar
+   (lambda (path)
+     (emacs-agent-resolved-target-relative-path
+      (emacs-agent-project-resolve-target
+       runtime path :project-id project-id)))
+   paths))
+
 (defun emacs-agent-diagnostics--limit (limit)
-  "Validate and bound workspace diagnostics LIMIT."
+  "Validate and bound project diagnostics LIMIT."
   (let ((limit (or limit emacs-agent-diagnostics-default-limit)))
     (unless (and (integerp limit) (> limit 0))
       (emacs-agent-signal 'invalid_position :field 'limit :value limit))
     (min limit emacs-agent-diagnostics-maximum-limit)))
 
 (defun emacs-agent-diagnostics--cursor-page
-    (workspace paths position limit fingerprint old-cursor)
-  "Page PATHS at POSITION for WORKSPACE using LIMIT and FINGERPRINT.
-OLD-CURSOR is consumed when non-nil.  Return (PAGE . NEXT-CURSOR)."
+    (runtime project-id paths position limit fingerprint old-cursor)
+  "Page PATHS at POSITION for PROJECT-ID in RUNTIME.
+Use LIMIT and FINGERPRINT; consume OLD-CURSOR when non-nil.
+The result is a cons whose car is the page and whose cdr is the next cursor."
   (let* ((end (min (length paths) (+ position limit)))
          (page (cl-subseq paths position end))
          next)
     (when old-cursor
       (remhash old-cursor emacs-agent-diagnostics-cursors))
     (when (< end (length paths))
-      (setq next (emacs-agent-workspace--random-id "diagnostics"))
+      (setq next (emacs-agent-runtime--random-id "diagnostics"))
       (puthash
        next
        (list
-        :workspace-id (emacs-agent-workspace-workspace-id workspace)
+        :runtime-instance-id
+        (emacs-agent-runtime-instance-id runtime)
+        :project-id project-id
         :paths paths :position end :fingerprint fingerprint
         :expires (+ (float-time) emacs-agent-diagnostics-cursor-lifetime))
        emacs-agent-diagnostics-cursors))
     (cons page next)))
 
 (defun emacs-agent-diagnostics--resume-cursor
-    (workspace cursor fingerprint)
-  "Resolve CURSOR for WORKSPACE and FINGERPRINT."
+    (runtime project-id cursor fingerprint)
+  "Resolve CURSOR for PROJECT-ID in RUNTIME and FINGERPRINT."
   (let ((state (and (stringp cursor)
                     (gethash cursor emacs-agent-diagnostics-cursors))))
     (unless (and state
                  (> (plist-get state :expires) (float-time))
-                 (equal (plist-get state :workspace-id)
-                        (emacs-agent-workspace-workspace-id workspace))
+                 (equal
+                  (plist-get state :runtime-instance-id)
+                  (emacs-agent-runtime-instance-id runtime))
+                 (equal (plist-get state :project-id) project-id)
                  (equal (plist-get state :fingerprint) fingerprint))
       (remhash cursor emacs-agent-diagnostics-cursors)
       (emacs-agent-signal 'revision_conflict
@@ -396,10 +414,11 @@ OLD-CURSOR is consumed when non-nil.  Return (PAGE . NEXT-CURSOR)."
     state))
 
 ;;;###autoload
-(cl-defun emacs-agent-workspace-diagnostics
-    (workspace &key paths include-globs exclude-globs sources severities
-               wait-ms limit cursor)
-  "Aggregate diagnostics for selected PATHS in WORKSPACE.
+(cl-defun emacs-agent-project-diagnostics
+    (runtime project-id
+             &key paths include-globs exclude-globs sources severities
+             wait-ms limit cursor)
+  "Aggregate diagnostics for selected PATHS in PROJECT-ID within RUNTIME.
 SOURCES and WAIT-MS have the same meaning as for
 `emacs-agent-document-diagnostics'.  SEVERITIES filters diagnostics by the
 public strings \"error\", \"warning\", and \"info\".  INCLUDE-GLOBS and
@@ -417,7 +436,8 @@ snapshot.  The total wait across all documents is bounded by WAIT-MS."
                     severities))))
     (emacs-agent-signal 'invalid_position
                         :field 'severities :value severities))
-  (let* ((limit (emacs-agent-diagnostics--limit limit))
+  (let* ((project (emacs-agent-project-get runtime project-id))
+         (limit (emacs-agent-diagnostics--limit limit))
          (fingerprint
           (secure-hash
            'sha256
@@ -426,17 +446,19 @@ snapshot.  The total wait across all documents is bounded by WAIT-MS."
          (cursor-state
           (and cursor
                (emacs-agent-diagnostics--resume-cursor
-                workspace cursor fingerprint)))
+                runtime project-id cursor fingerprint)))
          (all-paths
           (if cursor-state
               (plist-get cursor-state :paths)
             (emacs-agent-diagnostics--filter-paths
-             (or paths
-                 (emacs-agent-diagnostics--workspace-paths workspace))
+             (if paths
+                 (emacs-agent-diagnostics--normalize-project-paths
+                  runtime project-id paths)
+               (emacs-agent-diagnostics--project-paths runtime project))
              include-globs exclude-globs)))
          (page
           (emacs-agent-diagnostics--cursor-page
-           workspace all-paths
+           runtime project-id all-paths
            (or (plist-get cursor-state :position) 0)
            limit fingerprint cursor))
          (paths (car page))
@@ -449,11 +471,14 @@ snapshot.  The total wait across all documents is bounded by WAIT-MS."
          pending
          stale)
     (dolist (path paths)
-      (let* ((remaining-ms
+      (let* ((target
+              (emacs-agent-project-resolve-target
+               runtime path :project-id project-id))
+             (remaining-ms
               (max 0 (floor (* 1000.0 (- deadline (float-time))))))
              (result
               (emacs-agent-document-diagnostics
-               workspace path
+               runtime target
                :sources sources
                :wait-ms remaining-ms))
              (selected
@@ -470,16 +495,18 @@ snapshot.  The total wait across all documents is bounded by WAIT-MS."
                 (emacs-agent-diagnostics--increment-summary
                  summary (plist-get diagnostic :severity)))
           (push (append
-                 (list :path (plist-get result :path)
-                       :revision
-                       (plist-get result :diagnostics_revision)
-                       :stale (plist-get result :stale))
+                 (emacs-agent-document-output-fields target)
+                 (list
+                  :revision
+                  (plist-get result :diagnostics_revision)
+                  :stale (plist-get result :stale))
                  diagnostic)
                 diagnostics))
         (push (plist-put (copy-sequence result)
                          :diagnostics selected)
               documents)))
-    (list :document_count (length paths)
+    (list :project_id project-id
+          :document_count (length paths)
           :diagnostic_count (length diagnostics)
           :pending (and pending t)
           :stale (and stale t)

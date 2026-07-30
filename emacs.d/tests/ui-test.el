@@ -63,7 +63,7 @@
           (should (member org-mode-line-string header)))))))
 
 (ert-deftest gsmlg-ui-header-and-mode-line-use-nerd-font-glyphs ()
-  "Nerd Font glyphs should decorate file, project, position, and VC context."
+  "Nerd Font glyphs should decorate header, position, and VC context."
   (let ((gsmlg-ui-nerd-font-available t)
         (vc-mode " Git:main"))
     (should (string-match-p ""
@@ -76,16 +76,15 @@
                                  (setq buffer-file-name "/tmp/example.el")
                                  (gsmlg-ui-file-breadcrumb)))
                              "")))
-    (should
-     (string-match-p
-      ""
-      (with-temp-buffer
-        (setq buffer-file-name "/tmp/example.el")
-        (gsmlg-ui-mode-line-file-icon))))
     (should (string-match-p "" (gsmlg-ui-mode-line-position-icon)))
     (should (string-match-p
              ""
              (mapconcat #'identity (gsmlg-ui-mode-line-vc) "")))))
+
+(ert-deftest gsmlg-ui-mode-line-omits-buffer-identification ()
+  "The mode line should not repeat the filename shown in the header."
+  (should-not (memq 'mode-line-buffer-identification
+                    (default-value 'mode-line-format))))
 
 (provide 'ui-test)
 ;;; ui-test.el ends here

@@ -66,11 +66,6 @@
       (propertize glyph 'face `(:family ,gsmlg-nerd-font-family))
     ""))
 
-(defun gsmlg-ui-mode-line-file-icon ()
-  "Return the mode-line file icon, when Nerd Font glyphs are available."
-  (when buffer-file-name
-    (gsmlg-ui-icon " ")))
-
 (defun gsmlg-ui-mode-line-position-icon ()
   "Return the mode-line position icon, when Nerd Font glyphs are available."
   (gsmlg-ui-icon " "))
@@ -149,9 +144,6 @@
                   mode-line-remote)
                  display (min-width (6.0)))
                 mode-line-frame-identification
-                (:eval (gsmlg-ui-mode-line-file-icon))
-                mode-line-buffer-identification
-                "   "
                 (:eval (gsmlg-ui-mode-line-position-icon))
                 mode-line-position
                 (:eval (gsmlg-ui-mode-line-vc))

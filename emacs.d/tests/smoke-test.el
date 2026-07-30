@@ -71,6 +71,12 @@
   (when (fboundp 'emacs-agent-editor-running-p)
     (should-not (emacs-agent-editor-running-p))))
 
+(ert-deftest gsmlg-smoke-server-directories-are-private ()
+  "Emacs server state must reject access from group and other users."
+  (dolist (directory (delete-dups (list server-auth-dir server-socket-dir)))
+    (should (file-directory-p directory))
+    (should (= (logand (file-modes directory) #o777) #o700))))
+
 (ert-deftest gsmlg-smoke-state-stays-outside-configuration ()
   "All mutable roots and generated native code should stay outside Git."
   (dolist (directory (list gsmlg-data-directory

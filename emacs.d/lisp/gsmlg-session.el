@@ -68,6 +68,7 @@ option."
 
 (let ((server-directory
        (gsmlg-ensure-directory (gsmlg-state-file "server/"))))
+  (set-file-modes server-directory #o700)
   (setopt server-auth-dir server-directory
           server-socket-dir server-directory))
 

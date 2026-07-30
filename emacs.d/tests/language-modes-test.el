@@ -13,6 +13,9 @@
 (require 'gsmlg-lang-scripting)
 (require 'gsmlg-lang-infra)
 
+(declare-function native--compile-async-skip-p
+                  "comp-run" (file load selector))
+
 (defun gsmlg-test-select-major-mode (mode)
   "Select MODE without requiring its tree-sitter grammar."
   (setq major-mode mode))
@@ -128,6 +131,20 @@
                   sh-mode bash-ts-mode nix-mode yaml-mode yaml-ts-mode
                   dockerfile-mode hcl-mode terraform-mode))
     (should (memq mode gsmlg-eglot-supported-modes))))
+
+(ert-deftest gsmlg-language-go-mode-skips-native-jit-until-upstream-fix ()
+  "Upstream go-mode should remain byte compiled without native JIT warnings."
+  (skip-unless (native-comp-available-p))
+  (require 'comp-run)
+  (let* ((package (elpaca-get 'go-mode))
+         (source
+          (and package
+               (expand-file-name "go-mode.el"
+                                 (elpaca<-build-dir package)))))
+    (should package)
+    (should (file-readable-p source))
+    (should
+     (native--compile-async-skip-p source 'late nil))))
 
 (ert-deftest gsmlg-language-eglot-autostart-honors-local-policy ()
   "A local override can disable automatic Eglot startup."

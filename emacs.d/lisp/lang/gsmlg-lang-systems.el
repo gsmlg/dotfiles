@@ -9,6 +9,15 @@
 (require 'gsmlg-eglot)
 (require 'gsmlg-bootstrap)
 
+(defconst gsmlg-go-mode-native-compilation-deny-regexp
+  "/go-mode\\.el\\'"
+  "Match upstream go-mode source files with undeclared optional client APIs.")
+
+(with-eval-after-load 'comp-run
+  ;; Upstream issue dominikh/go-mode.el#446 tracks the missing declarations.
+  (add-to-list 'native-comp-jit-compilation-deny-list
+               gsmlg-go-mode-native-compilation-deny-regexp))
+
 (defun gsmlg-c-mode ()
   "Select C tree-sitter mode or built-in `c-mode'."
   (interactive)

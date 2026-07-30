@@ -56,8 +56,8 @@ Status meanings:
 | Global | `C-z` | `gsmlg/maybe-suspend-frame` | `gsmlg-maybe-suspend-frame` | Exact | Still avoids hiding a graphical macOS frame and suspends elsewhere. |
 | Global | `C-x C-b` | `ibuffer` | `ibuffer` | Exact | Unchanged. |
 | Global | `C-x u` | `undo-tree-visualize` | `vundo` | Semantic replacement | Preserves the visual undo-history entry point using the maintained native-undo frontend. |
-| Dired | `C-l` | `dired-up-directory` | `dired-up-directory` | Exact | Returns to the parent directory. |
-| Dired | `C-j` | `dired-find-file` | `dired-find-file` | Exact | Enters the directory at point or visits the file at point. |
+| Vertico file completion | `C-l` | `helm-find-files-up-one-level` | `vertico-directory-up` | Semantic replacement | Returns to the parent directory while finding a file. |
+| Vertico file completion | `C-j` | `helm-execute-persistent-action` | `vertico-directory-enter` | Semantic replacement | Enters the directory candidate at point. |
 | Global | `C-;` | Unassigned | `embark-act` | Intentional deviation | Embark uses a nonconflicting key because `C-.` remains mark activation. |
 | Global | `C-c C-;` | Unassigned | `embark-dwim` | Intentional deviation | Adds the companion Embark action without taking a legacy key. |
 
@@ -88,29 +88,29 @@ marker's live buffer, and supplies the last query as Consult's initial input.
 
 ## Project prefix
 
-`C-c p` remains a named prefix, now backed exclusively by `project.el`.
+`C-x p` is the named project prefix, backed exclusively by `project.el`.
 
 | Scope/map | Key | Old command | New command | Status | Reason |
 |---|---|---|---|---|---|
-| `C-c p` | `p` | `projectile-switch-project` | `project-switch-project` | Semantic replacement | Built-in project selection. |
-| `C-c p` | `f` | `projectile-find-file` | `project-find-file` | Semantic replacement | Built-in project file selection. |
-| `C-c p` | `b` | `projectile-switch-to-buffer` | `project-switch-to-buffer` | Semantic replacement | Built-in project buffer selection. |
-| `C-c p` | `d` | `projectile-find-dir` | `project-dired` | Semantic replacement | Opens the project root in Dired. |
-| `C-c p` | `D` | `projectile-dired` | `project-dired` | Semantic replacement | Direct equivalent. |
-| `C-c p` | `k` | `projectile-kill-buffers` | `project-kill-buffers` | Semantic replacement | Direct built-in equivalent. |
-| `C-c p` | `c` | `projectile-command-map` lifecycle prefix | `project-compile` | Semantic replacement | Preserves project compilation as a direct built-in command. |
-| `C-c p` | `e` | `projectile-recentf` | `project-eshell` | Intentional deviation | The required modern prefix reserves `e` for a project-local Eshell. |
-| `C-c p` | `s` | Projectile search prefix | `gsmlg-project-search` | Semantic replacement | Searches project contents with Consult Ripgrep at `project-root`. |
-| `C-c p` | `S` | Unassigned | `project-eshell` | Intentional deviation | Opens Eshell at the project root. |
-| `C-c p` | `!` | `projectile-run-shell-command-in-root` | `project-shell-command` | Semantic replacement | Built-in project command. |
-| `C-c p` | `&` | `projectile-run-async-shell-command-in-root` | `project-async-shell-command` | Semantic replacement | Built-in project command. |
-| `C-c p` | `?` | `projectile-find-references` | `xref-find-references` | Semantic replacement | Uses Xref with the active Eglot/project backend. |
-| `C-c p` | `g` | `projectile-find-file-dwim` | `gsmlg-project-search` | Intentional deviation | The required modern prefix assigns `g` to Consult Ripgrep at `project-root`. |
-| `C-c p` | `I` | `projectile-ibuffer` | `project-list-buffers` | Semantic replacement | Built-in project buffer listing. |
-| `C-c p` | `o` | `projectile-multi-occur` | `gsmlg-project-search` | Semantic replacement | Consult Ripgrep supersedes project Occur. |
-| `C-c p` | `q` | `projectile-switch-open-project` | `project-switch-project` | Semantic replacement | Built-in project selection includes remembered projects. |
-| `C-c p` | `r` | `projectile-replace` | `project-query-replace-regexp` | Semantic replacement | Built-in project replacement using regular expressions. |
-| `C-c p` | `v` | `projectile-vc` | `project-vc-dir` | Semantic replacement | Built-in project VC entrypoint. |
+| `C-x p` | `p` | `projectile-switch-project` | `project-switch-project` | Semantic replacement | Built-in project selection. |
+| `C-x p` | `f` | `projectile-find-file` | `project-find-file` | Semantic replacement | Built-in project file selection. |
+| `C-x p` | `b` | `projectile-switch-to-buffer` | `project-switch-to-buffer` | Semantic replacement | Built-in project buffer selection. |
+| `C-x p` | `d` | `projectile-find-dir` | `project-dired` | Semantic replacement | Opens the project root in Dired. |
+| `C-x p` | `D` | `projectile-dired` | `project-dired` | Semantic replacement | Direct equivalent. |
+| `C-x p` | `k` | `projectile-kill-buffers` | `project-kill-buffers` | Semantic replacement | Direct built-in equivalent. |
+| `C-x p` | `c` | `projectile-command-map` lifecycle prefix | `project-compile` | Semantic replacement | Preserves project compilation as a direct built-in command. |
+| `C-x p` | `e` | `projectile-recentf` | `project-eshell` | Intentional deviation | The required modern prefix reserves `e` for a project-local Eshell. |
+| `C-x p` | `s` | Projectile search prefix | `gsmlg-project-search` | Semantic replacement | Searches project contents with Consult Ripgrep at `project-root`. |
+| `C-x p` | `S` | Unassigned | `project-eshell` | Intentional deviation | Opens Eshell at the project root. |
+| `C-x p` | `!` | `projectile-run-shell-command-in-root` | `project-shell-command` | Semantic replacement | Built-in project command. |
+| `C-x p` | `&` | `projectile-run-async-shell-command-in-root` | `project-async-shell-command` | Semantic replacement | Built-in project command. |
+| `C-x p` | `?` | `projectile-find-references` | `xref-find-references` | Semantic replacement | Uses Xref with the active Eglot/project backend. |
+| `C-x p` | `g` | `projectile-find-file-dwim` | `gsmlg-project-search` | Intentional deviation | The required modern prefix assigns `g` to Consult Ripgrep at `project-root`. |
+| `C-x p` | `I` | `projectile-ibuffer` | `project-list-buffers` | Semantic replacement | Built-in project buffer listing. |
+| `C-x p` | `o` | `projectile-multi-occur` | `gsmlg-project-search` | Semantic replacement | Consult Ripgrep supersedes project Occur. |
+| `C-x p` | `q` | `projectile-switch-open-project` | `project-switch-project` | Semantic replacement | Built-in project selection includes remembered projects. |
+| `C-x p` | `r` | `projectile-replace` | `project-query-replace-regexp` | Semantic replacement | Built-in project replacement using regular expressions. |
+| `C-x p` | `v` | `projectile-vc` | `project-vc-dir` | Semantic replacement | Built-in project VC entrypoint. |
 
 The generated Projectile map exposed many implementation-specific commands.
 They were inventoried rather than silently dropped:
@@ -128,17 +128,17 @@ They were inventoried rather than silently dropped:
 | `i`, `z` | Invalidate or populate a project cache | No command | Intentional deviation; `project.el` does not maintain Projectile's file cache. |
 | `j`, `J`, `t`, `T` | File-kind or implementation/test switching | Language-server code actions, Xref, or project conventions | Intentional deviation; there is no safe language-neutral mapping. |
 | `l` | Find a file under a chosen directory | `project-find-file` | Semantic replacement; no duplicate direct key. |
-| `m` | Open package-specific dispatcher | Built-in Which Key labels on `C-c p` | Intentional deviation; the prefix itself is the dispatcher. |
+| `m` | Open package-specific dispatcher | Built-in Which Key labels on `C-x p` | Intentional deviation; the prefix itself is the dispatcher. |
 | `P` | Package-specific dashboard | `project-switch-project` | Intentional deviation; no separate dashboard. |
 | `<left>`, `<right>`, `ESC` | Cycle project buffers | `project-switch-to-buffer` | Semantic replacement; no global cycling state. |
 | `R`, `u` | Review or undo project replacement | `project-query-replace-regexp` and normal undo | Intentional deviation; no package-specific replacement transaction UI. |
-| `s s`, `s g`, `s r`, `s a`, `s x`, `s R`, `s X`, `s t` | Search, Grep, Ripgrep, references, reviews, and TODO search | `C-c p g`, `C-c p o`, `C-c p ?`, and `M-x consult-ripgrep` | Intentional deviation; `s` is now the required project-shell key. |
+| `s s`, `s g`, `s r`, `s a`, `s x`, `s R`, `s X`, `s t` | Search, Grep, Ripgrep, references, reviews, and TODO search | `C-x p s`, `C-x p g`, `C-x p o`, `C-x p ?`, and `M-x consult-ripgrep` | Semantic replacement; `s` now invokes project Ripgrep directly. |
 | `S` | Save all project buffers | Standard `save-some-buffers` | Semantic replacement; no duplicate direct key. |
 | `w s`, `w S`, `w r`, `w R`, `w f`, `w b` | Package-specific project sessions | Optional XDG-backed desktop state and `project-switch-to-buffer` | Intentional deviation; per-project session machinery is not recreated. |
-| `c o`, `c c`, `c p`, `c i`, `c t`, `c .`, `c r` | Configure, compile, package, install, test, or run a project | `C-c p c`, `project-compile`, and project-owned commands from Nix/devenv | Intentional deviation; `c` is now direct compile and generic task guessing is removed. |
+| `c o`, `c c`, `c p`, `c i`, `c t`, `c .`, `c r` | Configure, compile, package, install, test, or run a project | `C-x p c`, `project-compile`, and project-owned commands from Nix/devenv | Intentional deviation; `c` is now direct compile and generic task guessing is removed. |
 | `c m f`, `c m o`, `c m c`, `c m t`, `c m i`, `c m p`, `c m r` | Package-specific subproject lifecycle | Enter the nested project and use the normal project commands | Intentional deviation; nested projects remain independent roots. |
 | `c x`, `c X` | Run or repeat a package-discovered task | `project-compile` or a project-local command | Intentional deviation; no package-specific task registry. |
-| `x r`, `x e`, `x i`, `x t`, `x s`, `x g`, `x v`, `x 4 v`, `x x`, `x 4 x`, `x G`, `x 4 G` | Open package-specific REPLs, shells, terminals, debuggers, or AI shells | `C-c p e`, `C-c p s`, `M-x dape`, and explicit terminal commands | Intentional deviation; only portable project-local shells receive prefix keys. |
+| `x r`, `x e`, `x i`, `x t`, `x s`, `x g`, `x v`, `x 4 v`, `x x`, `x 4 x`, `x G`, `x 4 G` | Open package-specific REPLs, shells, terminals, debuggers, or AI shells | `C-x p e`, `C-x p S`, `M-x dape`, and explicit terminal commands | Intentional deviation; only portable project-local shells receive prefix keys. |
 | `H` | Package diagnostics | `M-x gsmlg-treesit-report`, Eglot events, and built-in project inspection | Intentional deviation; no Projectile doctor remains. |
 
 ## Version control

@@ -19,8 +19,6 @@
 (declare-function consult-yank-pop "consult" ())
 (declare-function corfu-next "corfu" ())
 (declare-function corfu-previous "corfu" ())
-(declare-function dired-find-file "dired" ())
-(declare-function dired-up-directory "dired" (&optional other-window))
 (declare-function eglot-code-actions "eglot" ())
 (declare-function eglot-rename "eglot" ())
 (declare-function embark-act "embark" ())
@@ -58,11 +56,12 @@
 (declare-function symbol-overlay-jump-prev "symbol-overlay" ())
 (declare-function vertico-next "vertico" ())
 (declare-function vertico-previous "vertico" ())
+(declare-function vertico-directory-enter "vertico-directory" (&optional arg))
+(declare-function vertico-directory-up "vertico-directory" (&optional n))
 (declare-function vundo "vundo" ())
 (declare-function which-key-add-keymap-based-replacements "which-key" (keymap &rest replacements))
 
 (defvar corfu-map)
-(defvar dired-mode-map)
 (defvar ert-results-mode-map)
 (defvar ielm-map)
 (defvar magit-mode-map)
@@ -89,6 +88,10 @@
           :feature vertico)
     (:map vertico-map :key "M-p" :command vertico-previous :status semantic-replacement
           :feature vertico)
+    (:map vertico-map :key "C-l" :command vertico-directory-up :status semantic-replacement
+          :feature vertico-directory)
+    (:map vertico-map :key "C-j" :command vertico-directory-enter :status semantic-replacement
+          :feature vertico-directory)
     (:map global-map :key "C-=" :command er/expand-region :status exact)
     (:map global-map :key "C-." :command set-mark-command :status exact)
     (:map global-map :key "C-x C-." :command pop-global-mark :status exact)
@@ -116,10 +119,6 @@
     (:map global-map :key "C-z" :command gsmlg-maybe-suspend-frame :status exact)
     (:map global-map :key "C-x C-b" :command ibuffer :status exact)
     (:map global-map :key "C-x u" :command vundo :status semantic-replacement)
-    (:map dired-mode-map :key "C-l" :command dired-up-directory :status exact
-          :feature dired)
-    (:map dired-mode-map :key "C-j" :command dired-find-file :status exact
-          :feature dired)
     (:map global-map :key "M-`" :command ns-next-frame :status exact :platform darwin)
     (:map global-map :key "M-h" :command ns-do-hide-emacs :status exact :platform darwin)
     (:map global-map :key "M-˙" :command ns-do-hide-others :status exact :platform darwin)
@@ -263,7 +262,7 @@ needed before asserting an alternate keyboard profile.")
   "k" #'project-kill-buffers
   "c" #'project-compile
   "e" #'project-eshell
-  "s" #'gsmlg-project-search
+  "s" `("project search" . gsmlg-project-search)
   "S" #'project-eshell
   "!" #'project-shell-command
   "&" #'project-async-shell-command
@@ -353,10 +352,12 @@ history APIs."
               (copy-tree minor-mode-overriding-map-alist)))))))
 
 (defun gsmlg--configure-vertico-keys ()
-  "Preserve quit and navigation keys for `consult-yank-pop'."
+  "Preserve legacy minibuffer quit and navigation keys."
   (keymap-set vertico-map "C-g" #'abort-recursive-edit)
   (keymap-set vertico-map "M-n" #'vertico-next)
-  (keymap-set vertico-map "M-p" #'vertico-previous))
+  (keymap-set vertico-map "M-p" #'vertico-previous)
+  (keymap-set vertico-map "C-l" #'vertico-directory-up)
+  (keymap-set vertico-map "C-j" #'vertico-directory-enter))
 
 (defun gsmlg--configure-corfu-keys ()
   "Install legacy popup navigation keys in `corfu-map'."
@@ -411,17 +412,6 @@ history APIs."
   "Install the legacy ERT rerun binding."
   (keymap-set ert-results-mode-map "g" #'ert-results-rerun-all-tests))
 
-(defun gsmlg--configure-dired-keys ()
-  "Install the legacy Dired directory navigation bindings."
-  (keymap-set dired-mode-map "C-l" #'dired-up-directory)
-  (keymap-set dired-mode-map "C-j" #'dired-find-file)
-  (add-hook 'dired-mode-hook #'gsmlg-dired-install-navigation-keys))
-
-(defun gsmlg-dired-install-navigation-keys ()
-  "Install directory navigation keys in the current Dired buffer."
-  (keymap-local-set "C-l" #'dired-up-directory)
-  (keymap-local-set "C-j" #'dired-find-file))
-
 (defun gsmlg--configure-symbol-overlay-keys ()
   "Install occurrence navigation in `symbol-overlay-mode-map'."
   (keymap-set symbol-overlay-mode-map "M-n" #'symbol-overlay-jump-next)
@@ -444,7 +434,7 @@ history APIs."
     gsmlg-project-prefix-map
     "p" "switch project" "f" "find file" "b" "switch buffer"
     "d" "dired" "k" "kill buffers" "c" "compile" "e" "eshell"
-    "s" "ripgrep" "S" "eshell" "?" "find references" "g" "ripgrep"
+    "s" "project search" "S" "eshell" "?" "find references" "g" "ripgrep"
     "I" "list buffers" "o" "search project" "q" "switch project"
     "r" "replace regexp" "v" "VC directory")
   (which-key-add-keymap-based-replacements
@@ -499,7 +489,8 @@ history APIs."
 (keymap-global-set "C-M-/" #'completion-at-point)
 (keymap-global-set "M-/" #'completion-at-point)
 
-(keymap-global-set "C-c p" gsmlg-project-prefix-map)
+(keymap-global-unset "C-c p")
+(keymap-global-set "C-x p" gsmlg-project-prefix-map)
 (keymap-global-set "C-," gsmlg-code-prefix-map)
 
 (keymap-global-set "M-<f12>" #'magit-status)
@@ -536,8 +527,6 @@ history APIs."
   (gsmlg--configure-ielm-keys))
 (with-eval-after-load 'ert
   (gsmlg--configure-ert-keys))
-(with-eval-after-load 'dired
-  (gsmlg--configure-dired-keys))
 (with-eval-after-load 'symbol-overlay
   (gsmlg--configure-symbol-overlay-keys))
 (with-eval-after-load 'paredit

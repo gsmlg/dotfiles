@@ -27,6 +27,11 @@
           vertico-resize t)
   (vertico-mode 1))
 
+(use-package vertico-directory
+  :ensure nil
+  :after vertico
+  :demand t)
+
 (use-package orderless
   :demand t
   :config

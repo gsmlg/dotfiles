@@ -202,7 +202,7 @@ into a parent. Git's own project backend recognizes a normal checkout and each
 linked worktree as separate roots.
 
 `gsmlg-project-search` invokes Consult ripgrep with the current project root.
-The `C-c p` prefix exposes project.el commands. envrc activates project
+The `C-x p` prefix exposes project.el commands. envrc activates project
 environments, while existing `node_modules/.bin` directories are prepended to
 `exec-path` buffer-locally. On graphical macOS, exec-path-from-shell imports
 the login-shell environment once. No project executable directory is added

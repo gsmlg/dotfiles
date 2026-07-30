@@ -67,18 +67,11 @@
   "The three compatibility prefix maps are reachable globally."
   (should (eq (lookup-key global-map (key-parse "C-c m"))
               gsmlg-multiple-cursors-prefix-map))
-  (should (eq (lookup-key global-map (key-parse "C-c p"))
+  (should (eq (lookup-key global-map (key-parse "C-x p"))
               gsmlg-project-prefix-map))
+  (should-not (lookup-key global-map (key-parse "C-c p")))
   (should (eq (lookup-key global-map (key-parse "C-, r"))
               gsmlg-refactor-prefix-map)))
-
-(ert-deftest gsmlg-dired-buffers-install-navigation-keys ()
-  "Dired buffers should install the legacy directory navigation keys."
-  (require 'dired)
-  (with-temp-buffer
-    (dired-mode default-directory)
-    (should (eq (key-binding (key-parse "C-l")) #'dired-up-directory))
-    (should (eq (key-binding (key-parse "C-j")) #'dired-find-file))))
 
 (ert-deftest gsmlg-project-prefix-commands-are-interactive ()
   "Every retained project-prefix target is an interactive command."
@@ -161,7 +154,11 @@
     (should (eq (lookup-key vertico-map (key-parse "M-n"))
                 #'vertico-next))
     (should (eq (lookup-key vertico-map (key-parse "M-p"))
-                #'vertico-previous))))
+                #'vertico-previous))
+    (should (eq (lookup-key vertico-map (key-parse "C-l"))
+                #'vertico-directory-up))
+    (should (eq (lookup-key vertico-map (key-parse "C-j"))
+                #'vertico-directory-enter))))
 
 (ert-deftest gsmlg-corfu-preserves-popup-navigation-intent ()
   "The replacement completion popup retains the legacy navigation keys."

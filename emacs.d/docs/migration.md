@@ -63,7 +63,7 @@ after making a backup.
 |---|---|
 | package.el bootstrap and runtime package-vc installation | Elpaca recipes and the committed lock file |
 | Helm | Vertico, Orderless, Marginalia, Consult, Embark |
-| Company | Corfu, Cape, Yasnippet, completion-at-point |
+| Company | Corfu, Cape, completion-at-point |
 | Flycheck | Flymake |
 | lsp-mode, lsp-ui, helm-lsp | Eglot, ElDoc, Xref, Flymake, Consult |
 | Projectile | project.el and Consult |

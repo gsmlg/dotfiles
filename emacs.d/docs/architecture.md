@@ -48,7 +48,6 @@ emacs.d/
 │       ├── gsmlg-lang-scripting.el
 │       └── gsmlg-lang-infra.el
 ├── site-lisp/agent-editor-mcp/
-├── snippets/
 ├── tests/
 ├── docs/
 ├── README.md
@@ -134,7 +133,7 @@ and commands are asserted by the keybinding module.
 | `gsmlg-core` | built-in editing defaults, UTF-8, EditorConfig, which-key, startup GC |
 | `gsmlg-session` | recent files, history, places, bookmarks, desktop policy, explicit server control |
 | `gsmlg-ui` | Duskmoon Moonlight, optional Nerd Font glyphs, native mode line and file breadcrumb header |
-| `gsmlg-completion` | Vertico, Orderless, Marginalia, Consult, Embark, Corfu, Cape, Yasnippet |
+| `gsmlg-completion` | Vertico, Orderless, Marginalia, Consult, Embark, Corfu, Cape |
 | `gsmlg-editing` | editing commands, Paredit behavior, vundo and editing packages, macOS remaps |
 | `gsmlg-keybindings` | prefix maps, compatibility wrappers, machine-readable key contract |
 | `gsmlg-project` | project.el, worktree roots, Consult search, envrc, project-local executables |
@@ -152,7 +151,7 @@ The repository is immutable at runtime. Defaults are:
 
 | Class | Root | Contents |
 | --- | --- | --- |
-| Configuration | `${XDG_CONFIG_HOME:-~/.config}/emacs/` | tracked source, lock file, snippets, feed list |
+| Configuration | `${XDG_CONFIG_HOME:-~/.config}/emacs/` | tracked source, lock file, feed list |
 | Package/application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` | Elpaca repositories and builds, Elfeed database |
 | Disposable cache | `${XDG_CACHE_HOME:-~/.cache}/emacs/` | Elpaca cache, native compilation, URL cache, Org persistence, local and remote auto-save files |
 | Mutable state | `${XDG_STATE_HOME:-~/.local/state}/emacs/` | customizations, backups, auto-save index, recentf, savehist, save-place, bookmarks, project list, TRAMP, desktop, Transient, multiple-cursors, Eshell, network security, Org clock/ID, server sockets/authentication, Agent Editor metadata |
@@ -169,11 +168,10 @@ actions, and savehist persistence. `C-.` remains `set-mark-command`; Embark
 uses `C-;` and `C-c C-;`.
 
 Corfu presents `completion-at-point` results. Cape adds only low-priority
-fallback CAPFs, so a major mode or Eglot CAPF stays authoritative. Yasnippet
-is enabled in programming and text buffers. Terminal frames use
-corfu-terminal.  `Symbols Nerd Font Mono` adds mode-line and breadcrumb
-glyphs when installed, with a text-only fallback for terminal frames and
-hosts where the font is unavailable.
+fallback CAPFs, so a major mode or Eglot CAPF stays authoritative. Terminal
+frames use corfu-terminal.  `Symbols Nerd Font Mono` adds mode-line and
+breadcrumb glyphs when installed, with a text-only fallback for terminal
+frames and hosts where the font is unavailable.
 
 Automatic Eglot discovery runs from the late file-visiting hook, after envrc,
 local variables, and buffer-local project executable paths are active.

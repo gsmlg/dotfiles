@@ -709,12 +709,6 @@
                       :source "elpaca-menu-lock-file" :id yaml-mode :type git
                       :protocol https :inherit t :depth treeless :ref
                       "96ef0201101a7cd591febd5886633154dae8834c"))
- (yasnippet :source "elpaca-menu-lock-file" :recipe
-            (:package "yasnippet" :fetcher github :repo "joaotavora/yasnippet"
-                      :files (:defaults ("doc" "doc/*.org")) :source
-                      "elpaca-menu-lock-file" :id yasnippet :type git :protocol
-                      https :inherit t :depth treeless :ref
-                      "c1e6ff23e9af16b856c88dfaab9d3ad7b746ad37"))
  (zig-mode :source "elpaca-menu-lock-file" :recipe
            (:package "zig-mode" :repo "ziglang/zig-mode" :host github :files
                      ("*.el" "*.el.in" "dir" "*.info" "*.texi" "*.texinfo"

@@ -23,8 +23,8 @@ configuration, tests, package maintenance, and recovery.
 
 ## Repository structure
 
-- `emacs.d/` — Emacs 30.2+ configuration, tests, documentation, snippets, and
-  the bundled Agent Editor MCP package
+- `emacs.d/` — Emacs 30.2+ configuration, tests, documentation, and the
+  bundled Agent Editor MCP package
 - `vimrc/` — basic and extended Vim configuration
 - `oh-my-zsh/` — Oh My Zsh configuration and themes
 - `gitconfig` and `gitignore_global` — Git defaults

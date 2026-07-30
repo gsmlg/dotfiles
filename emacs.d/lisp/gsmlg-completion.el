@@ -1,8 +1,8 @@
 ;;; gsmlg-completion.el --- Minibuffer and in-buffer completion -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Compose standard completion APIs with Vertico, Consult, Corfu, Cape, and
-;; Yasnippet.  Mode and Eglot CAPFs stay ahead of global Cape fallbacks.
+;; Compose standard completion APIs with Vertico, Consult, Corfu, and Cape.
+;; Mode and Eglot CAPFs stay ahead of global Cape fallbacks.
 
 ;;; Code:
 
@@ -15,10 +15,6 @@
     (when (and (not (display-graphic-p))
                (fboundp #'corfu-terminal-mode))
       (corfu-terminal-mode 1))))
-
-(defun gsmlg-enable-yasnippet ()
-  "Enable Yasnippet in the current programming or text buffer."
-  (yas-minor-mode 1))
 
 (use-package savehist
   :ensure nil
@@ -95,15 +91,6 @@
   :config
   (add-hook 'completion-at-point-functions #'cape-file 90)
   (add-hook 'completion-at-point-functions #'cape-dabbrev 95))
-
-(use-package yasnippet
-  :demand t
-  :config
-  (add-to-list 'yas-snippet-dirs
-               (expand-file-name "snippets" gsmlg-config-directory))
-  (yas-reload-all)
-  (add-hook 'prog-mode-hook #'gsmlg-enable-yasnippet)
-  (add-hook 'text-mode-hook #'gsmlg-enable-yasnippet))
 
 (provide 'gsmlg-completion)
 ;;; gsmlg-completion.el ends here

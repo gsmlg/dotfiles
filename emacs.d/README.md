@@ -59,7 +59,7 @@ message instead of falling back to package.el.
 
 - Minibuffer: Vertico, Orderless, Marginalia, Consult, Embark,
   embark-consult, savehist
-- In-buffer completion: Corfu, corfu-terminal, Cape, Yasnippet, standard CAPFs
+- In-buffer completion: Corfu, corfu-terminal, Cape, standard CAPFs
 - Language intelligence: built-in Eglot, Flymake, ElDoc, Xref, project.el
 - Formatting and debugging: Apheleia and lazy-loaded Dape
 - Version control: Magit, diff-hl, Transient, git-link, git-timemachine,

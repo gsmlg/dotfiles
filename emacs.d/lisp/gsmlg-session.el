@@ -11,7 +11,7 @@
 (defvar eshell-directory-name)
 (defvar nsm-settings-file)
 
-(defcustom gsmlg-desktop-save-enabled nil
+(defcustom gsmlg-desktop-save-enabled t
   "Whether interactive Emacs sessions should persist desktop state."
   :type 'boolean
   :group 'gsmlg)
@@ -62,7 +62,9 @@ option."
       desktop-path
       (list desktop-dirname)
       desktop-base-file-name "desktop.el"
+      desktop-save t
       desktop-files-not-to-save "\\`/[^/:]+:"
+      desktop-restore-frames t
       recentf-auto-cleanup 'never
       recentf-exclude '(gsmlg-recentf-remote-p))
 
@@ -87,10 +89,13 @@ option."
 (recentf-mode 1)
 
 (defun gsmlg-session-apply-desktop-policy ()
-  "Enable desktop persistence after local overrides when explicitly requested."
+  "Enable and restore desktop state after applying local overrides."
   (when (and gsmlg-desktop-save-enabled
              (not noninteractive))
-    (desktop-save-mode 1)))
+    (desktop-save-mode 1)
+    ;; Desktop's built-in `after-init-hook' has already run by the time this
+    ;; startup policy applies, so restore the configured desktop explicitly.
+    (desktop-read desktop-dirname)))
 
 (add-hook 'emacs-startup-hook #'gsmlg-session-apply-desktop-policy 85)
 

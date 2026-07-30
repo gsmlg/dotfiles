@@ -235,8 +235,10 @@ process as its own TRAMP safety workaround.
 ## Sessions, servers, and daemons
 
 savehist, save-place, recentf, bookmarks, and the project list persist under
-the XDG state root. Desktop persistence is off by default and controlled by
-`gsmlg-desktop-save-enabled`; its default filter excludes remote files.
+the XDG state root. Desktop persistence is on by default, restores graphical
+frame size, position, and window layout, saves without an exit prompt, and is
+controlled by `gsmlg-desktop-save-enabled`; its default filter excludes remote
+files.
 
 Normal startup does not call `server-start`. Use `M-x gsmlg-server-start` or
 set `gsmlg-server-autostart`/`GSMLG_EMACS_SERVER=1` for an interactive

@@ -146,12 +146,23 @@
   "The startup-time desktop policy should honor a late local override."
   (let ((noninteractive nil)
         (gsmlg-desktop-save-enabled t)
-        enabled)
+        enabled
+        restored-directory)
     (cl-letf (((symbol-function #'desktop-save-mode)
                (lambda (argument)
-                 (setq enabled argument))))
+                 (setq enabled argument)))
+              ((symbol-function #'desktop-read)
+               (lambda (directory)
+                 (setq restored-directory directory))))
       (gsmlg-session-apply-desktop-policy))
-    (should (= enabled 1))))
+    (should (= enabled 1))
+    (should (equal restored-directory desktop-dirname))))
+
+(ert-deftest gsmlg-smoke-desktop-restores-frames-by-default ()
+  "Desktop persistence should restore frame size, position, and layout."
+  (should gsmlg-desktop-save-enabled)
+  (should (eq desktop-save t))
+  (should desktop-restore-frames))
 
 (ert-deftest gsmlg-smoke-lock-file-is-present ()
   "The committed Elpaca lock file should be configured and readable."

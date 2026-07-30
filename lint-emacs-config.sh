@@ -14,6 +14,8 @@ else
   owns_test_root=1
 fi
 
+xdg_data_home="${GSMLG_EMACS_TEST_DATA_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}}"
+
 cleanup() {
   if [[ "$owns_test_root" -eq 1 ]] &&
      [[ "$test_root" == /tmp/gsmlg-emacs-lint.* ]]; then
@@ -24,7 +26,7 @@ trap cleanup EXIT
 
 if [[ "${GSMLG_EMACS_LINT_SKIP_STARTUP:-0}" != "1" ]]; then
   GSMLG_EMACS_TEST_ROOT="$test_root" \
-    GSMLG_EMACS_TEST_DATA_HOME="${GSMLG_EMACS_TEST_DATA_HOME:-$test_root/data}" \
+    GSMLG_EMACS_TEST_DATA_HOME="$xdg_data_home" \
     GSMLG_EMACS_STARTUP_MODE=reuse \
     EMACS="$emacs" \
     "$repo_root/test-emacs-startup.sh"
@@ -32,7 +34,6 @@ fi
 
 test_home="$test_root/home"
 xdg_config_home="$test_root/config"
-xdg_data_home="${GSMLG_EMACS_TEST_DATA_HOME:-$test_root/data}"
 xdg_cache_home="$test_root/cache"
 xdg_state_home="$test_root/state"
 xdg_runtime_dir="$test_root/runtime"

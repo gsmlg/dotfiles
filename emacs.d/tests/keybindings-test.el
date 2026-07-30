@@ -126,6 +126,24 @@
   (should (keymapp (lookup-key global-map (key-parse "<f1>"))))
   (should (eq (key-binding (key-parse "<f1> K")) #'find-function-on-key)))
 
+(ert-deftest gsmlg-macos-modifier-profiles-support-ns-and-mac-builds ()
+  "Both macOS builds receive the requested Command and Option mappings."
+  (let ((system-type 'darwin)
+        (mac-command-modifier 'super)
+        (mac-option-modifier 'meta)
+        (ns-command-modifier 'super)
+        (ns-option-modifier 'meta))
+    (gsmlg-mac-osx-remap-command)
+    (should (eq mac-command-modifier 'meta))
+    (should (eq mac-option-modifier 'none))
+    (should (eq ns-command-modifier 'meta))
+    (should (eq ns-option-modifier 'none))
+    (gsmlg-mac-osx-unremap-command)
+    (should (eq mac-command-modifier 'super))
+    (should (eq mac-option-modifier 'meta))
+    (should (eq ns-command-modifier 'super))
+    (should (eq ns-option-modifier 'meta))))
+
 (ert-deftest gsmlg-vertico-preserves-kill-ring-navigation-intent ()
   "The replacement chooser retains quit and item navigation keys."
   (let ((vertico-map (make-sparse-keymap)))

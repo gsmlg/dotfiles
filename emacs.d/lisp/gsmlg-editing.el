@@ -233,17 +233,27 @@ otherwise be blank."
   (with-eval-after-load 'nxml-mode
     (keymap-unset nxml-mode-map key t)))
 
-(defvar mac-command-modifier)
-(defvar mac-option-modifier)
+(defvar mac-command-modifier nil)
+(defvar mac-option-modifier nil)
+(defvar ns-command-modifier nil)
+(defvar ns-option-modifier nil)
+
+(defun gsmlg--set-macos-modifiers (command option)
+  "Set the macOS Command and Option modifiers to COMMAND and OPTION."
+  (when (boundp 'mac-command-modifier)
+    (setq mac-command-modifier command
+          mac-option-modifier option))
+  (when (boundp 'ns-command-modifier)
+    (setq ns-command-modifier command
+          ns-option-modifier option)))
 
 (defun gsmlg-mac-osx-remap-command ()
   "Use Command as Meta and install the Apple-keyboard macOS bindings."
   (interactive)
   (unless (eq system-type 'darwin)
     (user-error "This key remapping is only available on macOS"))
-  (setq mac-command-modifier 'meta
-        mac-option-modifier 'none
-        mouse-wheel-scroll-amount '(1 ((shift) . 5) ((control))))
+  (gsmlg--set-macos-modifiers 'meta 'none)
+  (setq mouse-wheel-scroll-amount '(1 ((shift) . 5) ((control))))
   (setq-default default-input-method "MacOSX")
   (gsmlg--bind-horizontal-wheel-events)
   (keymap-global-set "M-`" #'ns-next-frame)
@@ -257,9 +267,8 @@ otherwise be blank."
   (interactive)
   (unless (eq system-type 'darwin)
     (user-error "This key remapping is only available on macOS"))
-  (setq mac-command-modifier 'super
-        mac-option-modifier 'meta
-        mouse-wheel-scroll-amount '(1 ((shift) . 5) ((control))))
+  (gsmlg--set-macos-modifiers 'super 'meta)
+  (setq mouse-wheel-scroll-amount '(1 ((shift) . 5) ((control))))
   (setq-default default-input-method "MacOSX")
   (gsmlg--bind-horizontal-wheel-events)
   (keymap-global-set "s-`" #'ns-next-frame)

@@ -267,7 +267,10 @@ preserved globally through move-dup, as recorded in the global editing table.
 The default macOS profile calls `gsmlg-mac-osx-remap-command`.  The optional
 PC-keyboard profile remains available through
 `gsmlg-mac-osx-unremap-command`.  Both old slash-style command names remain
-aliases.
+aliases.  The default profile maps the physical Command key to Emacs Meta and
+disables Option as an Emacs modifier.  The PC-keyboard profile maps Command to
+Super and Option to Meta.  Both GNU Emacs NS and Emacs Mac Port modifier
+variables are supported.
 
 | Profile and map | Key | Old command | New command | Status |
 |---|---|---|---|---|

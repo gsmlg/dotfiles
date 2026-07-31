@@ -97,6 +97,24 @@ if [[ "$startup_mode" == "fresh" ]]; then
   esac
 fi
 
+# Isolate Agent Editor MCP from any host listener on the default port 9876.
+pick_free_loopback_port() {
+  python3 - <<'PY'
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.bind(("127.0.0.1", 0))
+    print(sock.getsockname()[1])
+PY
+}
+
+agent_port="${EMACS_AGENT_PORT:-$(pick_free_loopback_port)}"
+if [[ ! "$agent_port" =~ ^[0-9]+$ ]] ||
+   ((agent_port < 1 || agent_port > 65535)); then
+  printf 'Unable to allocate a loopback Agent Editor MCP port\n' >&2
+  exit 2
+fi
+
 test_environment=(
   "HOME=$test_home"
   "XDG_CONFIG_HOME=$xdg_config_home"
@@ -106,6 +124,7 @@ test_environment=(
   "XDG_RUNTIME_DIR=$xdg_runtime_dir"
   "GSMLG_EMACS_LOCAL="
   "EMACS_AGENT_AUTOSTART="
+  "EMACS_AGENT_PORT=$agent_port"
 )
 
 printf '==> Installing the Emacs configuration into an isolated HOME\n'

@@ -2,36 +2,50 @@
 # These entries are defensive guards for accidental or legacy writes.
 /.cache/
 /.cask/
+/agent-editor/
 /auto-save-list/
 /backups/
+/desktop/
 /eln-cache/
 /elpa/
 /elpa-*/
 /elpaca/
 /eshell/
+/native-lisp/
 /server/
 /transient/
 /url/
 /var/
+# Elfeed feed *list* (elfeed.org) is tracked; runtime data must not be.
+/elfeed/
 
 /.bookmarks.el
 /.emacs.desktop
+/.emacs.desktop.lock
 /.mc-lists.el
 /.org-id-locations
 /.session
 /bookmarks
 /custom.el
+/helm-adaptive-history
 /history
 /network-security.data
 /org-clock-save.el
+/org-id-locations
 /places
+/projectile-bookmarks.eld
+/projectile.cache
 /projects
 /recentf
+/savehist
 /tramp
 /local.el
 
+# Legacy editor backup / autosave debris
 *.elc
 *.eln
 *~
+.~undo-tree~
+*.~undo-tree~
 .\#*
 \#*\#

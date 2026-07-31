@@ -22,7 +22,9 @@
 (defun gsmlg-restore-startup-gc ()
   "Restore conservative garbage collection settings after startup."
   (setq gc-cons-threshold gsmlg-gc-cons-threshold
-        gc-cons-percentage 0.1))
+        gc-cons-percentage 0.1)
+  (when (boundp 'gsmlg-early-init--gc-restored)
+    (setq gsmlg-early-init--gc-restored t)))
 
 (defun gsmlg-enable-line-numbers ()
   "Enable line numbers in a local programming buffer."

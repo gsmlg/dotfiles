@@ -2,6 +2,8 @@
 
 ;;; Commentary:
 ;; Configure Elfeed with the tracked Org feed list and XDG-backed data.
+;; Package declarations live in `gsmlg-app-packages' so Elpaca can realize the
+;; lock during core startup.
 
 ;;; Code:
 
@@ -52,19 +54,19 @@
         rmh-elfeed-org-files (list gsmlg-elfeed-feed-file)))
 
 (use-package elfeed
-  :ensure t
+  :ensure nil
   :commands elfeed
   :init
   (gsmlg-elfeed-apply-settings))
 
 (use-package elfeed-goodies
-  :ensure t
+  :ensure nil
   :after elfeed
   :config
   (elfeed-goodies/setup))
 
 (use-package elfeed-org
-  :ensure t
+  :ensure nil
   :after elfeed
   :config
   (gsmlg-elfeed-apply-settings)

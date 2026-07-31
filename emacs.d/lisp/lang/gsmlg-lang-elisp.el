@@ -6,10 +6,6 @@
 ;;; Code:
 
 (require 'elisp-mode)
-(require 'gsmlg-bootstrap)
-
-(use-package macrostep
-  :commands (macrostep-expand))
 
 (provide 'gsmlg-lang-elisp)
 ;;; gsmlg-lang-elisp.el ends here

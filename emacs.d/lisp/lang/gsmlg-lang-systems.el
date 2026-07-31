@@ -6,35 +6,27 @@
 ;;; Code:
 
 (require 'cc-mode)
-(require 'gsmlg-eglot)
-(require 'gsmlg-bootstrap)
+(require 'gsmlg-treesit)
 
-(defvar native-comp-jit-compilation-deny-list)
-
-(defconst gsmlg-go-mode-native-compilation-deny-regexp
-  "/go-mode\\.el\\'"
-  "Match upstream go-mode source files with undeclared optional client APIs.")
-
-(with-eval-after-load 'comp-run
-  ;; Upstream issue dominikh/go-mode.el#446 tracks the missing declarations.
-  (add-to-list 'native-comp-jit-compilation-deny-list
-               gsmlg-go-mode-native-compilation-deny-regexp))
-
+;;;###autoload
 (defun gsmlg-c-mode ()
   "Select C tree-sitter mode or built-in `c-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'c #'c-ts-mode #'c-mode))
 
+;;;###autoload
 (defun gsmlg-c++-mode ()
   "Select C++ tree-sitter mode or built-in `c++-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'cpp #'c++-ts-mode #'c++-mode))
 
+;;;###autoload
 (defun gsmlg-rust-mode ()
   "Select Rust tree-sitter mode or maintained `rust-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'rust #'rust-ts-mode #'rust-mode))
 
+;;;###autoload
 (defun gsmlg-go-mode ()
   "Select Go tree-sitter mode or maintained `go-mode'."
   (interactive)
@@ -53,19 +45,6 @@
     (gsmlg-auto-mode-prepend entry)))
 
 (gsmlg-lang-systems-register-auto-modes)
-
-(use-package rust-mode
-  :defer t)
-
-(use-package go-mode
-  :defer t)
-
-(use-package zig-mode
-  :ensure
-  (:type tar
-   :host github
-   :repo "ziglang/zig-mode")
-  :defer t)
 
 (provide 'gsmlg-lang-systems)
 ;;; gsmlg-lang-systems.el ends here

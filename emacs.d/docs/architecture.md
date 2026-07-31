@@ -26,6 +26,8 @@ emacs.d/
 ├── elpaca-lock.el
 ├── lisp/
 │   ├── gsmlg-bootstrap.el
+│   ├── gsmlg-package-lock.el
+│   ├── gsmlg-package-maintenance.el
 │   ├── gsmlg-paths.el
 │   ├── gsmlg-core.el
 │   ├── gsmlg-ui.el
@@ -34,7 +36,15 @@ emacs.d/
 │   ├── gsmlg-keybindings.el
 │   ├── gsmlg-project.el
 │   ├── gsmlg-vcs.el
+│   ├── gsmlg-language-registry.el
+│   ├── gsmlg-language-tools.el
+│   ├── gsmlg-treesit.el
 │   ├── gsmlg-eglot.el
+│   ├── gsmlg-format.el
+│   ├── gsmlg-debug.el
+│   ├── gsmlg-lang-packages.el
+│   ├── gsmlg-app-packages.el
+│   ├── gsmlg-apps.el
 │   ├── gsmlg-tramp.el
 │   ├── gsmlg-session.el
 │   ├── gsmlg-org.el
@@ -66,7 +76,11 @@ recursively.
 initialization:
 
 - disables package.el activation;
-- temporarily relaxes garbage collection;
+- temporarily raises garbage collection thresholds and records the prior
+  values;
+- installs GC restore insurance on `after-init-hook`, `emacs-startup-hook`,
+  `kill-emacs-hook`, `debugger-mode-hook`, and a short idle timer so an aborted
+  startup cannot leave GC nearly disabled;
 - inhibits implied frame resizing;
 - suppresses startup UI;
 - disables menu, tool, and scroll bars without assuming a GUI frame;
@@ -77,28 +91,44 @@ It does not install packages or configure applications or languages.
 ### Orchestration
 
 `init.el` first rejects Emacs versions older than 30.2, adds the three explicit
-load paths, and requires modules in dependency order:
+load paths, and requires modules in two layers:
 
 ```text
-paths -> bootstrap
-      -> core -> session -> UI -> completion -> editing
-      -> TRAMP -> project -> VCS -> Eglot
-      -> language dispatch modules
-      -> Org -> Elfeed -> Agent Editor MCP integration
-      -> package phase boundary -> keybindings
-      -> XDG custom file -> external local override
+Core (sync require):
+  paths -> bootstrap -> package-lock
+       -> core -> session -> UI -> completion -> editing
+       -> TRAMP -> project -> VCS
+       -> language-registry -> language-tools -> treesit
+       -> Eglot -> format -> language package declarations
+       -> application package declarations
+       -> apps (autoload/hook registration only)
+       -> package phase boundary -> keybindings
+       -> XDG custom file -> external local override
+
+Application (deferred by gsmlg-apps):
+  Org, Elfeed, Agent Editor MCP, Dape (gsmlg-debug),
+  language dispatch modules (gsmlg-lang-*)
 ```
 
+`gsmlg-package-maintenance` is never required on this path; it loads only when
+`M-x gsmlg-elpaca-update-package` runs.
+
 The orchestrator does not contain application settings. Garbage collection is
-restored from `emacs-startup-hook`. The XDG-backed Customize file is loaded
-when readable, followed by the optional local file as the final override.
+restored from `emacs-startup-hook` (with early-init insurance as backup). The
+XDG-backed Customize file is loaded when readable, followed by the optional
+local file as the final override.
 
 ### Package bootstrap
 
 `gsmlg-bootstrap.el` pins Elpaca itself to revision
-`6530ffa73b18ccee858e7c471415ab7e0c0d8ce1`. Elpaca repositories and builds
-live below the XDG data directory. Emacs 30's built-in `use-package` is
-integrated through `elpaca-use-package`.
+`6530ffa73b18ccee858e7c471415ab7e0c0d8ce1`, installs it under the XDG data
+directory when missing, and enables Emacs 30's built-in `use-package` through
+`elpaca-use-package`. Queue failure detection and `gsmlg-bootstrap-wait` live
+here.
+
+`gsmlg-package-lock.el` validates `elpaca-lock.el`, verifies immutable archive
+revisions, and owns `gsmlg-elpaca-write-lock-file`.
+`gsmlg-package-maintenance.el` owns source updates and rebuilds.
 
 `elpaca-lock.el` is committed configuration. It supplies exact recipes and
 source revisions for the package graph. Most packages use Git sources.
@@ -129,7 +159,9 @@ and commands are asserted by the keybinding module.
 | Module | Responsibility |
 | --- | --- |
 | `gsmlg-paths` | XDG directories, path helpers, custom file, optional local file |
-| `gsmlg-bootstrap` | pinned Elpaca bootstrap, use-package integration, lock writing |
+| `gsmlg-bootstrap` | pinned Elpaca bootstrap, use-package integration, queue wait |
+| `gsmlg-package-lock` | lock read/validate/write and archive revision verification |
+| `gsmlg-package-maintenance` | explicit package update/rebuild workflow (not on startup) |
 | `gsmlg-core` | built-in editing defaults, UTF-8, EditorConfig, which-key, startup GC |
 | `gsmlg-session` | recent files, history, places, bookmarks, desktop policy, explicit server control |
 | `gsmlg-ui` | Duskmoon Moonlight, optional Nerd Font glyphs, mood-line-style left/right native mode line (not the mood-line package), and file breadcrumb header |
@@ -137,13 +169,49 @@ and commands are asserted by the keybinding module.
 | `gsmlg-editing` | editing commands, Paredit behavior, vundo and editing packages, macOS remaps |
 | `gsmlg-keybindings` | prefix maps, compatibility wrappers, machine-readable key contract |
 | `gsmlg-project` | project.el, worktree roots, Consult search, envrc, project-local executables |
-| `gsmlg-vcs` | Magit, diff-hl Transient, Git links/history/modes and line commit popup |
-| `gsmlg-eglot` | Eglot server selection, Flymake, formatting, Dape, tree-sitter helpers |
+| `gsmlg-vcs` | Magit (deferred package), diff-hl Transient, Git links/history/modes and line commit popup |
+| `gsmlg-language-registry` | declarative SSOT for modes, servers, treesit, format, and debug metadata |
+| `gsmlg-language-tools` | executable discovery and project/remote command resolution |
+| `gsmlg-treesit` | grammar readiness, mode selection, reports, explicit install |
+| `gsmlg-eglot` | Eglot server programs, guarded startup, Flymake integration |
+| `gsmlg-format` | Apheleia / Eglot format dispatch |
+| `gsmlg-debug` | Dape (application-deferred) |
+| `gsmlg-lang-packages` | Elpaca declarations for language modes without loading dispatch |
+| `gsmlg-app-packages` | Elpaca declarations for Org/Elfeed/Dape without loading config |
+| `gsmlg-apps` | autoloads, file associations, and hooks for deferred application modules |
 | `gsmlg-tramp` | compute-near-data process helpers and remote state policy |
 | `gsmlg-org` | agenda, capture, TODO, clock, Babel, Pomodoro and Org presentation |
 | `gsmlg-elfeed` | tracked feed source and XDG-backed Elfeed database |
-| `gsmlg-agent` | project-optional Agent Editor MCP lifecycle, port, autostart and XDG state |
+| `gsmlg-agent` | Agent Editor MCP state machine, reconcile, and thin server sensors |
 | `gsmlg-lang-*` | non-overlapping file dispatch and tree-sitter/classic fallbacks |
+
+Magit remains in `gsmlg-vcs` with the lightweight VCS UI (diff-hl and friends)
+because architecture treats VCS as core. Magit's package load stays deferred
+via `use-package`. Dape is application-deferred through `gsmlg-debug`.
+
+## Application deferral
+
+`gsmlg-apps` registers:
+
+- `with-eval-after-load` for Org and Elfeed configuration modules;
+- autoloads for Agent commands and Dape;
+- language dispatcher autoloads plus `auto-mode-alist` entries;
+- an interactive `after-init` load of `gsmlg-agent` so server lifecycle sensors
+  exist before `gsmlg-server-start-maybe`.
+
+Batch mode never loads Agent Editor MCP through that hook.
+
+## Agent Editor MCP lifecycle
+
+`gsmlg-agent` owns an explicit state machine:
+
+`disabled` → `available` → `starting` → `running` → `stopping` → (`available`|`failed`)
+
+`gsmlg-agent-reconcile` compares desired state (`server` owned and autostart
+enabled) with actual listener state and performs the single transition. Server
+advice and hooks only call reconcile. Reload reuses the same idempotent
+installer; unload removes advice/hooks and stops a running listener. Port
+contention or start failure enters `failed` without aborting Emacs.
 
 ## XDG storage model
 
@@ -180,15 +248,16 @@ Negative server lookups are cached for automatic hooks, invalidated when
 envrc activates, and bypassed by a manual
 `M-x gsmlg-eglot-ensure-maybe`.
 
-Eglot is the only LSP client. It integrates with Flymake, ElDoc, Xref,
-project.el, and Corfu through built-in APIs. `gsmlg-eglot-ensure-maybe`
-requires a supported mode, a current project, and an available server. Missing
-servers are cached per mode/project to avoid repeated prompts. Emacs never
-installs a server.
+Eglot is the only LSP client. Capability metadata comes from
+`gsmlg-language-registry`. Executable discovery lives in
+`gsmlg-language-tools`. `gsmlg-eglot-ensure-maybe` requires a supported mode, a
+current project, and an available server. Missing servers are cached per
+mode/project to avoid repeated prompts. Emacs never installs a server.
 
-Apheleia orchestrates external formatters. `gsmlg-format-buffer` uses an
-available Apheleia formatter, then active Eglot as a fallback. The
-configuration does not enable competing Apheleia and Eglot save hooks.
+Apheleia orchestrates external formatters through `gsmlg-format`.
+`gsmlg-format-buffer` uses an available Apheleia formatter, then active Eglot
+as a fallback. The configuration does not enable competing Apheleia and Eglot
+save hooks.
 
 Tree-sitter grammars are selected only when `treesit-ready-p` succeeds. A
 maintained classic mode remains the fallback. `M-x gsmlg-treesit-report`

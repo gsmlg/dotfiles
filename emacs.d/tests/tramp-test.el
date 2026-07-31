@@ -8,6 +8,7 @@
 (require 'test-helper)
 (require 'gsmlg-tramp)
 (require 'gsmlg-eglot)
+(require 'gsmlg-format)
 (require 'gsmlg-project)
 
 (defvar apheleia-mode-alist)

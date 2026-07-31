@@ -40,6 +40,8 @@ chmod 700 "$xdg_runtime_dir"
 features=(
   gsmlg-paths
   gsmlg-bootstrap
+  gsmlg-package-lock
+  gsmlg-package-maintenance
   gsmlg-core
   gsmlg-ui
   gsmlg-completion
@@ -47,7 +49,15 @@ features=(
   gsmlg-keybindings
   gsmlg-project
   gsmlg-vcs
+  gsmlg-language-registry
+  gsmlg-language-tools
+  gsmlg-treesit
   gsmlg-eglot
+  gsmlg-format
+  gsmlg-debug
+  gsmlg-lang-packages
+  gsmlg-app-packages
+  gsmlg-apps
   gsmlg-tramp
   gsmlg-session
   gsmlg-org

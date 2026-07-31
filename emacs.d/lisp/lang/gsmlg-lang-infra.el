@@ -6,14 +6,15 @@
 
 ;;; Code:
 
-(require 'gsmlg-eglot)
-(require 'gsmlg-bootstrap)
+(require 'gsmlg-treesit)
 
+;;;###autoload
 (defun gsmlg-yaml-mode ()
   "Select YAML tree-sitter mode or maintained `yaml-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'yaml #'yaml-ts-mode #'yaml-mode))
 
+;;;###autoload
 (defun gsmlg-toml-mode ()
   "Select TOML tree-sitter mode or built-in `conf-toml-mode'."
   (interactive)
@@ -35,25 +36,6 @@
     (gsmlg-auto-mode-prepend entry)))
 
 (gsmlg-lang-infra-register-auto-modes)
-
-(use-package nix-mode
-  :ensure
-  (:host github
-   :repo "NixOS/nix-mode"
-   :files (:defaults (:exclude "nix-c?mpany.el" "nix-mode-mmm.el")))
-  :defer t)
-
-(use-package yaml-mode
-  :defer t)
-
-(use-package dockerfile-mode
-  :defer t)
-
-(use-package terraform-mode
-  :defer t)
-
-(use-package markdown-mode
-  :defer t)
 
 (provide 'gsmlg-lang-infra)
 ;;; gsmlg-lang-infra.el ends here

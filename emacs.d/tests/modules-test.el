@@ -6,13 +6,15 @@
 ;;; Code:
 
 (require 'test-helper)
+(require 'gsmlg-package-maintenance)
 
 (declare-function zlib-decompress-region "zlib"
                   (start end &optional allow-partial))
 
-(defconst gsmlg-test-required-features
+(defconst gsmlg-test-core-features
   '(gsmlg-paths
     gsmlg-bootstrap
+    gsmlg-package-lock
     gsmlg-core
     gsmlg-ui
     gsmlg-completion
@@ -20,22 +22,72 @@
     gsmlg-keybindings
     gsmlg-project
     gsmlg-vcs
+    gsmlg-language-registry
+    gsmlg-language-tools
+    gsmlg-treesit
     gsmlg-eglot
+    gsmlg-format
+    gsmlg-lang-packages
+    gsmlg-app-packages
+    gsmlg-apps
     gsmlg-tramp
-    gsmlg-session
-    gsmlg-org
+    gsmlg-session)
+  "Features every warm core startup must provide.")
+
+(defconst gsmlg-test-application-features
+  '(gsmlg-org
     gsmlg-elfeed
     gsmlg-agent
+    gsmlg-debug
     gsmlg-lang-elisp
     gsmlg-lang-beam
     gsmlg-lang-web
     gsmlg-lang-systems
     gsmlg-lang-scripting
     gsmlg-lang-infra)
-  "Features every warm startup must provide.")
+  "Application features deferred from the core startup path.")
+
+(defconst gsmlg-test-required-features
+  (append gsmlg-test-core-features
+          gsmlg-test-application-features
+          '(gsmlg-package-maintenance))
+  "Features every module must remain requireable.")
+
+(ert-deftest gsmlg-modules-core-are-loaded-at-startup ()
+  "Core features should already be present after orchestrated startup."
+  (dolist (feature gsmlg-test-core-features)
+    (should (featurep feature))))
+
+(ert-deftest gsmlg-modules-application-are-deferred-from-init ()
+  "Application modules must not be synchronously required by init.el."
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name "init.el" gsmlg-config-directory))
+    (dolist (feature gsmlg-test-application-features)
+      (goto-char (point-min))
+      (should-not
+       (re-search-forward
+        (format "(require '%s)" (regexp-quote (symbol-name feature)))
+        nil t)))))
+
+(ert-deftest gsmlg-modules-maintenance-is-not-on-startup-path ()
+  "Package maintenance must stay off the normal startup require graph."
+  (dolist (file (list (expand-file-name "init.el" gsmlg-config-directory)
+                      (expand-file-name "lisp/gsmlg-bootstrap.el"
+                                        gsmlg-config-directory)
+                      (expand-file-name "lisp/gsmlg-package-lock.el"
+                                        gsmlg-config-directory)
+                      (expand-file-name "lisp/gsmlg-apps.el"
+                                        gsmlg-config-directory)))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (goto-char (point-min))
+      (should-not
+       (re-search-forward
+        "(require 'gsmlg-package-maintenance)"
+        nil t)))))
 
 (ert-deftest gsmlg-modules-can-be-required ()
-  "Every first-party feature should be present after orchestrated startup."
+  "Every first-party feature should remain requireable."
   (dolist (feature gsmlg-test-required-features)
     (should (require feature nil t))))
 

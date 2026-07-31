@@ -6,40 +6,46 @@
 
 ;;; Code:
 
-(require 'gsmlg-eglot)
-(require 'gsmlg-bootstrap)
+(require 'gsmlg-treesit)
 
+;;;###autoload
 (defun gsmlg-javascript-mode ()
   "Select JavaScript tree-sitter mode or built-in `js-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'javascript #'js-ts-mode #'js-mode))
 
+;;;###autoload
 (defun gsmlg-jsx-mode ()
   "Select JSX-capable tree-sitter mode or maintained `web-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'tsx #'tsx-ts-mode #'web-mode))
 
+;;;###autoload
 (defun gsmlg-typescript-mode ()
   "Select TypeScript tree-sitter mode or maintained `typescript-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback
    'typescript #'typescript-ts-mode #'typescript-mode))
 
+;;;###autoload
 (defun gsmlg-tsx-mode ()
   "Select TSX tree-sitter mode or maintained `web-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'tsx #'tsx-ts-mode #'web-mode))
 
+;;;###autoload
 (defun gsmlg-json-mode ()
   "Select JSON tree-sitter mode or built-in `js-json-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'json #'json-ts-mode #'js-json-mode))
 
+;;;###autoload
 (defun gsmlg-css-mode ()
   "Select CSS tree-sitter mode or built-in `css-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'css #'css-ts-mode #'css-mode))
 
+;;;###autoload
 (defun gsmlg-html-mode ()
   "Select HTML tree-sitter mode or maintained `web-mode'."
   (interactive)
@@ -59,12 +65,6 @@
     (gsmlg-auto-mode-prepend entry)))
 
 (gsmlg-lang-web-register-auto-modes)
-
-(use-package web-mode
-  :defer t)
-
-(use-package typescript-mode
-  :defer t)
 
 (provide 'gsmlg-lang-web)
 ;;; gsmlg-lang-web.el ends here

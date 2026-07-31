@@ -5,18 +5,21 @@
 
 ;;; Code:
 
-(require 'gsmlg-eglot)
+(require 'gsmlg-treesit)
 
+;;;###autoload
 (defun gsmlg-python-mode ()
   "Select Python tree-sitter mode or built-in `python-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'python #'python-ts-mode #'python-mode))
 
+;;;###autoload
 (defun gsmlg-ruby-mode ()
   "Select Ruby tree-sitter mode or built-in `ruby-mode'."
   (interactive)
   (gsmlg-treesit-or-fallback 'ruby #'ruby-ts-mode #'ruby-mode))
 
+;;;###autoload
 (defun gsmlg-shell-mode ()
   "Select Bash tree-sitter mode or built-in `sh-mode'."
   (interactive)

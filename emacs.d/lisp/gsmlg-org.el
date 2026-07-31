@@ -443,14 +443,16 @@ This command retains the entrypoint used by the user's Alfred workflow."
   (gsmlg-org-configure-keys-and-speed-commands)
   (gsmlg-org-configure-babel))
 
+;; org-pomodoro and org-modern are declared in gsmlg-app-packages for Elpaca
+;; queueing; configure them when this application module loads.
 (use-package org-pomodoro
-  :ensure t
+  :ensure nil
   :commands org-pomodoro
   :custom
   (org-pomodoro-keep-killed-pomodoro-time t))
 
 (use-package org-modern
-  :ensure t
+  :ensure nil
   :hook (org-mode . org-modern-mode))
 
 (provide 'gsmlg-org)

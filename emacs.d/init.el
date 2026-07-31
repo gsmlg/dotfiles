@@ -1,8 +1,9 @@
 ;;; init.el --- GSMLG Emacs configuration orchestrator -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Load responsibility-based modules in explicit dependency order.  Package
-;; installation and mutable paths are owned by their dedicated modules.
+;; Load responsibility-based modules in explicit dependency order.  Core
+;; modules are required synchronously.  Application modules are registered by
+;; `gsmlg-apps' and activate through autoloads, hooks, or explicit commands.
 
 ;;; Code:
 
@@ -20,6 +21,7 @@
 
 (require 'gsmlg-paths)
 (require 'gsmlg-bootstrap)
+(require 'gsmlg-package-lock)
 
 (require 'gsmlg-core)
 (require 'gsmlg-session)
@@ -29,28 +31,23 @@
 (require 'gsmlg-tramp)
 (require 'gsmlg-project)
 (require 'gsmlg-vcs)
+(require 'gsmlg-language-registry)
+(require 'gsmlg-language-tools)
+(require 'gsmlg-treesit)
 (require 'gsmlg-eglot)
+(require 'gsmlg-format)
+(require 'gsmlg-lang-packages)
+(require 'gsmlg-app-packages)
 
-(require 'gsmlg-lang-elisp)
-(require 'gsmlg-lang-beam)
-(require 'gsmlg-lang-web)
-(require 'gsmlg-lang-systems)
-(require 'gsmlg-lang-scripting)
-(require 'gsmlg-lang-infra)
-
-(require 'gsmlg-org)
-(require 'gsmlg-elfeed)
-(require 'gsmlg-agent)
+;; Application modules (Org, Elfeed, Agent, Dape, language dispatch) register
+;; autoloads and hooks here instead of loading on every startup.
+(require 'gsmlg-apps)
 
 ;; Complete the configuration package phase before installing bindings that
 ;; assert package keymaps and commands.
 (gsmlg-bootstrap-wait)
+(gsmlg-package-lock-install-archive-ref-method)
 (require 'gsmlg-keybindings)
-(gsmlg-lang-beam-register-auto-modes)
-(gsmlg-lang-web-register-auto-modes)
-(gsmlg-lang-systems-register-auto-modes)
-(gsmlg-lang-scripting-register-auto-modes)
-(gsmlg-lang-infra-register-auto-modes)
 
 (when (file-readable-p custom-file)
   (load custom-file nil 'nomessage))

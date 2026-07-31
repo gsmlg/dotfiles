@@ -320,6 +320,12 @@ Use PROTOCOL-VERSION or `2025-11-25' for non-initialize requests."
                  (response
                   (emacs-agent-protocol-handle-http-request request)))
             (should (= (emacs-agent-protocol-response-status response) 202))
+            (should (eq (emacs-agent-request-state pending) 'pending))
+            (let ((deadline (+ (float-time) 1)))
+              (while (and
+                      (eq (emacs-agent-request-state pending) 'pending)
+                      (< (float-time) deadline))
+                (accept-process-output nil 0.01)))
             (should (eq (emacs-agent-request-state pending) 'cancelled))))
       (emacs-agent-request-cancel pending))))
 

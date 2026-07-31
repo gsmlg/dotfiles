@@ -92,7 +92,9 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
            (setf (emacs-agent-session-initialized session) t)
            (emacs-agent-protocol-response-create :status 202 :body nil))
           ("notifications/cancelled"
-           (emacs-agent-request-cancel-id
+           (run-at-time
+            0 nil
+            #'emacs-agent-request-cancel-id
             (alist-get 'requestId params)
             (emacs-agent-session-protocol-version session)
             (emacs-agent-session-id session))

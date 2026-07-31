@@ -10,6 +10,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'etags)
 (require 'imenu)
 (require 'seq)
 (require 'subr-x)
@@ -20,6 +21,7 @@
 (require 'emacs-agent-edit)
 (require 'emacs-agent-policy)
 (require 'emacs-agent-project)
+(require 'emacs-agent-request)
 (require 'emacs-agent-runtime)
 (require 'emacs-agent-transaction)
 
@@ -50,6 +52,14 @@ its returned value before previewing or applying it."
   :type 'integer
   :group 'emacs-agent-editor)
 
+(defcustom emacs-agent-semantic-xref-timeout 30
+  "Maximum seconds to wait for one synchronous Xref provider call.
+Emacs can enforce this deadline while a provider waits for input, file I/O,
+or subprocess output.  Providers that never yield to the Emacs event loop
+cannot be preempted safely."
+  :type 'number
+  :group 'emacs-agent-editor)
+
 (defvar emacs-agent-semantic--previews (make-hash-table :test #'equal)
   "Frozen semantic mutation plans indexed by opaque preview IDs.")
 
@@ -75,6 +85,53 @@ its returned value before previewing or applying it."
    :capability capability
    :reason (or reason 'no_native_backend)))
 
+(defun emacs-agent-semantic--call-xref
+    (capability function &optional request)
+  "Call Xref provider FUNCTION non-interactively for CAPABILITY.
+REQUEST, when non-nil, makes explicit MCP cancellation interrupt providers
+that are waiting in the Emacs event loop."
+  (let* ((abort-tag (make-symbol "emacs-agent-xref-abort"))
+         (active t)
+         (cancel-function
+          (when request
+            (lambda ()
+              (when active
+                (throw abort-tag 'cancelled))))))
+    (when cancel-function
+      (emacs-agent-request-on-cancel request cancel-function))
+    (unwind-protect
+        (let ((outcome
+               (catch abort-tag
+                 (with-timeout
+                     (emacs-agent-semantic-xref-timeout
+                      (throw abort-tag 'timed-out))
+                   (list
+                    'completed
+                    (condition-case error-data
+                        (let ((inhibit-interaction t))
+                          (funcall function))
+                      ((error quit)
+                       (emacs-agent-semantic--unavailable
+                        capability
+                        (error-message-string error-data)))))))))
+          (pcase outcome
+            ('cancelled
+             (emacs-agent-signal
+              'operation_cancelled :capability capability))
+            ('timed-out
+             (emacs-agent-signal
+              'operation_timeout
+              :capability capability
+              :timeout_seconds emacs-agent-semantic-xref-timeout))
+            (`(completed ,value) value)
+            (_
+             (emacs-agent-semantic--unavailable
+              capability 'invalid_provider_result))))
+      (setq active nil)
+      (when cancel-function
+        (emacs-agent-request-remove-cancel-function
+         request cancel-function)))))
+
 (defun emacs-agent-semantic--json-boolean (value)
   "Return JSON-compatible true or false for VALUE."
   (if value t :false))
@@ -97,14 +154,53 @@ its returned value before previewing or applying it."
    (imenu-generic-expression "generic")
    (t nil)))
 
-(defun emacs-agent-semantic--xref-provider ()
-  "Return the active xref provider name, or nil."
-  (let ((backend
-         (condition-case nil
-             (xref-find-backend)
-           (error nil))))
-    (and backend
-         (emacs-agent-semantic--provider-name backend "configured"))))
+(defun emacs-agent-semantic--etags-table-candidates ()
+  "Return explicitly configured etags table candidates."
+  (delete-dups
+   (append
+    (when (stringp tags-file-name)
+      (list tags-file-name))
+    (seq-filter #'stringp tags-table-list))))
+
+(defun emacs-agent-semantic--etags-table-ready-p (file)
+  "Return non-nil when FILE is a valid, non-interactive etags table."
+  (condition-case nil
+      (emacs-agent-semantic--call-xref
+       'xref
+       (lambda ()
+         (save-current-buffer
+           (tags-verify-table (tags-expand-table-name file)))))
+    (emacs-agent-error nil)))
+
+(defun emacs-agent-semantic--xref-backend-ready-p (backend)
+  "Return non-nil when BACKEND can run without interactive setup."
+  (and
+   backend
+   (or
+    (not (eq backend 'etags))
+    (seq-some
+     #'emacs-agent-semantic--etags-table-ready-p
+     (emacs-agent-semantic--etags-table-candidates)))))
+
+(defun emacs-agent-semantic--xref-runtime ()
+  "Return the active xref backend and non-interactive readiness."
+  (let* ((backend
+          (condition-case nil
+              (emacs-agent-semantic--call-xref
+               'xref #'xref-find-backend)
+            (emacs-agent-error nil)))
+         (provider
+          (and backend
+               (emacs-agent-semantic--provider-name
+                backend "configured")))
+         (ready
+          (emacs-agent-semantic--xref-backend-ready-p backend)))
+    `((backend_present
+       . ,(emacs-agent-semantic--json-boolean backend))
+      (available . ,(emacs-agent-semantic--json-boolean ready))
+      (noninteractive_ready
+       . ,(emacs-agent-semantic--json-boolean ready))
+      (provider . ,(or provider :false)))))
 
 (defun emacs-agent-semantic--eglot-runtime ()
   "Return deterministic Eglot provider capability metadata."
@@ -161,16 +257,24 @@ requests."
           ((bufferp buffer) (list buffer))
           ((listp buffer) buffer)
           (t (list (current-buffer)))))
-        imenu-provider xref-provider eglot-runtime)
+        imenu-provider xref-backend-provider xref-provider eglot-runtime)
     (dolist (candidate buffers)
       (when (buffer-live-p candidate)
         (with-current-buffer candidate
           (setq imenu-provider
                 (or imenu-provider
-                    (emacs-agent-semantic--imenu-provider))
-                xref-provider
-                (or xref-provider
-                    (emacs-agent-semantic--xref-provider)))
+                    (emacs-agent-semantic--imenu-provider)))
+          (let ((xref-runtime
+                 (emacs-agent-semantic--xref-runtime)))
+            (when
+                (eq (alist-get 'backend_present xref-runtime) t)
+              (setq xref-backend-provider
+                    (or xref-backend-provider
+                        (alist-get 'provider xref-runtime))))
+            (when (eq (alist-get 'available xref-runtime) t)
+              (setq xref-provider
+                    (or xref-provider
+                        (alist-get 'provider xref-runtime)))))
           (let ((runtime (emacs-agent-semantic--eglot-runtime)))
             (dolist (key '(available rename code_actions
                                      format_document format_range))
@@ -202,10 +306,19 @@ requests."
                      imenu-provider))
                 (provider . ,(or imenu-provider :false))))
             (xref
-             . ((available
+             . ((backend_present
+                 . ,(emacs-agent-semantic--json-boolean
+                     xref-backend-provider))
+                (available
                  . ,(emacs-agent-semantic--json-boolean
                      xref-provider))
-                (provider . ,(or xref-provider :false))))
+                (noninteractive_ready
+                 . ,(emacs-agent-semantic--json-boolean
+                     xref-provider))
+                (provider
+                 . ,(or xref-provider
+                        xref-backend-provider
+                        :false))))
             (eglot . ,eglot-runtime)
             (trusted_formatter
              . ((available
@@ -639,22 +752,28 @@ When RUNTIME is nil, clear all semantic runtime state."
                       (children . ,children))))))))))
     items)))
 
-(defun emacs-agent-semantic--xref-backend (capability)
-  "Return the current native xref backend for CAPABILITY."
-  (or (xref-find-backend)
-      (emacs-agent-semantic--unavailable capability)))
+(defun emacs-agent-semantic--xref-backend (capability &optional request)
+  "Return the current native xref backend for CAPABILITY and REQUEST."
+  (let ((backend
+         (emacs-agent-semantic--call-xref
+          capability #'xref-find-backend request)))
+    (if (emacs-agent-semantic--xref-backend-ready-p backend)
+        backend
+      (emacs-agent-semantic--unavailable
+       capability
+       (if backend 'no_noninteractive_backend 'no_native_backend)))))
 
 (defun emacs-agent-semantic--xref-identifier
-    (backend capability &optional explicit)
-  "Return EXPLICIT or an identifier from BACKEND for CAPABILITY."
+    (backend capability &optional explicit request)
+  "Return EXPLICIT or an identifier from BACKEND for CAPABILITY and REQUEST."
   (or (and (stringp explicit)
            (not (string-empty-p explicit))
            explicit)
-      (condition-case error-data
-          (xref-backend-identifier-at-point backend)
-        ((cl-no-applicable-method error)
-         (emacs-agent-semantic--unavailable
-          capability (error-message-string error-data))))
+      (emacs-agent-semantic--call-xref
+       capability
+       (lambda ()
+         (xref-backend-identifier-at-point backend))
+       request)
       (emacs-agent-semantic--unavailable capability 'no_identifier)))
 
 (defun emacs-agent-semantic--xref-location-source (location)
@@ -667,8 +786,9 @@ When RUNTIME is nil, clear all semantic runtime state."
       "disk"))
    (t "buffer")))
 
-(defun emacs-agent-semantic--xref-location-file (location)
-  "Return the local file represented by xref LOCATION, or nil."
+(defun emacs-agent-semantic--xref-location-file
+    (location capability request)
+  "Return the local file for xref LOCATION, CAPABILITY, and REQUEST."
   (cond
    ((and (fboundp 'xref-file-location-p)
          (xref-file-location-p location))
@@ -676,22 +796,28 @@ When RUNTIME is nil, clear all semantic runtime state."
    (t
     (when-let* ((marker
                  (condition-case nil
-                     (xref-location-marker location)
+                     (emacs-agent-semantic--call-xref
+                      capability
+                      (lambda () (xref-location-marker location))
+                      request)
                    (error nil)))
                 (buffer (and (markerp marker) (marker-buffer marker))))
       (buffer-file-name buffer)))))
 
 (defun emacs-agent-semantic--xref-item
-    (runtime context-target item identifier &optional relation project-only)
+    (runtime context-target item identifier capability request
+             &optional relation project-only)
   "Convert xref ITEM for IDENTIFIER in RUNTIME.
 
-CONTEXT-TARGET supplies optional explicit project metadata.  RELATION, when
-non-nil, describes the reference classification.  When PROJECT-ONLY is
+CONTEXT-TARGET supplies optional explicit project metadata.  CAPABILITY and
+REQUEST name the semantic operation and its cancellation context.  RELATION,
+when non-nil, describes the reference classification.  When PROJECT-ONLY is
 non-nil, discard results outside that explicit project."
   (catch 'excluded
     (let* ((location (xref-item-location item))
            (source (emacs-agent-semantic--xref-location-source location))
-           (file (or (emacs-agent-semantic--xref-location-file location)
+           (file (or (emacs-agent-semantic--xref-location-file
+                      location capability request)
                      (throw 'excluded nil)))
            (target
             (emacs-agent-semantic--external-target
@@ -708,7 +834,10 @@ non-nil, discard results outside that explicit project."
              (_ (emacs-agent-document-reconcile document))
              (marker
               (condition-case nil
-                  (xref-location-marker location)
+                  (emacs-agent-semantic--call-xref
+                   capability
+                   (lambda () (xref-location-marker location))
+                   request)
                 (error nil)))
              (buffer (and (markerp marker) (marker-buffer marker))))
         (unless (buffer-live-p buffer)
@@ -741,14 +870,16 @@ non-nil, discard results outside that explicit project."
                     . ,(emacs-agent-document-revision document))))))))))))
 
 (defun emacs-agent-semantic--xref-items
-    (runtime context-target items identifier &optional relation project-only)
+    (runtime context-target items identifier capability request
+             &optional relation project-only)
   "Convert xref ITEMS for IDENTIFIER in RUNTIME.
-CONTEXT-TARGET, RELATION, and PROJECT-ONLY are passed to the item converter."
+CONTEXT-TARGET, CAPABILITY, REQUEST, RELATION, and PROJECT-ONLY pass through."
   (delq nil
         (mapcar
          (lambda (item)
            (emacs-agent-semantic--xref-item
-            runtime context-target item identifier relation project-only))
+            runtime context-target item identifier capability
+            request relation project-only))
          items)))
 
 ;;;###autoload
@@ -770,10 +901,11 @@ CONTEXT-TARGET, RELATION, and PROJECT-ONLY are passed to the item converter."
 
 ;;;###autoload
 (defun emacs-agent-semantic-definition
-    (runtime target position &optional identifier)
+    (runtime target position &optional identifier request)
   "Return native xref definitions from TARGET at POSITION in RUNTIME.
 
-IDENTIFIER, when non-nil, overrides the identifier at POSITION."
+IDENTIFIER, when non-nil, overrides the identifier at POSITION.
+REQUEST supplies optional MCP cancellation state."
   (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document)))
@@ -783,29 +915,30 @@ IDENTIFIER, when non-nil, overrides the identifier at POSITION."
         (save-excursion
           (goto-char (emacs-agent-document-position document position))
           (let* ((backend
-                  (emacs-agent-semantic--xref-backend 'symbol_definition))
+                  (emacs-agent-semantic--xref-backend
+                   'symbol_definition request))
                  (identifier
                   (emacs-agent-semantic--xref-identifier
-                   backend 'symbol_definition identifier))
+                   backend 'symbol_definition identifier request))
                  (items
-                  (condition-case error-data
-                      (xref-backend-definitions backend identifier)
-                    ((cl-no-applicable-method error)
-                     (emacs-agent-semantic--unavailable
-                      'symbol_definition
-                      (error-message-string error-data))))))
+                  (emacs-agent-semantic--call-xref
+                   'symbol_definition
+                   (lambda ()
+                     (xref-backend-definitions backend identifier))
+                   request)))
             (emacs-agent-semantic--xref-items
-             runtime target items identifier "definition")))))))
+             runtime target items identifier
+             'symbol_definition request "definition")))))))
 
 ;;;###autoload
 (defun emacs-agent-semantic-references
-    (runtime target position &optional identifier)
+    (runtime target position &optional identifier request)
   "Return native xref references from TARGET at POSITION in RUNTIME.
 
 IDENTIFIER, when non-nil, overrides the identifier at POSITION.  Xref does not
 provide portable read/write classification or completeness guarantees, so
 results are explicitly marked as possibly incomplete and use the neutral
-`reference' relation."
+`reference' relation.  REQUEST supplies optional MCP cancellation state."
   (let* ((document (emacs-agent-document-open runtime target))
          (_ (emacs-agent-document-reconcile document))
          (buffer (emacs-agent-document-buffer document)))
@@ -815,33 +948,35 @@ results are explicitly marked as possibly incomplete and use the neutral
         (save-excursion
           (goto-char (emacs-agent-document-position document position))
           (let* ((backend
-                  (emacs-agent-semantic--xref-backend 'symbol_references))
+                  (emacs-agent-semantic--xref-backend
+                   'symbol_references request))
                  (identifier
                   (emacs-agent-semantic--xref-identifier
-                   backend 'symbol_references identifier))
+                   backend 'symbol_references identifier request))
                  (items
-                  (condition-case error-data
-                      (xref-backend-references backend identifier)
-                    ((cl-no-applicable-method error)
-                     (emacs-agent-semantic--unavailable
-                      'symbol_references
-                      (error-message-string error-data))))))
+                  (emacs-agent-semantic--call-xref
+                   'symbol_references
+                   (lambda ()
+                     (xref-backend-references backend identifier))
+                   request)))
             `((references
                . ,(emacs-agent-semantic--xref-items
-                   runtime target items identifier "reference"))
+                   runtime target items identifier
+                   'symbol_references request "reference"))
               (possibly_incomplete . t)
               (source . "xref"))))))))
 
 ;;;###autoload
 (defun emacs-agent-project-symbols
-    (runtime project-id path query &optional kind path-prefix limit)
+    (runtime project-id path query
+             &optional kind path-prefix limit request)
   "Search native xref symbols in RUNTIME for PROJECT-ID.
 PATH is the explicitly project-scoped backend anchor.
 
 QUERY is passed to the active xref backend.  KIND and PATH-PREFIX restrict the
 converted results, and LIMIT defaults to 100 and is capped at 500.  Xref does
 not expose portable completeness guarantees, so the result is marked possibly
-incomplete."
+incomplete.  REQUEST supplies optional MCP cancellation state."
   (let* ((_project (emacs-agent-project-get runtime project-id))
          (target
           (emacs-agent-project-resolve-target
@@ -854,17 +989,18 @@ incomplete."
       (emacs-agent-semantic--unavailable 'project_symbols 'invalid_query))
     (with-current-buffer buffer
       (let* ((backend
-              (emacs-agent-semantic--xref-backend 'project_symbols))
+              (emacs-agent-semantic--xref-backend
+               'project_symbols request))
              (items
-              (condition-case error-data
-                  (xref-backend-apropos backend query)
-                ((cl-no-applicable-method error)
-                 (emacs-agent-semantic--unavailable
-                  'project_symbols
-                  (error-message-string error-data)))))
+              (emacs-agent-semantic--call-xref
+               'project_symbols
+               (lambda ()
+                 (xref-backend-apropos backend query))
+               request))
              (symbols
               (emacs-agent-semantic--xref-items
-               runtime target items query "symbol" t))
+               runtime target items query
+               'project_symbols request "symbol" t))
              (filtered
               (seq-filter
                (lambda (symbol)

@@ -263,9 +263,17 @@ Every name below uses the `emacs_agent_` prefix on the wire.
 count, managed document count, protocols, supported tools, and runtime
 capabilities. It does not select or report a current project.
 
+Xref runtime metadata distinguishes `backend_present` from
+`noninteractive_ready` and `available`. Emacs' fallback `etags` backend is
+present even without a TAGS table, but it is advertised as unavailable until
+an explicitly configured table can be verified without prompting.
+
 Unsupported native language capabilities fail with
 `CAPABILITY_UNAVAILABLE`; text search is never presented as semantic rename
-or reference analysis.
+or reference analysis. Xref calls run with interactive input disabled and a
+server-side deadline controlled by `emacs-agent-semantic-xref-timeout`.
+Yielding providers honor MCP cancellation; providers that never yield to the
+Emacs event loop cannot be preempted safely.
 
 ## Document and edit contract
 

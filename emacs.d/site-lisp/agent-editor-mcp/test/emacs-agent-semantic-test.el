@@ -6,8 +6,25 @@
 ;;; Code:
 
 (require 'ert)
+(require 'etags)
 (require 'emacs-agent-project)
+(require 'emacs-agent-request)
 (require 'emacs-agent-semantic)
+
+(define-derived-mode emacs-agent-semantic-test-gfm-mode text-mode "GFM-Test"
+  "Minimal GFM-like mode used to exercise the default etags backend.")
+
+(defvar emacs-agent-semantic-xref-timeout)
+
+(defun emacs-agent-semantic-test--configure-no-tags-etags (document)
+  "Configure DOCUMENT like a GFM buffer with fallback etags and no TAGS."
+  (with-current-buffer (emacs-agent-document-buffer document)
+    (emacs-agent-semantic-test-gfm-mode)
+    (setq-local tags-file-name nil)
+    (setq-local tags-table-list nil)
+    (setq-local default-tags-table-function nil)
+    (setq-local xref-backend-functions
+                (list #'etags--xref-backend))))
 
 (cl-defmethod xref-backend-identifier-at-point
   ((_backend (eql emacs-agent-semantic-test-backend)))
@@ -46,6 +63,20 @@
       (xref-make-file-location
        (expand-file-name "sample.el" default-directory)
        1 7)))))
+
+(cl-defmethod xref-backend-definitions
+  ((_backend (eql emacs-agent-semantic-interaction-test-backend))
+   _identifier)
+  "Assert that Agent Editor disabled interactive provider behavior."
+  (unless inhibit-interaction
+    (error "Xref provider interaction was not inhibited"))
+  nil)
+
+(cl-defmethod xref-backend-definitions
+  ((_backend (eql emacs-agent-semantic-slow-test-backend)) _identifier)
+  "Wait long enough for the semantic provider deadline to expire."
+  (accept-process-output nil 1)
+  nil)
 
 (defmacro emacs-agent-semantic-test--with-runtime (&rest body)
   "Run BODY with a temporary ROOT and RUNTIME, then clean up."
@@ -187,6 +218,117 @@
           (eq (emacs-agent-error-code error-data)
               'capability_unavailable)))))))
 
+(ert-deftest emacs-agent-semantic-definition-rejects-etags-without-tags ()
+  "Definitions must fail before invoking unconfigured fallback etags."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (target
+            (emacs-agent-semantic-test--direct-target runtime path))
+           (document (emacs-agent-document-open runtime target))
+           provider-invoked)
+      (emacs-agent-semantic-test--configure-no-tags-etags document)
+      (cl-letf (((symbol-function 'xref-backend-definitions)
+                 (lambda (&rest _arguments)
+                   (setq provider-invoked t)
+                   (ert-fail "Unconfigured etags must not be invoked"))))
+        (condition-case error-data
+            (progn
+              (emacs-agent-semantic-definition
+               runtime target '((line . 1) (column . 2)) "Agent")
+              (ert-fail "Expected capability_unavailable"))
+          (emacs-agent-error
+           (should
+            (eq (emacs-agent-error-code error-data)
+                'capability_unavailable)))))
+      (should-not provider-invoked))))
+
+(ert-deftest emacs-agent-semantic-definition-inhibits-provider-interaction ()
+  "Definitions must invoke usable Xref providers non-interactively."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "sample.txt" root))
+           (_ (write-region "sample\n" nil path))
+           (target
+            (emacs-agent-semantic-test--direct-target runtime path))
+           (document (emacs-agent-document-open runtime target)))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (add-hook
+         'xref-backend-functions
+         (lambda () 'emacs-agent-semantic-interaction-test-backend)
+         nil t))
+      (should-not
+       (emacs-agent-semantic-definition
+       runtime target '((line . 1) (column . 1)) "sample")))))
+
+(ert-deftest emacs-agent-semantic-definition-enforces-provider-deadline ()
+  "Definitions must stop a yielding Xref provider at the server deadline."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "sample.txt" root))
+           (_ (write-region "sample\n" nil path))
+           (target
+            (emacs-agent-semantic-test--direct-target runtime path))
+           (document (emacs-agent-document-open runtime target))
+           (emacs-agent-semantic-xref-timeout 0.02)
+           (started-at (float-time)))
+      (with-current-buffer (emacs-agent-document-buffer document)
+        (add-hook
+         'xref-backend-functions
+         (lambda () 'emacs-agent-semantic-slow-test-backend)
+         nil t))
+      (condition-case error-data
+          (progn
+            (emacs-agent-semantic-definition
+             runtime target '((line . 1) (column . 1)) "sample")
+            (ert-fail "Expected operation_timeout"))
+        (emacs-agent-error
+         (should
+          (eq (emacs-agent-error-code error-data)
+              'operation_timeout))))
+      (should (< (- (float-time) started-at) 0.5)))))
+
+(ert-deftest emacs-agent-semantic-definition-honors-request-cancellation ()
+  "Definitions must stop a yielding provider when its request is cancelled."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "sample.txt" root))
+           (_ (write-region "sample\n" nil path))
+           (target
+            (emacs-agent-semantic-test--direct-target runtime path))
+           (document (emacs-agent-document-open runtime target))
+           (emacs-agent-semantic-xref-timeout 1)
+           (request
+            (emacs-agent-request-register
+             (emacs-agent-request-create
+              :id 77 :operation "emacs_agent_symbol_definition")))
+           (timer
+            (run-at-time 0.02 nil
+                         #'emacs-agent-request-cancel request))
+           (started-at (float-time)))
+      (unwind-protect
+          (progn
+            (with-current-buffer (emacs-agent-document-buffer document)
+              (add-hook
+               'xref-backend-functions
+               (lambda () 'emacs-agent-semantic-slow-test-backend)
+               nil t))
+            (condition-case error-data
+                (progn
+                  (emacs-agent-semantic-definition
+                   runtime target '((line . 1) (column . 1))
+                   "sample" request)
+                  (ert-fail "Expected operation_cancelled"))
+              (emacs-agent-error
+               (should
+                (eq (emacs-agent-error-code error-data)
+                    'operation_cancelled))))
+            (should (< (- (float-time) started-at) 0.5))
+            (should
+             (eq (emacs-agent-request-state request) 'cancelled))
+            (should-not (emacs-agent-request-find 77)))
+        (when (timerp timer)
+          (cancel-timer timer))
+        (when (eq (emacs-agent-request-state request) 'pending)
+          (emacs-agent-request-finish request 'completed))))))
+
 (ert-deftest emacs-agent-semantic-references-supports-direct-target ()
   (emacs-agent-semantic-test--with-runtime
     (let* ((path (expand-file-name "sample.el" root))
@@ -204,6 +346,31 @@
         (should (eq (alist-get 'possibly_incomplete result) t))
         (should (equal (alist-get 'path reference) (file-truename path)))
         (should (equal (alist-get 'relation reference) "reference"))))))
+
+(ert-deftest emacs-agent-semantic-references-reject-etags-without-tags ()
+  "References must fail before invoking unconfigured fallback etags."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (target
+            (emacs-agent-semantic-test--direct-target runtime path))
+           (document (emacs-agent-document-open runtime target))
+           provider-invoked)
+      (emacs-agent-semantic-test--configure-no-tags-etags document)
+      (cl-letf (((symbol-function 'xref-backend-references)
+                 (lambda (&rest _arguments)
+                   (setq provider-invoked t)
+                   (ert-fail "Unconfigured etags must not be invoked"))))
+        (condition-case error-data
+            (progn
+              (emacs-agent-semantic-references
+               runtime target '((line . 1) (column . 2)) "Agent")
+              (ert-fail "Expected capability_unavailable"))
+          (emacs-agent-error
+           (should
+            (eq (emacs-agent-error-code error-data)
+                'capability_unavailable)))))
+      (should-not provider-invoked))))
 
 (ert-deftest emacs-agent-semantic-references-preserve-explicit-project ()
   (emacs-agent-semantic-test--with-runtime
@@ -280,6 +447,34 @@
               (should
                (equal (alist-get 'path symbol) (file-truename path)))))
         (delete-directory other t)))))
+
+(ert-deftest emacs-agent-project-symbols-rejects-etags-without-tags ()
+  "Project symbols must fail before invoking unconfigured fallback etags."
+  (emacs-agent-semantic-test--with-runtime
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (project-id
+            (plist-get (emacs-agent-project-open runtime root) :project_id))
+           (target
+            (emacs-agent-semantic-test--project-target
+             runtime project-id "README.md"))
+           (document (emacs-agent-document-open runtime target))
+           provider-invoked)
+      (emacs-agent-semantic-test--configure-no-tags-etags document)
+      (cl-letf (((symbol-function 'xref-backend-apropos)
+                 (lambda (&rest _arguments)
+                   (setq provider-invoked t)
+                   (ert-fail "Unconfigured etags must not be invoked"))))
+        (condition-case error-data
+            (progn
+              (emacs-agent-project-symbols
+               runtime project-id "README.md" "Agent")
+              (ert-fail "Expected capability_unavailable"))
+          (emacs-agent-error
+           (should
+            (eq (emacs-agent-error-code error-data)
+                'capability_unavailable)))))
+      (should-not provider-invoked))))
 
 (ert-deftest emacs-agent-semantic-rename-direct-preview-is-runtime-scoped ()
   (emacs-agent-semantic-test--with-runtime
@@ -906,6 +1101,43 @@
           "emacs_agent_symbol_rename"
           "emacs_agent_code_actions"
           "emacs_agent_format_range"))))))
+
+(ert-deftest emacs-agent-semantic-runtime-capabilities-reject-etags-without-tags ()
+  "A README buffer must not advertise unusable fallback etags support."
+  (let ((root (make-temp-file "emacs-agent-semantic-gfm-" t)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq buffer-file-name (expand-file-name "README.md" root)
+                default-directory (file-name-as-directory root))
+          (emacs-agent-semantic-test-gfm-mode)
+          (setq-local tags-file-name nil)
+          (setq-local tags-table-list nil)
+          (setq-local default-tags-table-function nil)
+          (setq-local xref-backend-functions
+                      (list #'etags--xref-backend))
+          (let* ((report
+                  (emacs-agent-semantic-runtime-capabilities
+                   (current-buffer)))
+                 (providers (alist-get 'providers report))
+                 (xref (alist-get 'xref providers))
+                 (availability (alist-get 'tool_availability report)))
+            (should (eq (alist-get 'backend_present xref) t))
+            (should (equal (alist-get 'provider xref) "etags"))
+            (should (eq (alist-get 'noninteractive_ready xref) :false))
+            (should (eq (alist-get 'available xref) :false))
+            (dolist (tool '("emacs_agent_project_symbols"
+                            "emacs_agent_symbol_definition"
+                            "emacs_agent_symbol_references"))
+              (should
+               (eq
+                (alist-get
+                 'available
+                 (seq-find
+                  (lambda (entry)
+                    (equal (alist-get 'tool entry) tool))
+                  availability))
+                :false)))))
+      (delete-directory root t))))
 
 (ert-deftest emacs-agent-semantic-runtime-capabilities-do-not-query-eglot ()
   (with-temp-buffer

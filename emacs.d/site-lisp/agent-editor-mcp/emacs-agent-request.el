@@ -69,14 +69,23 @@ When supplied, also match PROTOCOL-VERSION and SESSION-ID."
   (push function (emacs-agent-request-cancel-functions request))
   request)
 
+(defun emacs-agent-request-remove-cancel-function (request function)
+  "Stop calling FUNCTION when REQUEST is cancelled."
+  (setf (emacs-agent-request-cancel-functions request)
+        (delq function
+              (emacs-agent-request-cancel-functions request)))
+  request)
+
 (defun emacs-agent-request-cancel (request)
   "Cancel REQUEST and its registered effects.
 Return non-nil when a pending request was cancelled."
   (when (eq (emacs-agent-request-state request) 'pending)
     (setf (emacs-agent-request-state request) 'cancelled)
-    (dolist (function (emacs-agent-request-cancel-functions request))
-      (ignore-errors (funcall function)))
-    (emacs-agent-request-finish request 'cancelled)
+    (unwind-protect
+        (dolist (function
+                 (emacs-agent-request-cancel-functions request))
+          (ignore-errors (funcall function)))
+      (emacs-agent-request-finish request 'cancelled))
     t))
 
 (defun emacs-agent-request-cancel-id

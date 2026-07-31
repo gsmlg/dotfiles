@@ -472,8 +472,11 @@ Requests fall into:
   cancellation callbacks and return through the original request.
 
 Disconnect, explicit cancellation, and absolute timeout cancel registered
-effects. Tool observer data is bounded and redacted before reaching the
-journal or activity UI.
+effects. Synchronous Xref providers also register cancellation callbacks and
+run under a server-side deadline. Cancellation notifications schedule their
+effect after the HTTP 202 response is constructed, so cancelling one request
+cannot suppress the cancellation response itself. Tool observer data is
+bounded and redacted before reaching the journal or activity UI.
 
 ## 11. Editing, revisions, and undo
 
@@ -635,6 +638,15 @@ Imenu supplies document symbols. Xref/Eglot supply definitions, references,
 renames, code actions, and project symbols when available. Missing providers
 return `CAPABILITY_UNAVAILABLE`; text matching is never presented as semantic
 analysis.
+
+The fallback `etags` backend is not sufficient evidence of usable Xref
+support. Runtime metadata separately reports whether a backend is present and
+whether it is ready for non-interactive execution. Without a valid,
+explicitly configured TAGS table, definitions, references, and project
+symbols fail before invoking etags. Every Xref generic call binds
+`inhibit-interaction`, applies `emacs-agent-semantic-xref-timeout`, and honors
+request cancellation while the provider yields to the Emacs event loop.
+Pure Lisp or C code that never yields cannot be preempted safely.
 
 Any path or URI returned by an LSP `WorkspaceEdit` is resolved through runtime
 filesystem policy before preview or apply. Rename and range-format previews

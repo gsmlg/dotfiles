@@ -114,7 +114,9 @@ Use HTTP-REQUEST, RPC-REQUEST, META, OPERATION, and ARGUMENTS."
             (if (emacs-agent-jsonrpc-notification-p rpc-request)
                 (progn
                   (when (equal method "notifications/cancelled")
-                    (emacs-agent-request-cancel-id
+                    (run-at-time
+                     0 nil
+                     #'emacs-agent-request-cancel-id
                      (alist-get 'requestId params)
                      emacs-agent-protocol-2026-version))
                   (emacs-agent-protocol-response-create

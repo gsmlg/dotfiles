@@ -326,7 +326,7 @@ TOKEN is omitted from the metadata when authentication is disabled."
                public
                '("REVISION_MISMATCH" "EXTERNAL_CHANGE_CONFLICT"
                  "DIAGNOSTICS_TIMEOUT" "APPROVAL_EXPIRED"
-                 "CHECKPOINT_FAILED"))
+                 "CHECKPOINT_FAILED" "OPERATION_TIMEOUT"))
               t :false))
          (detail-plist (copy-sequence details)))
     (when (plist-member detail-plist :message)
@@ -2020,8 +2020,8 @@ is the error raised while changing BUFFER's visited file name."
                 (emacs-agent-semantic-document-symbols
                  runtime target))))))))))
 
-(defun emacs-agent-editor--project-symbols (arguments _context)
-  "Implement `emacs_agent_project_symbols' with ARGUMENTS."
+(defun emacs-agent-editor--project-symbols (arguments context)
+  "Implement `emacs_agent_project_symbols' with ARGUMENTS and CONTEXT."
   (emacs-agent-editor--call
    (lambda ()
      (let ((project-id
@@ -2036,10 +2036,11 @@ is the error raised while changing BUFFER's visited file name."
           (emacs-agent-editor--argument arguments 'query)
           (emacs-agent-editor--argument arguments 'kind)
           (emacs-agent-editor--argument arguments 'path_prefix)
-          (emacs-agent-editor--argument arguments 'limit))))))))
+          (emacs-agent-editor--argument arguments 'limit)
+          context)))))))
 
-(defun emacs-agent-editor--symbol-definition (arguments _context)
-  "Implement `emacs_agent_symbol_definition' with ARGUMENTS."
+(defun emacs-agent-editor--symbol-definition (arguments context)
+  "Implement `emacs_agent_symbol_definition' with ARGUMENTS and CONTEXT."
   (emacs-agent-editor--call
    (lambda ()
      (emacs-agent-editor--json-value
@@ -2049,10 +2050,11 @@ is the error raised while changing BUFFER's visited file name."
               (emacs-agent-runtime-current)
               (emacs-agent-editor--resolve-target arguments)
               (emacs-agent-editor--argument arguments 'position)
-              (emacs-agent-editor--argument arguments 'symbol)))))))))
+              (emacs-agent-editor--argument arguments 'symbol)
+              context))))))))
 
-(defun emacs-agent-editor--symbol-references (arguments _context)
-  "Implement `emacs_agent_symbol_references' with ARGUMENTS."
+(defun emacs-agent-editor--symbol-references (arguments context)
+  "Implement `emacs_agent_symbol_references' with ARGUMENTS and CONTEXT."
   (emacs-agent-editor--call
    (lambda ()
      (emacs-agent-editor--json-value
@@ -2060,7 +2062,8 @@ is the error raised while changing BUFFER's visited file name."
        (emacs-agent-runtime-current)
        (emacs-agent-editor--resolve-target arguments)
        (emacs-agent-editor--argument arguments 'position)
-       (emacs-agent-editor--argument arguments 'symbol))))))
+       (emacs-agent-editor--argument arguments 'symbol)
+       context)))))
 
 (defun emacs-agent-editor--editor-context-get (arguments _context)
   "Implement `emacs_agent_editor_context_get' with ARGUMENTS."

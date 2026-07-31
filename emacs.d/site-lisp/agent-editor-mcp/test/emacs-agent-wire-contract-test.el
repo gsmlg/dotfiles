@@ -11,6 +11,12 @@
 (require 'ert)
 (require 'emacs-agent-editor-test)
 
+(cl-defmethod xref-backend-apropos
+  ((_backend (eql emacs-agent-wire-slow-xref-backend)) _pattern)
+  "Wait long enough for the wire-level semantic deadline to expire."
+  (accept-process-output nil 1)
+  nil)
+
 (defun emacs-agent-wire-test--response-json (response)
   "Decode protocol RESPONSE while preserving JSON arrays as vectors."
   (json-parse-string
@@ -69,8 +75,9 @@ response headers, and decoded JSON body."
            (lambda (_process chunk)
              (setq response (concat response chunk)))
            :sentinel
-           (lambda (_process _event)
-             (setq done t)))))
+           (lambda (process _event)
+             (unless (process-live-p process)
+               (setq done t))))))
     (unwind-protect
         (progn
           (process-send-string
@@ -89,7 +96,6 @@ response headers, and decoded JSON body."
                "Mcp-Session-Id: " session "\r\n"))
             (format "Content-Length: %d\r\n\r\n" (string-bytes body))
             body))
-          (process-send-eof client)
           (let ((deadline (+ (float-time) 3)))
             (while (and (not done) (< (float-time) deadline))
               (accept-process-output nil 0.05)))
@@ -817,6 +823,132 @@ declared as arrays in the advertised schema."
       (should (= (length supported) 36))
       (should (> (length availability) 0))
       (should (listp (alist-get 'providers runtime))))))
+
+(ert-deftest emacs-agent-wire-project-symbols-rejects-etags-without-tags ()
+  "A README with fallback etags must fail quickly over real MCP TCP."
+  (emacs-agent-editor-test--with-server
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (project
+            (emacs-agent-project-open emacs-agent-current-runtime root))
+           (project-id (plist-get project :project_id))
+           (auto-mode-alist
+            (cons '("\\.md\\'" . text-mode) auto-mode-alist))
+           (tags-file-name nil)
+           (tags-table-list nil)
+           (default-tags-table-function nil)
+           prompted
+           (session (emacs-agent-wire-test--open-legacy-session))
+           (started-at (float-time))
+           response)
+      (cl-letf (((symbol-function 'read-file-name)
+                 (lambda (&rest _arguments)
+                   (setq prompted t)
+                   (ert-fail "MCP Xref must not prompt for TAGS"))))
+        (setq response
+              (emacs-agent-wire-test--legacy-tcp-call
+               session 201 "emacs_agent_project_symbols"
+               `((project_id . ,project-id)
+                 (path . "README.md")
+                 (query . "Agent")))))
+      (let* ((result
+              (alist-get 'result (plist-get response :json)))
+             (error-data
+              (alist-get 'error
+                         (alist-get 'structuredContent result))))
+        (should (= (plist-get response :status) 200))
+        (should (eq (alist-get 'isError result) t))
+        (should
+         (equal (alist-get 'code error-data)
+                "CAPABILITY_UNAVAILABLE"))
+        (should-not prompted)
+        (should (< (- (float-time) started-at) 1))))))
+
+(ert-deftest emacs-agent-wire-project-symbols-enforces-provider-deadline ()
+  "A yielding Xref provider must time out quickly over real MCP TCP."
+  (emacs-agent-editor-test--with-server
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (project
+            (emacs-agent-project-open emacs-agent-current-runtime root))
+           (project-id (plist-get project :project_id))
+           (auto-mode-alist
+            (cons '("\\.md\\'" . text-mode) auto-mode-alist))
+           (text-mode-hook
+            (cons
+             (lambda ()
+               (add-hook
+                'xref-backend-functions
+                (lambda () 'emacs-agent-wire-slow-xref-backend)
+                nil t))
+             text-mode-hook))
+           (emacs-agent-semantic-xref-timeout 0.02)
+           (session (emacs-agent-wire-test--open-legacy-session))
+           (started-at (float-time))
+           (response
+            (emacs-agent-wire-test--legacy-tcp-call
+             session 202 "emacs_agent_project_symbols"
+             `((project_id . ,project-id)
+               (path . "README.md")
+               (query . "Agent"))))
+           (result
+            (alist-get 'result (plist-get response :json)))
+           (error-data
+            (alist-get 'error
+                       (alist-get 'structuredContent result))))
+      (should (= (plist-get response :status) 200))
+      (should (eq (alist-get 'isError result) t))
+      (should
+       (equal (alist-get 'code error-data) "OPERATION_TIMEOUT"))
+      (should (< (- (float-time) started-at) 1)))))
+
+(ert-deftest emacs-agent-wire-project-symbols-honors-request-cancellation ()
+  "A cancelled Xref request must unwind quickly over real MCP TCP."
+  (emacs-agent-editor-test--with-server
+    (let* ((path (expand-file-name "README.md" root))
+           (_ (write-region "# Agent Editor\n" nil path))
+           (project
+            (emacs-agent-project-open emacs-agent-current-runtime root))
+           (project-id (plist-get project :project_id))
+           (auto-mode-alist
+            (cons '("\\.md\\'" . text-mode) auto-mode-alist))
+           (text-mode-hook
+            (cons
+             (lambda ()
+               (add-hook
+                'xref-backend-functions
+                (lambda () 'emacs-agent-wire-slow-xref-backend)
+                nil t))
+             text-mode-hook))
+           (emacs-agent-semantic-xref-timeout 1)
+           (session (emacs-agent-wire-test--open-legacy-session))
+           (timer
+            (run-at-time
+             0.02 nil
+             #'emacs-agent-request-cancel-id
+             203 "2025-11-25" session))
+           (started-at (float-time))
+           response)
+      (unwind-protect
+          (setq response
+                (emacs-agent-wire-test--legacy-tcp-call
+                 session 203 "emacs_agent_project_symbols"
+                 `((project_id . ,project-id)
+                   (path . "README.md")
+                   (query . "Agent"))))
+        (when (timerp timer)
+          (cancel-timer timer)))
+      (let* ((result
+              (alist-get 'result (plist-get response :json)))
+             (error-data
+              (alist-get 'error
+                         (alist-get 'structuredContent result))))
+        (should (= (plist-get response :status) 200))
+        (should (eq (alist-get 'isError result) t))
+        (should
+         (equal (alist-get 'code error-data)
+                "OPERATION_CANCELLED"))
+        (should (< (- (float-time) started-at) 1))))))
 
 (ert-deftest emacs-agent-wire-editor-info-ignores-unrelated-buffer ()
   (emacs-agent-editor-test--with-server

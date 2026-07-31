@@ -132,7 +132,7 @@ and commands are asserted by the keybinding module.
 | `gsmlg-bootstrap` | pinned Elpaca bootstrap, use-package integration, lock writing |
 | `gsmlg-core` | built-in editing defaults, UTF-8, EditorConfig, which-key, startup GC |
 | `gsmlg-session` | recent files, history, places, bookmarks, desktop policy, explicit server control |
-| `gsmlg-ui` | Duskmoon Moonlight, optional Nerd Font glyphs, native mode line and file breadcrumb header |
+| `gsmlg-ui` | Duskmoon Moonlight, optional Nerd Font glyphs, mood-line-style left/right native mode line (not the mood-line package), and file breadcrumb header |
 | `gsmlg-completion` | Vertico, Orderless, Marginalia, Consult, Embark, Corfu, Cape |
 | `gsmlg-editing` | editing commands, Paredit behavior, vundo and editing packages, macOS remaps |
 | `gsmlg-keybindings` | prefix maps, compatibility wrappers, machine-readable key contract |

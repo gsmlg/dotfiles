@@ -49,7 +49,8 @@ The following mutable files also moved out of the checkout:
   bookmarks, project list, TRAMP, desktop, Transient, and Org clock state to
   the XDG state root;
 - the Elfeed database to the XDG data root;
-- Agent Editor MCP metadata to the XDG state root.
+- Agent Editor MCP metadata to
+  `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json`.
 
 Do not copy the former checkout-local history, desktop, project cache, or
 package directories into the new configuration. If a specific history file
@@ -162,11 +163,25 @@ autostart is also off unless explicitly enabled. Version 0.3 removes the
 legacy startup directory setting and starts a project-optional editor runtime
 without consulting `default-directory`.
 
-Port 9876 remains the compatibility default, with `EMACS_AGENT_PORT` as an
-override, and the listener remains bound to `127.0.0.1`. One runtime accepts
-direct absolute local files and any number of explicitly registered projects.
-`M-x gsmlg-agent-stop` stops the MCP listener without stopping the Emacs
-daemon.
+Port 9876 remains the default, with `EMACS_AGENT_PORT` as an override, and the
+listener remains bound to `127.0.0.1`. The package API accepts port `0`
+explicitly when an ephemeral listener is required. The endpoint supports MCP
+versions `2026-07-28`, `2025-11-25`, and Codex-compatible `2025-06-18`. One
+runtime accepts direct absolute local files and any number of explicitly
+registered projects. `M-x gsmlg-agent-stop` stops the MCP listener without
+stopping the Emacs daemon.
+
+Connection discovery now has one authoritative location:
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json
+```
+
+The former dotfiles integration path below
+`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/` is not authoritative.
+After successfully publishing canonical metadata, `M-x gsmlg-agent-start`
+removes only the old daemon's `connection.json` at that path. It does not
+remove sibling files or directories.
 
 ## Disabled mail and music
 

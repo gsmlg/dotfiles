@@ -1,4 +1,4 @@
-;;; emacs-agent-protocol-2025.el --- MCP 2025-11-25 adapter  -*- lexical-binding: t; -*-
+;;; emacs-agent-protocol-2025.el --- Stateful MCP 2025 adapter  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 
@@ -9,8 +9,6 @@
 (require 'emacs-agent-protocol)
 (require 'emacs-agent-session)
 
-(defconst emacs-agent-protocol-2025-version "2025-11-25")
-
 (defun emacs-agent-protocol-2025--session (http-request rpc-request)
   "Resolve the compatibility session for HTTP-REQUEST and RPC-REQUEST."
   (unless (equal (alist-get 'method rpc-request) "initialize")
@@ -20,6 +18,19 @@
         (signal 'emacs-agent-jsonrpc-error
                 (list emacs-agent-jsonrpc-invalid-request
                       "Missing or invalid MCP session" nil)))
+      (let ((requested
+             (emacs-agent-http-header
+              http-request "mcp-protocol-version"))
+            (negotiated
+             (emacs-agent-session-protocol-version session)))
+        (unless (equal requested negotiated)
+          (signal
+           'emacs-agent-jsonrpc-error
+           (list
+            emacs-agent-jsonrpc-invalid-request
+            "MCP protocol version does not match session"
+            `((negotiated . ,negotiated)
+              (requested . ,requested))))))
       session)))
 
 (defun emacs-agent-protocol-2025--request-context
@@ -30,7 +41,7 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
          (context
           (emacs-agent-request-create
            :id (alist-get 'id rpc-request)
-           :protocol-version emacs-agent-protocol-2025-version
+           :protocol-version (emacs-agent-session-protocol-version session)
            :client-info (emacs-agent-session-client-info session)
            :operation operation :arguments arguments
            :session-id (emacs-agent-session-id session)
@@ -41,8 +52,9 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
       (process-put connection 'emacs-agent-request context))
     context))
 
-(defun emacs-agent-protocol-2025-handle (http-request rpc-request)
-  "Handle legacy RPC-REQUEST received as HTTP-REQUEST."
+(defun emacs-agent-protocol-2025-handle
+    (http-request rpc-request protocol-version)
+  "Handle RPC-REQUEST received as HTTP-REQUEST for PROTOCOL-VERSION."
   (let* ((id (alist-get 'id rpc-request))
          (method (alist-get 'method rpc-request))
          (params (or (alist-get 'params rpc-request) '()))
@@ -54,7 +66,7 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
            (let* ((requested (alist-get 'protocolVersion params))
                   (client-info (alist-get 'clientInfo params)))
              (unless (and (equal requested
-                                 emacs-agent-protocol-2025-version)
+                                 protocol-version)
                           (assq 'capabilities params)
                           (listp (alist-get 'capabilities params))
                           (assq 'clientInfo params)
@@ -70,7 +82,7 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
               200
               (emacs-agent-jsonrpc-result
                id
-               `((protocolVersion . ,emacs-agent-protocol-2025-version)
+               `((protocolVersion . ,protocol-version)
                  (capabilities . ,(emacs-agent-protocol-capabilities))
                  (serverInfo . ,(emacs-agent-protocol-server-info))
                  (instructions
@@ -82,7 +94,7 @@ Use HTTP-REQUEST, RPC-REQUEST, SESSION, OPERATION, and ARGUMENTS."
           ("notifications/cancelled"
            (emacs-agent-request-cancel-id
             (alist-get 'requestId params)
-            emacs-agent-protocol-2025-version
+            (emacs-agent-session-protocol-version session)
             (emacs-agent-session-id session))
            (emacs-agent-protocol-response-create :status 202 :body nil))
           ((guard (emacs-agent-jsonrpc-notification-p rpc-request))

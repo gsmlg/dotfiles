@@ -7,7 +7,7 @@
 **Transport:** local HTTP/1.1 on IPv4 loopback
 **Endpoint:** `/mcp`
 **Primary profile:** `2026-07-28`
-**Compatibility profile:** `2025-11-25`
+**Compatibility profiles:** `2025-11-25`, `2025-06-18`
 
 ## 1. Product definition
 
@@ -406,9 +406,9 @@ The public package API is:
 (emacs-agent-editor-start &optional port)
 ```
 
-It never accepts or prompts for a directory. A supplied port must be an
-integer from 0 through 65535; zero requests an ephemeral port. The host is
-restricted to `127.0.0.1`.
+It never accepts or prompts for a directory. The default port is `9876`. A
+supplied port must be an integer from 0 through 65535; passing zero explicitly
+requests an ephemeral port. The host is restricted to `127.0.0.1`.
 
 Startup:
 
@@ -431,6 +431,12 @@ Emacs and visiting buffers alive.
 
 ### 9.3 Connection schema
 
+The authoritative discovery file is:
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json
+```
+
 Schema version 2 contains:
 
 ```json
@@ -442,7 +448,7 @@ Schema version 2 contains:
   "endpoint": "http://127.0.0.1:9876/mcp",
   "token_authentication": true,
   "token": "present-only-when-enabled",
-  "protocol_versions": ["2026-07-28", "2025-11-25"],
+  "protocol_versions": ["2026-07-28", "2025-11-25", "2025-06-18"],
   "filesystem_scope": "unrestricted",
   "started_at": "2026-07-30T12:00:00Z"
 }
@@ -669,8 +675,9 @@ closes afterward. It enforces:
 - idle timeout.
 
 The modern profile uses stateless MCP method headers and per-request client
-metadata. The compatibility profile uses initialize/session sequencing.
-Negotiation selects only the two supported protocol versions.
+metadata. The `2025-11-25` and `2025-06-18` compatibility profiles use
+initialize/session sequencing. Negotiation selects only these three supported
+protocol versions.
 
 JSON-RPC invalid parameters use `-32602`. Internal output-contract violations
 use `-32603` with `OUTPUT_SCHEMA_VIOLATION`, tool name, and schema path.

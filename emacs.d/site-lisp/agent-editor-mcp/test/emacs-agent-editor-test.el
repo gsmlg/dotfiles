@@ -334,7 +334,7 @@ No project is registered automatically."
       (should
        (equal
         (alist-get 'protocol_versions metadata)
-        '("2026-07-28" "2025-11-25")))
+        '("2026-07-28" "2025-11-25" "2025-06-18")))
       (should (eq (alist-get 'token_authentication metadata) t))
       (should
        (equal (alist-get 'token metadata) "test-bearer-token")))
@@ -1937,6 +1937,10 @@ When WRITE-STRING is non-nil, exercise the string form of `write-region'."
    (emacs-agent-editor-start 65536)
    :type 'user-error)
   (should-not emacs-agent-current-runtime))
+
+(ert-deftest emacs-agent-editor-default-port-is-9876 ()
+  "Package startup defaults to the stable Agent Editor MCP port."
+  (should (= emacs-agent-editor-port 9876)))
 
 (provide 'emacs-agent-editor-test)
 ;;; emacs-agent-editor-test.el ends here

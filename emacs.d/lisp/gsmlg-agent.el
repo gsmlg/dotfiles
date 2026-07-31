@@ -14,7 +14,7 @@
                   "emacs-agent-editor" (&optional port))
 (declare-function emacs-agent-editor-stop "emacs-agent-editor" ())
 (defvar emacs-agent-editor-host)
-(defvar emacs-agent-editor-state-directory)
+(defvar emacs-agent-editor--connection-file)
 
 (defvar gsmlg-agent-package-available-p
   (condition-case error-data
@@ -64,13 +64,8 @@ also enable autostart."
                 '("1" "true" "yes" "on")))))
 
 (defun gsmlg-agent--configure-package ()
-  "Apply the fixed listener and XDG state settings to Agent Editor MCP."
-  (unless (bound-and-true-p gsmlg-state-directory)
-    (user-error "GSMLG state directory is not configured"))
-  (setq emacs-agent-editor-host "127.0.0.1"
-        emacs-agent-editor-state-directory
-        (file-name-as-directory
-         (expand-file-name "agent-editor" gsmlg-state-directory))))
+  "Restrict Agent Editor MCP to the IPv4 loopback listener."
+  (setq emacs-agent-editor-host "127.0.0.1"))
 
 (defun gsmlg-agent--ensure-package ()
   "Signal a user-facing error when Agent Editor MCP is unavailable."
@@ -78,13 +73,30 @@ also enable autostart."
                (fboundp #'emacs-agent-editor-start))
     (user-error "Agent Editor MCP is unavailable; inspect startup messages")))
 
+(defun gsmlg-agent--remove-legacy-connection-file ()
+  "Remove the exact connection file published by the former integration."
+  (when-let* ((canonical emacs-agent-editor--connection-file)
+              ((stringp canonical))
+              (daemon
+               (file-name-nondirectory
+                (directory-file-name
+                 (file-name-directory canonical))))
+              (legacy
+               (expand-file-name
+                (format "agent-editor/%s/connection.json" daemon)
+                gsmlg-state-directory))
+              ((file-exists-p legacy))
+              ((not (file-equal-p legacy canonical))))
+    (delete-file legacy)))
+
 ;;;###autoload
 (defun gsmlg-agent-start ()
   "Start the project-optional Agent Editor MCP runtime."
   (interactive)
   (gsmlg-agent--ensure-package)
   (gsmlg-agent--configure-package)
-  (emacs-agent-editor-start (gsmlg-agent--resolved-port)))
+  (prog1 (emacs-agent-editor-start (gsmlg-agent--resolved-port))
+    (gsmlg-agent--remove-legacy-connection-file)))
 
 ;;;###autoload
 (defun gsmlg-agent-stop ()

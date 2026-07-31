@@ -60,11 +60,11 @@
       (should (= observed-port 9876))
       (should-not prompted))))
 
-(ert-deftest gsmlg-agent-start-confines-listener-and-state ()
-  "Startup enforces loopback and writes metadata under GSMLG XDG state."
+(ert-deftest gsmlg-agent-start-preserves-package-state-directory ()
+  "Startup enforces loopback without overriding the package's XDG state."
   (let ((gsmlg-state-directory "/tmp/gsmlg-emacs-state/")
         (emacs-agent-editor-host "192.0.2.1")
-        (emacs-agent-editor-state-directory "/tmp/wrong-state/")
+        (emacs-agent-editor-state-directory "/tmp/canonical-state/")
         observed-host
         observed-state)
     (cl-letf (((symbol-function #'emacs-agent-editor-start)
@@ -76,7 +76,85 @@
       (should (equal observed-host "127.0.0.1"))
       (should
        (equal observed-state
-              "/tmp/gsmlg-emacs-state/agent-editor/")))))
+              "/tmp/canonical-state/")))))
+
+(ert-deftest gsmlg-agent-start-removes-only-legacy-connection-file ()
+  "Successful startup removes only the former integration metadata file."
+  (let* ((root (make-temp-file "gsmlg-agent-state-" t))
+         (gsmlg-state-directory
+          (file-name-as-directory (expand-file-name "emacs" root)))
+         (legacy-directory
+          (expand-file-name "agent-editor/interactive/"
+                            gsmlg-state-directory))
+         (legacy-connection
+          (expand-file-name "connection.json" legacy-directory))
+         (legacy-sibling
+          (expand-file-name "keep.json" legacy-directory))
+         (canonical-connection
+          (expand-file-name
+           "emacs-agent-editor/interactive/connection.json" root))
+         (emacs-agent-editor--connection-file nil))
+    (unwind-protect
+        (progn
+          (make-directory legacy-directory t)
+          (make-directory (file-name-directory canonical-connection) t)
+          (write-region "{}" nil legacy-connection nil 'silent)
+          (write-region "{}" nil legacy-sibling nil 'silent)
+          (write-region "{}" nil canonical-connection nil 'silent)
+          (cl-letf (((symbol-function #'emacs-agent-editor-start)
+                     (lambda (_port)
+                       (setq emacs-agent-editor--connection-file
+                             canonical-connection)
+                       'server)))
+            (should (eq (gsmlg-agent-start) 'server)))
+          (should-not (file-exists-p legacy-connection))
+          (should (file-exists-p legacy-sibling))
+          (should (file-directory-p legacy-directory))
+          (should (file-exists-p canonical-connection)))
+      (delete-directory root t))))
+
+(ert-deftest gsmlg-agent-start-keeps-legacy-metadata-on-failure ()
+  "Failed startup leaves former integration metadata untouched."
+  (let* ((root (make-temp-file "gsmlg-agent-failed-state-" t))
+         (gsmlg-state-directory
+          (file-name-as-directory (expand-file-name "emacs" root)))
+         (legacy-connection
+          (expand-file-name
+           "agent-editor/interactive/connection.json"
+           gsmlg-state-directory)))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory legacy-connection) t)
+          (write-region "{}" nil legacy-connection nil 'silent)
+          (cl-letf (((symbol-function #'emacs-agent-editor-start)
+                     (lambda (_port)
+                       (error "Listener unavailable"))))
+            (should-error (gsmlg-agent-start)))
+          (should (file-exists-p legacy-connection)))
+      (delete-directory root t))))
+
+(ert-deftest gsmlg-agent-start-never-removes-active-connection-file ()
+  "Migration cleanup never removes the active connection metadata target."
+  (let* ((root (make-temp-file "gsmlg-agent-active-state-" t))
+         (gsmlg-state-directory
+          (file-name-as-directory (expand-file-name "emacs" root)))
+         (active-connection
+          (expand-file-name
+           "agent-editor/interactive/connection.json"
+           gsmlg-state-directory))
+         (emacs-agent-editor--connection-file nil))
+    (unwind-protect
+        (progn
+          (make-directory (file-name-directory active-connection) t)
+          (write-region "{}" nil active-connection nil 'silent)
+          (cl-letf (((symbol-function #'emacs-agent-editor-start)
+                     (lambda (_port)
+                       (setq emacs-agent-editor--connection-file
+                             active-connection)
+                       'server)))
+            (should (eq (gsmlg-agent-start) 'server)))
+          (should (file-exists-p active-connection)))
+      (delete-directory root t))))
 
 (ert-deftest gsmlg-agent-autostart-never-runs-in-batch ()
   "Autostart does not open an MCP listener when Emacs is noninteractive."

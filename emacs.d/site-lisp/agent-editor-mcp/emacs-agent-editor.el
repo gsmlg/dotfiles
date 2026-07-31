@@ -44,9 +44,9 @@
   "Address on which the MCP listener binds."
   :type 'string)
 
-(defcustom emacs-agent-editor-port 0
+(defcustom emacs-agent-editor-port 9876
   "TCP port on which the MCP listener binds.
-A value of zero asks the operating system to choose an available port."
+A value of zero explicitly requests an ephemeral port."
   :type 'natnum)
 
 (defcustom emacs-agent-editor-endpoint "/mcp"
@@ -160,7 +160,8 @@ TOKEN is omitted from the metadata when authentication is disabled."
                                   emacs-agent-editor-endpoint))
              (token_authentication . ,(if token t :false)))
            (when token `((token . ,token)))
-           `((protocol_versions . ["2026-07-28" "2025-11-25"])
+           `((protocol_versions
+              . ,(vconcat emacs-agent-protocol-versions))
              (filesystem_scope
               . ,(symbol-name
                   (emacs-agent-runtime-filesystem-policy runtime)))
@@ -577,7 +578,7 @@ The selected buffer is first only when it is one of those runtime buffers."
       (filesystem_policy
        . ,(symbol-name
            (emacs-agent-runtime-filesystem-policy runtime)))
-      (protocol_versions . ["2026-07-28" "2025-11-25"])
+      (protocol_versions . ,(vconcat emacs-agent-protocol-versions))
       (authentication
        . ((type . ,(if emacs-agent-editor--token "bearer" "none"))))
       (supported_tools

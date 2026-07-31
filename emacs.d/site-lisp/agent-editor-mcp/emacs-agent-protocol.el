@@ -17,7 +17,8 @@
 (declare-function emacs-agent-protocol-2026-handle
                   "emacs-agent-protocol-2026")
 
-(defconst emacs-agent-protocol-versions '("2026-07-28" "2025-11-25"))
+(defconst emacs-agent-protocol-versions
+  '("2026-07-28" "2025-11-25" "2025-06-18"))
 (defconst emacs-agent-server-name "emacs-agent-editor")
 (defconst emacs-agent-server-version "0.3.0")
 
@@ -162,10 +163,10 @@ When MODERN is non-nil, include stateless result and cache metadata."
                (require 'emacs-agent-protocol-2026)
                (emacs-agent-protocol-2026-handle
                 http-request rpc-request))
-              ("2025-11-25"
+              ((or "2025-11-25" "2025-06-18")
                (require 'emacs-agent-protocol-2025)
                (emacs-agent-protocol-2025-handle
-                http-request rpc-request))
+                http-request rpc-request version))
               (_
                (emacs-agent-protocol--json-response
                 400

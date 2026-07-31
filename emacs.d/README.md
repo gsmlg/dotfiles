@@ -83,6 +83,7 @@ owns external executables.
 | Elpaca and application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` |
 | Disposable caches and auto-saves | `${XDG_CACHE_HOME:-~/.cache}/emacs/` |
 | Mutable state and backups | `${XDG_STATE_HOME:-~/.local/state}/emacs/` |
+| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/` |
 
 Customizations, native compilation output, URL data, recentf, savehist,
 save-place, bookmarks, the project list, TRAMP persistence, desktop and
@@ -216,9 +217,12 @@ project or startup directory is required; run:
 M-x gsmlg-agent-start
 ```
 
-The listener is loopback-only. Port 9876 is the compatibility default;
-`EMACS_AGENT_PORT` overrides it. To opt into interactive autostart, set
+The listener is loopback-only. Port 9876 is the default; `EMACS_AGENT_PORT`
+overrides it. To opt into interactive autostart, set
 `gsmlg-agent-autostart` or `EMACS_AGENT_AUTOSTART=1`.
+
+The endpoint supports MCP versions `2026-07-28`, `2025-11-25`, and
+Codex-compatible `2025-06-18`.
 
 The recommended deployment is one dedicated named daemon, one MCP endpoint,
 and zero or more projects registered through MCP after startup. Direct
@@ -232,11 +236,11 @@ emacsclient \
   -c
 ```
 
-Connection metadata is written below
-`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/`. `M-x
-gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup catches
-MCP failures so they cannot prevent the editor from opening. See the bundled
-[Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
+Connection metadata is written to
+`${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json`.
+`M-x gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup
+catches MCP failures so they cannot prevent the editor from opening. See the
+bundled [Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
 project registration, direct-file, protocol, and editing model.
 
 ## Package updates

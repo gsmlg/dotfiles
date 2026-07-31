@@ -46,11 +46,13 @@
       (setq normalized (assq-delete-all key normalized)))
     normalized))
 
-(defun emacs-agent-wire-test--tcp-post (object &optional session)
+(defun emacs-agent-wire-test--tcp-post
+    (object &optional session protocol-version)
   "POST JSON-RPC OBJECT over a real TCP connection.
 
-When SESSION is non-nil, send the legacy protocol and session headers.  Return
-a plist containing the HTTP status, response headers, and decoded JSON body."
+When SESSION is non-nil, send the compatibility session headers, using
+PROTOCOL-VERSION or `2025-11-25'.  Return a plist containing the HTTP status,
+response headers, and decoded JSON body."
   (let* ((body (emacs-agent-jsonrpc-encode object))
          (response "")
          done
@@ -81,7 +83,9 @@ a plist containing the HTTP status, response headers, and decoded JSON body."
             "Accept: application/json, text/event-stream\r\n"
             (when session
               (concat
-               "MCP-Protocol-Version: 2025-11-25\r\n"
+               "MCP-Protocol-Version: "
+               (or protocol-version "2025-11-25")
+               "\r\n"
                "Mcp-Session-Id: " session "\r\n"))
             (format "Content-Length: %d\r\n\r\n" (string-bytes body))
             body))
@@ -118,6 +122,57 @@ a plist containing the HTTP status, response headers, and decoded JSON body."
                   :null-object :null :false-object :false))))))
       (when (process-live-p client)
         (delete-process client)))))
+
+(ert-deftest emacs-agent-wire-codex-2025-06-18-session-lifecycle ()
+  (emacs-agent-editor-test--with-server
+    (let* ((version "2025-06-18")
+           (initialize
+            (emacs-agent-wire-test--tcp-post
+             `((jsonrpc . "2.0")
+               (id . 88)
+               (method . "initialize")
+               (params
+                . ((protocolVersion . ,version)
+                   (capabilities . ())
+                   (clientInfo
+                    . ((name . "codex")
+                       (version . "0.146.0"))))))))
+           (session
+            (cdr
+             (assoc
+              "mcp-session-id"
+              (plist-get initialize :headers)))))
+      (should (= (plist-get initialize :status) 200))
+      (should
+       (equal
+        (alist-get
+         'protocolVersion
+         (alist-get 'result (plist-get initialize :json)))
+        version))
+      (should (stringp session))
+      (should
+       (=
+        (plist-get
+         (emacs-agent-wire-test--tcp-post
+          '((jsonrpc . "2.0")
+            (method . "notifications/initialized")
+            (params . ()))
+          session version)
+         :status)
+        202))
+      (let* ((listed
+              (emacs-agent-wire-test--tcp-post
+               '((jsonrpc . "2.0")
+                 (id . 89)
+                 (method . "tools/list")
+                 (params . ()))
+               session version))
+             (tools
+              (alist-get
+               'tools
+               (alist-get 'result (plist-get listed :json)))))
+        (should (= (plist-get listed :status) 200))
+        (should (vectorp tools))))))
 
 (defun emacs-agent-wire-test--legacy-tcp-call
     (session id name arguments)
@@ -415,7 +470,7 @@ Return its decoded structured result and require a successful tool call."
       (should
        (equal
         (alist-get 'protocol_versions editor-info)
-        ["2026-07-28" "2025-11-25"])))))
+        ["2026-07-28" "2025-11-25" "2025-06-18"])))))
 
 (defun emacs-agent-wire-test--output-schema-errors
     (tool-name result required array-properties)

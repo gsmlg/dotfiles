@@ -117,9 +117,13 @@
                       org-clock-persist-file
                       org-id-locations-file
                       server-auth-dir
-                      server-socket-dir
-                      emacs-agent-editor-state-directory))
-    (should (gsmlg-test-path-below-p path gsmlg-state-directory))))
+                      server-socket-dir))
+    (should (gsmlg-test-path-below-p path gsmlg-state-directory)))
+  (should
+   (equal emacs-agent-editor-state-directory
+          (file-name-as-directory
+           (expand-file-name "../emacs-agent-editor/"
+                             gsmlg-state-directory)))))
 
 (ert-deftest gsmlg-smoke-empty-xdg-values-use-home-fallbacks ()
   "Empty XDG environment values should behave as unset values."

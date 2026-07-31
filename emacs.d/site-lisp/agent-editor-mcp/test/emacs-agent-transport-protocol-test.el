@@ -32,13 +32,16 @@
                   . ((name . "ert") (version . "1")))
                  (io\.modelcontextprotocol/clientCapabilities . ()))))))))))
 
-(defun emacs-agent-test--legacy-request (method params &optional session id)
-  "Construct a legacy request for METHOD, PARAMS, SESSION, and ID."
+(defun emacs-agent-test--legacy-request
+    (method params &optional session id protocol-version)
+  "Construct a compatibility request for METHOD, PARAMS, SESSION, and ID.
+Use PROTOCOL-VERSION or `2025-11-25' for non-initialize requests."
   (emacs-agent-http-request-create
    :method "POST" :target "/mcp" :version "HTTP/1.1"
    :headers
    `(,@(unless (equal method "initialize")
-         '(("mcp-protocol-version" . "2025-11-25")))
+         `(("mcp-protocol-version"
+            . ,(or protocol-version "2025-11-25"))))
      ,@(when session `(("mcp-session-id" . ,session))))
    :body
    (emacs-agent-jsonrpc-encode
@@ -353,6 +356,49 @@
              :object-type 'alist :array-type 'array)))
       (should (= (emacs-agent-protocol-response-status response) 200))
       (should (vectorp (alist-get 'tools (alist-get 'result decoded)))))))
+
+(ert-deftest emacs-agent-protocol-rejects-session-version-mismatch ()
+  (emacs-agent-session-clear)
+  (unwind-protect
+      (let* ((version "2025-06-18")
+             (initialize
+              (emacs-agent-protocol-handle-http-request
+               (emacs-agent-test--legacy-request
+                "initialize"
+                `((protocolVersion . ,version)
+                  (capabilities . ())
+                  (clientInfo . ((name . "ert") (version . "1"))))
+                nil 1)))
+             (session
+              (cdr
+               (assoc
+                "Mcp-Session-Id"
+                (emacs-agent-protocol-response-headers initialize)))))
+        (should (= (emacs-agent-protocol-response-status initialize) 200))
+        (should
+         (=
+          (emacs-agent-protocol-response-status
+           (emacs-agent-protocol-handle-http-request
+            (emacs-agent-test--legacy-request
+             "notifications/initialized" nil session nil version)))
+          202))
+        (let* ((response
+                (emacs-agent-protocol-handle-http-request
+                 (emacs-agent-test--legacy-request
+                  "tools/list" nil session 2 "2025-11-25")))
+               (decoded
+                (json-parse-string
+                 (decode-coding-string
+                  (emacs-agent-protocol-response-body response) 'utf-8)
+                 :object-type 'alist))
+               (error (alist-get 'error decoded)))
+          (should (= (alist-get 'code error)
+                     emacs-agent-jsonrpc-invalid-request))
+          (should
+           (equal
+            (alist-get 'message error)
+            "MCP protocol version does not match session"))))
+    (emacs-agent-session-clear)))
 
 (provide 'emacs-agent-transport-protocol-test)
 ;;; emacs-agent-transport-protocol-test.el ends here

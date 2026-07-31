@@ -50,11 +50,11 @@ project-optional runtime:
 (emacs-agent-editor-start)
 ```
 
-The package port defaults to `0`, so the operating system selects an available
-port. Pass a fixed port for one invocation:
+The package listens on port `9876` by default. Pass `0` explicitly when the
+operating system should select an available port for one invocation:
 
 ```elisp
-(emacs-agent-editor-start 9876)
+(emacs-agent-editor-start 0)
 ```
 
 Stop only the MCP service with:
@@ -201,10 +201,10 @@ At startup, the server atomically writes private connection metadata below:
 ${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json
 ```
 
-This dotfiles integration instead configures the parent directory below
-`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/`. A normal interactive
-instance uses `interactive`; a named daemon uses its daemon name. The
-containing directory has mode `0700` and the file has mode `0600`.
+This is also the authoritative discovery path for the dotfiles integration.
+A normal interactive instance uses `interactive`; a named daemon uses its
+daemon name. The containing directory has mode `0700` and the file has mode
+`0600`.
 
 Schema version 2 contains editor-runtime identity, not project state:
 
@@ -216,7 +216,7 @@ Schema version 2 contains editor-runtime identity, not project state:
   "pid": 12345,
   "endpoint": "http://127.0.0.1:9876/mcp",
   "token_authentication": false,
-  "protocol_versions": ["2026-07-28", "2025-11-25"],
+  "protocol_versions": ["2026-07-28", "2025-11-25", "2025-06-18"],
   "filesystem_scope": "unrestricted",
   "started_at": "2026-07-30T12:00:00Z"
 }
@@ -239,7 +239,7 @@ The loopback `/mcp` endpoint preserves both wire profiles:
 
 - `2026-07-28`: stateless requests with MCP HTTP headers and per-request
   client metadata.
-- `2025-11-25`: compatibility flow using `initialize`,
+- `2025-11-25` and `2025-06-18`: compatibility flows using `initialize`,
   `notifications/initialized`, and `Mcp-Session-Id`.
 
 Both profiles expose the same v0.3 tool registry. When authentication is
@@ -388,7 +388,7 @@ emacs-agent-editor RET`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `emacs-agent-editor-host` | `"127.0.0.1"` | IPv4 loopback listener address. |
-| `emacs-agent-editor-port` | `0` | Listener port; zero selects an ephemeral port. |
+| `emacs-agent-editor-port` | `9876` | Listener port; set to zero explicitly for an ephemeral port. |
 | `emacs-agent-editor-endpoint` | `"/mcp"` | HTTP endpoint path. |
 | `emacs-agent-editor-allowed-origins` | `nil` | Exact allowlist for a present `Origin` header. |
 | `emacs-agent-editor-state-directory` | XDG state | Parent directory for private runtime state. |
@@ -456,8 +456,9 @@ After changing integration code, also run:
 ./lint-emacs-config.sh
 ```
 
-The suite covers transport/authentication, both protocol profiles, runtime and
-project lifecycle, canonical target resolution, revision/reconciliation,
-Unicode/tab/CRLF positions, guarded transformations, cross-document
-atomicity, diagnostics, buffer-aware search, semantic previews, change sets,
+The suite covers transport/authentication, all three protocol versions,
+runtime and project lifecycle, canonical target resolution,
+revision/reconciliation, Unicode/tab/CRLF positions, guarded transformations,
+cross-document atomicity, diagnostics, buffer-aware search, semantic previews,
+change sets,
 approval binding/expiry, redaction, rollback, journaling, and human controls.

@@ -154,7 +154,8 @@ The repository is immutable at runtime. Defaults are:
 | Configuration | `${XDG_CONFIG_HOME:-~/.config}/emacs/` | tracked source, lock file, feed list |
 | Package/application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` | Elpaca repositories and builds, Elfeed database |
 | Disposable cache | `${XDG_CACHE_HOME:-~/.cache}/emacs/` | Elpaca cache, native compilation, URL cache, Org persistence, local and remote auto-save files |
-| Mutable state | `${XDG_STATE_HOME:-~/.local/state}/emacs/` | customizations, backups, auto-save index, recentf, savehist, save-place, bookmarks, project list, TRAMP, desktop, Transient, multiple-cursors, Eshell, network security, Org clock/ID, server sockets/authentication, Agent Editor metadata |
+| Mutable state | `${XDG_STATE_HOME:-~/.local/state}/emacs/` | customizations, backups, auto-save index, recentf, savehist, save-place, bookmarks, project list, TRAMP, desktop, Transient, multiple-cursors, Eshell, network security, Org clock/ID, server sockets/authentication |
+| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/` | per-daemon connection metadata |
 
 First-party compilation tests use temporary output and clean it. `.elc`, `.eln`,
 package repositories, history, customizations, caches, and application
@@ -247,20 +248,22 @@ always refuses to start one. Server authentication files live under XDG state.
 
 ## Agent Editor MCP model
 
-Agent Editor MCP binds to `127.0.0.1` only. Port 9876 is the compatibility
-default and `EMACS_AGENT_PORT` may override it. Loading the configuration does
-not start a listener. Start it with `M-x gsmlg-agent-start`, or opt into
-autostart with `gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`.
+Agent Editor MCP binds to `127.0.0.1` only. Port 9876 is the default and
+`EMACS_AGENT_PORT` may override it. The package API also accepts port `0`
+explicitly to request an ephemeral port. Loading the configuration does not
+start a listener. Start it with `M-x gsmlg-agent-start`, or opt into autostart
+with `gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`.
 
 One Emacs process owns one editor runtime, one mutation queue, and one
 canonical document registry. It can manage direct absolute local files and
 zero or more projects registered explicitly through MCP. Projects supply
 semantic and relative-path context; they are never implicit request state and
 do not own buffers. The recommended deployment is one named `agent-editor`
-daemon with one endpoint. Connection metadata lives below
-`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/`. Stopping MCP with
-`M-x gsmlg-agent-stop` stops only the listener, never the Emacs daemon. A
-listener failure is reported without aborting Emacs startup.
+daemon with one endpoint. The endpoint supports MCP versions `2026-07-28`,
+`2025-11-25`, and `2025-06-18`. Its authoritative connection metadata is
+`${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json`.
+Stopping MCP with `M-x gsmlg-agent-stop` stops only the listener, never the
+Emacs daemon. A listener failure is reported without aborting Emacs startup.
 
 ## Local override
 

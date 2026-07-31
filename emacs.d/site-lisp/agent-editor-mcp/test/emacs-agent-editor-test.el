@@ -1294,7 +1294,6 @@ When WRITE-STRING is non-nil, exercise the string form of `write-region'."
             (expand-file-name
              (file-name-nondirectory destination)
              (file-truename (file-name-directory destination))))
-           (backup-directory-alist nil)
            (rename-file-function
             (symbol-function 'rename-file)))
       (with-current-buffer buffer
@@ -1347,10 +1346,25 @@ When WRITE-STRING is non-nil, exercise the string form of `write-region'."
            (eq
             (alist-get 'checkpointed error-object)
             t)))
+        (let ((activity
+               (car
+                (emacs-agent-runtime-recent-activity
+                 emacs-agent-editor--runtime))))
+          (should
+           (equal (plist-get activity :tool) "document_move"))
+          (should
+           (equal (plist-get activity :status) "partial_failure"))
+          (should (eq (plist-get activity :checkpointed) t))
+          (should
+           (eq (plist-get activity :reconciliation_required) t)))
         (should
          (file-exists-p source))
         (should
-         (file-exists-p (concat source "~")))
+         (equal
+          (with-temp-buffer
+            (insert-file-contents source)
+            (buffer-string))
+          "before\ncheckpointed before rename\n"))
         (should-not
          (file-exists-p destination))
         (should

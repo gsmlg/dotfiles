@@ -9,6 +9,8 @@
 (require 'gsmlg-eglot)
 (require 'gsmlg-bootstrap)
 
+(defvar native-comp-jit-compilation-deny-list)
+
 (defconst gsmlg-go-mode-native-compilation-deny-regexp
   "/go-mode\\.el\\'"
   "Match upstream go-mode source files with undeclared optional client APIs.")

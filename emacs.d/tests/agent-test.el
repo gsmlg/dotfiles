@@ -224,11 +224,10 @@
       (run-hooks 'after-init-hook)
       (should-not started))))
 
-(ert-deftest gsmlg-agent-server-start-starts-enabled-editor ()
-  "Starting the Emacs server starts an explicitly enabled Agent Editor."
+(ert-deftest gsmlg-agent-server-start-starts-editor-by-default ()
+  "Starting the Emacs server starts Agent Editor by default."
   (gsmlg-agent-test--with-emacs-server "agent-lifecycle-test"
-    (let ((gsmlg-agent-autostart t)
-          started)
+    (let (started)
       (setenv "EMACS_AGENT_AUTOSTART" nil)
       (cl-letf (((symbol-function #'emacs-agent-editor-running-p)
                  (lambda () nil))
@@ -240,8 +239,8 @@
         (server-start nil t)
         (should started)))))
 
-(ert-deftest gsmlg-agent-server-start-preserves-opt-in-policy ()
-  "Starting the Emacs server leaves disabled Agent Editor autostart off."
+(ert-deftest gsmlg-agent-server-start-honors-explicit-opt-out ()
+  "Starting the Emacs server honors explicit Agent Editor opt-out."
   (gsmlg-agent-test--with-emacs-server "agent-opt-in-test"
     (let ((gsmlg-agent-autostart nil)
           started)

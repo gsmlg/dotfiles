@@ -315,9 +315,9 @@ daemon_assertions="
   (unless (equal (file-truename user-init-file)
                  (file-truename \"$init_file\"))
     (error \"Named daemon loaded unexpected init file: %S\" user-init-file))
-  (when (and (fboundp 'emacs-agent-editor-running-p)
-             (emacs-agent-editor-running-p))
-    (error \"Named daemon opened Agent Editor MCP without opt-in\"))
+  (unless (and (fboundp 'emacs-agent-editor-running-p)
+               (emacs-agent-editor-running-p))
+    (error \"Named daemon did not start Agent Editor MCP with its server\"))
   t)"
 
 printf '==> Verifying natural XDG discovery in a named daemon\n'

@@ -28,9 +28,8 @@
 (setopt gsmlg-desktop-save-enabled nil
         gsmlg-server-autostart nil)
 
-;; Agent Editor MCP starts one project-optional editor runtime.
-(setopt gsmlg-agent-autostart nil
-        gsmlg-agent-port 9876)
+;; Agent Editor MCP follows the server and starts one project-optional runtime.
+(setopt gsmlg-agent-port 9876)
 
 ;; Optional fonts are applied only when present.
 (setopt gsmlg-default-font-family "Source Code Pro"

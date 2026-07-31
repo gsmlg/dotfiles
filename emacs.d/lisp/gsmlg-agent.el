@@ -38,10 +38,11 @@
   :type '(integer 1 65535)
   :group 'gsmlg-agent)
 
-(defcustom gsmlg-agent-autostart nil
+(defcustom gsmlg-agent-autostart t
   "Whether to start Agent Editor MCP with the interactive Emacs server.
-Autostart is always disabled in batch mode.  `EMACS_AGENT_AUTOSTART' can also
-enable autostart."
+Autostart follows the server lifecycle by default and is always disabled in
+batch mode.  Set this option to nil to opt out; a truthy
+`EMACS_AGENT_AUTOSTART' still enables autostart explicitly."
   :type 'boolean
   :group 'gsmlg-agent)
 

@@ -250,11 +250,10 @@ always refuses to start one. Server authentication files live under XDG state.
 
 Agent Editor MCP binds to `127.0.0.1` only. Port 9876 is the default and
 `EMACS_AGENT_PORT` may override it. The package API also accepts port `0`
-explicitly to request an ephemeral port. Loading the configuration does not
-start a listener. Start it with `M-x gsmlg-agent-start`, or opt into autostart
-with `gsmlg-agent-autostart`/`EMACS_AGENT_AUTOSTART`. Opt-in autostart follows
-the local Emacs server lifecycle: the listener starts only after the server
-starts and stops when the server stops.
+explicitly to request an ephemeral port. The listener follows the local Emacs
+server lifecycle by default: it starts only after this process owns the server
+and stops when the server stops. Set `gsmlg-agent-autostart` to `nil` to opt
+out, or use `M-x gsmlg-agent-start` for explicit startup.
 
 One Emacs process owns one editor runtime, one mutation queue, and one
 canonical document registry. It can manage direct absolute local files and

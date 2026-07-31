@@ -8,6 +8,7 @@
 
 (require 'subr-x)
 (require 'gsmlg-paths)
+(require 'server)
 
 (declare-function emacs-agent-editor-running-p "emacs-agent-editor" ())
 (declare-function emacs-agent-editor-start
@@ -38,9 +39,9 @@
   :group 'gsmlg-agent)
 
 (defcustom gsmlg-agent-autostart nil
-  "Whether to start Agent Editor MCP after interactive Emacs startup.
-Autostart is always disabled in batch mode.  `EMACS_AGENT_AUTOSTART' can
-also enable autostart."
+  "Whether to start Agent Editor MCP with the interactive Emacs server.
+Autostart is always disabled in batch mode.  `EMACS_AGENT_AUTOSTART' can also
+enable autostart."
   :type 'boolean
   :group 'gsmlg-agent)
 
@@ -122,8 +123,43 @@ also enable autostart."
 (defalias 'gsmlg/agent-editor-mcp-autostart
   #'gsmlg-agent-autostart-maybe)
 
+(defun gsmlg-agent-start-for-server-maybe ()
+  "Start Agent Editor MCP when this Emacs process owns a live server."
+  (when (and server-mode
+             (process-live-p server-process))
+    (gsmlg-agent-autostart-maybe)))
+
+(defun gsmlg-agent--after-server-start (&rest _arguments)
+  "Start Agent Editor MCP after startup of the local Emacs server.
+Emacs 30.2 provides no `server-start-hook', and `server-start' does not run
+`server-mode-hook', so lifecycle synchronization requires named advice."
+  (gsmlg-agent-start-for-server-maybe))
+
+(defun gsmlg-agent--stop-if-running ()
+  "Stop Agent Editor MCP when its package and listener are active."
+  (when (and gsmlg-agent-package-available-p
+             (fboundp #'emacs-agent-editor-running-p)
+             (fboundp #'emacs-agent-editor-stop)
+             (emacs-agent-editor-running-p))
+    (condition-case error-data
+        (emacs-agent-editor-stop)
+      (error
+       (message "Agent Editor MCP shutdown failed: %s"
+                (error-message-string error-data))
+       nil))))
+
+(defun gsmlg-agent--after-server-stop (stopped)
+  "Stop Agent Editor MCP after the Emacs server when STOPPED is non-nil.
+Emacs 30.2 provides no `server-stop-hook', and `server-stop' does not run
+`server-mode-hook', so lifecycle synchronization requires named advice."
+  (when stopped
+    (gsmlg-agent--stop-if-running))
+  stopped)
+
 (gsmlg-agent--configure-package)
-(add-hook 'after-init-hook #'gsmlg-agent-autostart-maybe)
+(add-hook 'after-init-hook #'gsmlg-agent-start-for-server-maybe)
+(advice-add 'server-start :after #'gsmlg-agent--after-server-start)
+(advice-add 'server-stop :filter-return #'gsmlg-agent--after-server-stop)
 
 (provide 'gsmlg-agent)
 ;;; gsmlg-agent.el ends here

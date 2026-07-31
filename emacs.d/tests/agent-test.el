@@ -11,6 +11,25 @@
 (require 'gsmlg-paths)
 (require 'gsmlg-agent)
 
+(defmacro gsmlg-agent-test--with-emacs-server (name &rest body)
+  "Run BODY with an isolated Emacs server named NAME."
+  (declare (indent 1) (debug t))
+  `(let* ((root (make-temp-file "gsmlg-agent-server-" t))
+          (process-environment (copy-sequence process-environment))
+          (noninteractive nil)
+          (server-name ,name)
+          (server-socket-dir root)
+          (server-auth-dir root)
+          (server-use-tcp nil)
+          (server-process nil)
+          (server-clients nil)
+          (server-mode nil))
+     (unwind-protect
+         (progn ,@body)
+       (when server-process
+         (server-stop t))
+       (delete-directory root t))))
+
 (ert-deftest gsmlg-agent-start-uses-compatibility-port ()
   "Manual startup uses port 9876 when no environment override is present."
   (let ((process-environment (copy-sequence process-environment))
@@ -186,7 +205,78 @@
 
 (ert-deftest gsmlg-agent-autostart-is-registered-after-init ()
   "Agent autostart policy is evaluated only after initialization."
-  (should (memq #'gsmlg-agent-autostart-maybe after-init-hook)))
+  (should (memq #'gsmlg-agent-start-for-server-maybe after-init-hook)))
+
+(ert-deftest gsmlg-agent-after-init-waits-for-emacs-server ()
+  "Agent autostart waits until this Emacs process owns a server."
+  (let ((process-environment (copy-sequence process-environment))
+        (noninteractive nil)
+        (server-mode nil)
+        (server-process nil)
+        (gsmlg-agent-autostart t)
+        started)
+    (setenv "EMACS_AGENT_AUTOSTART" nil)
+    (cl-letf (((symbol-function #'emacs-agent-editor-running-p)
+               (lambda () nil))
+              ((symbol-function #'emacs-agent-editor-start)
+               (lambda (&rest _arguments)
+                 (setq started t))))
+      (run-hooks 'after-init-hook)
+      (should-not started))))
+
+(ert-deftest gsmlg-agent-server-start-starts-enabled-editor ()
+  "Starting the Emacs server starts an explicitly enabled Agent Editor."
+  (gsmlg-agent-test--with-emacs-server "agent-lifecycle-test"
+    (let ((gsmlg-agent-autostart t)
+          started)
+      (setenv "EMACS_AGENT_AUTOSTART" nil)
+      (cl-letf (((symbol-function #'emacs-agent-editor-running-p)
+                 (lambda () nil))
+                ((symbol-function #'emacs-agent-editor-start)
+                 (lambda (_port)
+                   (should (process-live-p server-process))
+                   (setq started t)
+                   'agent-server)))
+        (server-start nil t)
+        (should started)))))
+
+(ert-deftest gsmlg-agent-server-start-preserves-opt-in-policy ()
+  "Starting the Emacs server leaves disabled Agent Editor autostart off."
+  (gsmlg-agent-test--with-emacs-server "agent-opt-in-test"
+    (let ((gsmlg-agent-autostart nil)
+          started)
+      (setenv "EMACS_AGENT_AUTOSTART" nil)
+      (cl-letf (((symbol-function #'emacs-agent-editor-running-p)
+                 (lambda () nil))
+                ((symbol-function #'emacs-agent-editor-start)
+                 (lambda (&rest _arguments)
+                   (setq started t))))
+        (server-start nil t)
+        (should-not started)))))
+
+(ert-deftest gsmlg-agent-server-stop-stops-running-editor ()
+  "Stopping the Emacs server stops a running Agent Editor."
+  (gsmlg-agent-test--with-emacs-server "agent-lifecycle-stop-test"
+    (let ((gsmlg-agent-autostart t)
+          running
+          stopped)
+      (setenv "EMACS_AGENT_AUTOSTART" nil)
+      (cl-letf (((symbol-function #'emacs-agent-editor-running-p)
+                 (lambda () running))
+                ((symbol-function #'emacs-agent-editor-start)
+                 (lambda (_port)
+                   (setq running t)
+                   'agent-server))
+                ((symbol-function #'emacs-agent-editor-stop)
+                 (lambda ()
+                   (should-not server-process)
+                   (setq running nil
+                         stopped t)
+                   'stopped)))
+        (server-start nil t)
+        (should running)
+        (server-stop t)
+        (should stopped)))))
 
 (ert-deftest gsmlg-agent-autostart-needs-no-project ()
   "Explicit autostart starts the project-optional editor runtime."

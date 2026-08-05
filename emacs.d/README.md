@@ -238,6 +238,32 @@ server. Batch mode never opens a server socket.
 Optional desktop persistence is controlled by
 `gsmlg-desktop-save-enabled` and is off by default.
 
+## GSMLG AI Workbench
+
+The AI Workbench (`gsmlg-ai-*`) and inline completion (`gsmlg-ai-completion-*`)
+are deferred applications. Normal startup does not load `gptel` or `minuet`,
+and no network request runs until you invoke a command.
+
+Prefix map: `C-c A` (Org Agenda remains `C-c a`).
+
+| Command | Purpose |
+| --- | --- |
+| `C-c A g` / `gsmlg-ai-chat` | gptel chat |
+| `C-c A a` / `gsmlg-ai-ask` | one-shot question over selected context |
+| `C-c A v` / `gsmlg-ai-review` | read-only review |
+| `C-c A r` / `gsmlg-ai-rewrite-region` | preview-based region rewrite |
+| `C-c A e` / `gsmlg-ai-edit` | staged multi-file edit proposal |
+| `C-c A c` | context manager |
+| `C-c A p` | proposal review / apply |
+| `C-c A i` | manual inline suggestion |
+| `C-c A t` / `T` | buffer-local / global automatic completion |
+| `C-c A ?` | completion diagnostics |
+
+Configure gptel backends and Minuet providers in the external local override
+(see `local.el.example`). Multi-file edits stay in memory until you explicitly
+apply them; apply never saves. Inline completion is independent of workbench
+context and never writes before an accept command.
+
 ## Agent Editor MCP
 
 Agent Editor MCP autostart is off by default and always off in batch mode. No

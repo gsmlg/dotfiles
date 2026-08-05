@@ -14,6 +14,8 @@
   '(gsmlg-org
     gsmlg-elfeed
     gsmlg-agent
+    gsmlg-ai
+    gsmlg-ai-completion
     gsmlg-debug
     gsmlg-lang-elisp
     gsmlg-lang-beam
@@ -115,6 +117,33 @@
 (autoload 'gsmlg-agent-start "gsmlg-agent" nil t)
 (autoload 'gsmlg-agent-stop "gsmlg-agent" nil t)
 (autoload 'gsmlg-agent-reconcile "gsmlg-agent" nil t)
+
+(dolist
+    (command
+     '(gsmlg-ai-chat
+       gsmlg-ai-menu
+       gsmlg-ai-ask
+       gsmlg-ai-review
+       gsmlg-ai-rewrite-region
+       gsmlg-ai-edit
+       gsmlg-ai-context-show
+       gsmlg-ai-context-add-buffer
+       gsmlg-ai-context-add-region
+       gsmlg-ai-context-add-file
+       gsmlg-ai-context-add-project-files
+       gsmlg-ai-context-add-dired
+       gsmlg-ai-context-clear
+       gsmlg-ai-proposal-show
+       gsmlg-ai-cancel))
+  (autoload command "gsmlg-ai" nil t))
+
+(dolist
+    (command
+     '(gsmlg-ai-completion-show
+       gsmlg-ai-completion-mode
+       gsmlg-ai-global-completion-mode
+       gsmlg-ai-completion-diagnose))
+  (autoload command "gsmlg-ai-completion" nil t))
 
 (with-eval-after-load 'org
   (gsmlg-apps--prepare-org))

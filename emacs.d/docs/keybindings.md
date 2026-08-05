@@ -169,6 +169,23 @@ They were inventoried rather than silently dropped:
 |---|---|---|---|---|---|
 | Global | `C-c l` | `org-store-link` | `org-store-link` | Exact | Unchanged. |
 | Global | `C-c a` | `org-agenda` | `org-agenda` | Exact | Unchanged. |
+| Global | `C-c A` | Unassigned | `gsmlg-ai-prefix-map` | Exact | New AI Workbench prefix; lowercase agenda binding is unchanged. |
+| `C-c A` prefix | `g` | Unassigned | `gsmlg-ai-chat` | Exact | Open gptel chat. |
+| `C-c A` prefix | `m` | Unassigned | `gsmlg-ai-menu` | Exact | gptel model/request menu. |
+| `C-c A` prefix | `a` | Unassigned | `gsmlg-ai-ask` | Exact | Ask about workbench context. |
+| `C-c A` prefix | `v` | Unassigned | `gsmlg-ai-review` | Exact | Read-only review. |
+| `C-c A` prefix | `r` | Unassigned | `gsmlg-ai-rewrite-region` | Exact | Preview-based region rewrite. |
+| `C-c A` prefix | `e` | Unassigned | `gsmlg-ai-edit` | Exact | Staged multi-file edit. |
+| `C-c A` prefix | `c` | Unassigned | `gsmlg-ai-context-show` | Exact | Context manager. |
+| `C-c A` prefix | `b` | Unassigned | `gsmlg-ai-context-add-buffer` | Exact | Add current buffer. |
+| `C-c A` prefix | `f` | Unassigned | `gsmlg-ai-context-add-file` | Exact | Add files. |
+| `C-c A` prefix | `d` | Unassigned | `gsmlg-ai-context-add-dired` | Exact | Add Dired marks. |
+| `C-c A` prefix | `p` | Unassigned | `gsmlg-ai-proposal-show` | Exact | Proposal review. |
+| `C-c A` prefix | `x` | Unassigned | `gsmlg-ai-cancel` | Exact | Cancel active request. |
+| `C-c A` prefix | `i` | Unassigned | `gsmlg-ai-completion-show` | Exact | Manual inline suggestion. |
+| `C-c A` prefix | `t` | Unassigned | `gsmlg-ai-completion-mode` | Exact | Toggle buffer-local inline completion. |
+| `C-c A` prefix | `T` | Unassigned | `gsmlg-ai-global-completion-mode` | Exact | Toggle global inline completion. |
+| `C-c A` prefix | `?` | Unassigned | `gsmlg-ai-completion-diagnose` | Exact | Completion diagnostics. |
 | Global | `C-c c` | `org-capture` | `org-capture` | Exact | Unchanged. |
 | Org | `C-M-<up>` | `org-up-element` | `org-up-element` | Exact | Unchanged. |
 | Org | `C-M-<down>` | `org-down-element` | `org-down-element` | Exact | Unchanged. |

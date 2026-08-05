@@ -31,6 +31,29 @@
 ;; Agent Editor MCP follows the server and starts one project-optional runtime.
 (setopt gsmlg-agent-port 9876)
 
+;; GSMLG AI Workbench (gptel) and inline completion (minuet) stay deferred.
+;; Configure backends/credentials only in this private local file or auth-source.
+;; Never put API keys in the tracked repository.
+;;
+;; Example gptel OpenAI-compatible backend (placeholders only):
+;; (require 'gptel)
+;; (setq gptel-model 'your-model
+;;       gptel-backend
+;;       (gptel-make-openai "local"
+;;         :host "127.0.0.1:8080"
+;;         :protocol "http"
+;;         :stream t
+;;         :key (lambda () (getenv "OPENAI_API_KEY"))
+;;         :models '(your-model)))
+;;
+;; Example Minuet FIM-compatible provider (env var name, not the secret):
+;; (setopt gsmlg-ai-completion-provider 'openai-fim-compatible)
+;; (with-eval-after-load 'minuet
+;;   (plist-put minuet-openai-fim-compatible-options
+;;              :end-point "http://127.0.0.1:11434/v1/completions")
+;;   (plist-put minuet-openai-fim-compatible-options :api-key "TERM")
+;;   (plist-put minuet-openai-fim-compatible-options :model "qwen2.5-coder:3b"))
+
 ;; Optional fonts are applied only when present.
 (setopt gsmlg-default-font-family "Source Code Pro"
         gsmlg-default-font-height 160

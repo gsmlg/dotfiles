@@ -71,7 +71,18 @@
               gsmlg-project-prefix-map))
   (should-not (lookup-key global-map (key-parse "C-c p")))
   (should (eq (lookup-key global-map (key-parse "C-, r"))
-              gsmlg-refactor-prefix-map)))
+              gsmlg-refactor-prefix-map))
+  (should (eq (lookup-key global-map (key-parse "C-c A"))
+              gsmlg-ai-prefix-map))
+  (should (eq (lookup-key global-map (key-parse "C-c a"))
+              #'org-agenda)))
+
+(ert-deftest gsmlg-ai-prefix-commands-are-interactive ()
+  "Every AI prefix target is an interactive command."
+  (dolist (key '("g" "m" "a" "v" "r" "e" "c" "b" "f" "d" "p" "x"
+                 "i" "t" "T" "?"))
+    (should (commandp (lookup-key gsmlg-ai-prefix-map
+                                  (key-parse key))))))
 
 (ert-deftest gsmlg-project-prefix-commands-are-interactive ()
   "Every retained project-prefix target is an interactive command."

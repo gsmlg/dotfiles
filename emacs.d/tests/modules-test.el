@@ -38,6 +38,8 @@
   '(gsmlg-org
     gsmlg-elfeed
     gsmlg-agent
+    gsmlg-ai
+    gsmlg-ai-completion
     gsmlg-debug
     gsmlg-lang-elisp
     gsmlg-lang-beam

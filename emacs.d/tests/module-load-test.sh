@@ -63,6 +63,8 @@ features=(
   gsmlg-org
   gsmlg-elfeed
   gsmlg-agent
+  gsmlg-ai
+  gsmlg-ai-completion
   gsmlg-lang-elisp
   gsmlg-lang-beam
   gsmlg-lang-web

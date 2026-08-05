@@ -60,6 +60,22 @@
 (declare-function vertico-directory-up "vertico-directory" (&optional n))
 (declare-function vundo "vundo" ())
 (declare-function which-key-add-keymap-based-replacements "which-key" (keymap &rest replacements))
+(declare-function gsmlg-ai-chat "gsmlg-ai" ())
+(declare-function gsmlg-ai-menu "gsmlg-ai" ())
+(declare-function gsmlg-ai-ask "gsmlg-ai" ())
+(declare-function gsmlg-ai-review "gsmlg-ai" ())
+(declare-function gsmlg-ai-rewrite-region "gsmlg-ai" ())
+(declare-function gsmlg-ai-edit "gsmlg-ai" ())
+(declare-function gsmlg-ai-context-show "gsmlg-ai" ())
+(declare-function gsmlg-ai-context-add-buffer "gsmlg-ai" ())
+(declare-function gsmlg-ai-context-add-file "gsmlg-ai" ())
+(declare-function gsmlg-ai-context-add-dired "gsmlg-ai" ())
+(declare-function gsmlg-ai-proposal-show "gsmlg-ai" ())
+(declare-function gsmlg-ai-cancel "gsmlg-ai" ())
+(declare-function gsmlg-ai-completion-show "gsmlg-ai-completion" ())
+(declare-function gsmlg-ai-completion-mode "gsmlg-ai-completion" (&optional arg))
+(declare-function gsmlg-ai-global-completion-mode "gsmlg-ai-completion" (&optional arg))
+(declare-function gsmlg-ai-completion-diagnose "gsmlg-ai-completion" ())
 
 (defvar corfu-map)
 (defvar ert-results-mode-map)
@@ -193,6 +209,22 @@
 
     (:map global-map :key "C-c l" :command org-store-link :status exact)
     (:map global-map :key "C-c a" :command org-agenda :status exact)
+    (:map gsmlg-ai-prefix-map :key "g" :command gsmlg-ai-chat :status exact)
+    (:map gsmlg-ai-prefix-map :key "m" :command gsmlg-ai-menu :status exact)
+    (:map gsmlg-ai-prefix-map :key "a" :command gsmlg-ai-ask :status exact)
+    (:map gsmlg-ai-prefix-map :key "v" :command gsmlg-ai-review :status exact)
+    (:map gsmlg-ai-prefix-map :key "r" :command gsmlg-ai-rewrite-region :status exact)
+    (:map gsmlg-ai-prefix-map :key "e" :command gsmlg-ai-edit :status exact)
+    (:map gsmlg-ai-prefix-map :key "c" :command gsmlg-ai-context-show :status exact)
+    (:map gsmlg-ai-prefix-map :key "b" :command gsmlg-ai-context-add-buffer :status exact)
+    (:map gsmlg-ai-prefix-map :key "f" :command gsmlg-ai-context-add-file :status exact)
+    (:map gsmlg-ai-prefix-map :key "d" :command gsmlg-ai-context-add-dired :status exact)
+    (:map gsmlg-ai-prefix-map :key "p" :command gsmlg-ai-proposal-show :status exact)
+    (:map gsmlg-ai-prefix-map :key "x" :command gsmlg-ai-cancel :status exact)
+    (:map gsmlg-ai-prefix-map :key "i" :command gsmlg-ai-completion-show :status exact)
+    (:map gsmlg-ai-prefix-map :key "t" :command gsmlg-ai-completion-mode :status exact)
+    (:map gsmlg-ai-prefix-map :key "T" :command gsmlg-ai-global-completion-mode :status exact)
+    (:map gsmlg-ai-prefix-map :key "?" :command gsmlg-ai-completion-diagnose :status exact)
     (:map global-map :key "C-c c" :command org-capture :status exact)
     (:map org-mode-map :key "C-M-<up>" :command org-up-element :status exact :feature org)
     (:map org-mode-map :key "C-M-<down>" :command org-down-element :status exact :feature org)
@@ -286,6 +318,26 @@ needed before asserting an alternate keyboard profile.")
   :doc "Top-level language-aware command map."
   :name "Code"
   "r" gsmlg-refactor-prefix-map)
+
+(defvar-keymap gsmlg-ai-prefix-map
+  :doc "GSMLG AI Workbench and inline completion commands."
+  :name "AI"
+  "g" #'gsmlg-ai-chat
+  "m" #'gsmlg-ai-menu
+  "a" #'gsmlg-ai-ask
+  "v" #'gsmlg-ai-review
+  "r" #'gsmlg-ai-rewrite-region
+  "e" #'gsmlg-ai-edit
+  "c" #'gsmlg-ai-context-show
+  "b" #'gsmlg-ai-context-add-buffer
+  "f" #'gsmlg-ai-context-add-file
+  "d" #'gsmlg-ai-context-add-dired
+  "p" #'gsmlg-ai-proposal-show
+  "x" #'gsmlg-ai-cancel
+  "i" #'gsmlg-ai-completion-show
+  "t" #'gsmlg-ai-completion-mode
+  "T" #'gsmlg-ai-global-completion-mode
+  "?" #'gsmlg-ai-completion-diagnose)
 
 (defvar gsmlg-consult-line-history nil
   "Accepted queries from `gsmlg-consult-line', newest first.")
@@ -439,7 +491,15 @@ history APIs."
     "r" "replace regexp" "v" "VC directory")
   (which-key-add-keymap-based-replacements
     gsmlg-refactor-prefix-map
-    "r" "rename" "a" "code action" "f" "format" "o" "organize imports"))
+    "r" "rename" "a" "code action" "f" "format" "o" "organize imports")
+  (which-key-add-keymap-based-replacements
+    gsmlg-ai-prefix-map
+    "g" "chat" "m" "model/request menu" "a" "ask about context"
+    "v" "review context" "r" "rewrite region" "e" "staged multi-file edit"
+    "c" "context" "b" "add buffer" "f" "add file" "d" "add Dired marks"
+    "p" "proposal" "x" "cancel request" "i" "inline suggestion now"
+    "t" "toggle inline completion" "T" "toggle inline completion globally"
+    "?" "completion diagnostics"))
 
 (keymap-global-set "C-c j" #'join-line)
 (keymap-global-set "C-h" #'delete-backward-char)
@@ -502,6 +562,7 @@ history APIs."
 
 (keymap-global-set "C-c l" #'org-store-link)
 (keymap-global-set "C-c a" #'org-agenda)
+(keymap-global-set "C-c A" gsmlg-ai-prefix-map)
 (keymap-global-set "C-c c" #'org-capture)
 
 (keymap-global-set "<remap> <eval-expression>" #'pp-eval-expression)

@@ -50,6 +50,12 @@ emacs.d/
 │   ├── gsmlg-org.el
 │   ├── gsmlg-elfeed.el
 │   ├── gsmlg-agent.el
+│   ├── gsmlg-ai.el
+│   ├── gsmlg-ai-completion.el
+│   ├── gsmlg-ai-context.el
+│   ├── gsmlg-ai-session.el
+│   ├── gsmlg-ai-tools.el
+│   ├── gsmlg-ai-review.el
 │   └── lang/
 │       ├── gsmlg-lang-elisp.el
 │       ├── gsmlg-lang-beam.el
@@ -106,8 +112,8 @@ Core (sync require):
        -> XDG custom file -> external local override
 
 Application (deferred by gsmlg-apps):
-  Org, Elfeed, Agent Editor MCP, Dape (gsmlg-debug),
-  language dispatch modules (gsmlg-lang-*)
+  Org, Elfeed, Agent Editor MCP, GSMLG AI Workbench / inline completion,
+  Dape (gsmlg-debug), language dispatch modules (gsmlg-lang-*)
 ```
 
 `gsmlg-package-maintenance` is never required on this path; it loads only when
@@ -177,12 +183,18 @@ and commands are asserted by the keybinding module.
 | `gsmlg-format` | Apheleia / Eglot format dispatch |
 | `gsmlg-debug` | Dape (application-deferred) |
 | `gsmlg-lang-packages` | Elpaca declarations for language modes without loading dispatch |
-| `gsmlg-app-packages` | Elpaca declarations for Org/Elfeed/Dape without loading config |
+| `gsmlg-app-packages` | Elpaca declarations for Org/Elfeed/Dape/gptel/minuet without loading config |
 | `gsmlg-apps` | autoloads, file associations, and hooks for deferred application modules |
 | `gsmlg-tramp` | compute-near-data process helpers and remote state policy |
 | `gsmlg-org` | agenda, capture, TODO, clock, Babel, Pomodoro and Org presentation |
 | `gsmlg-elfeed` | tracked feed source and XDG-backed Elfeed database |
 | `gsmlg-agent` | Agent Editor MCP state machine, reconcile, and thin server sensors |
+| `gsmlg-ai` | AI Workbench facade, shared options, chat/rewrite entry points |
+| `gsmlg-ai-completion` | Minuet policy wrapper, eligibility, CAPF coexistence, diagnostics |
+| `gsmlg-ai-context` | in-memory context manager, snapshots, sensitive/size checks |
+| `gsmlg-ai-session` | ask/review/edit session state machine and gptel orchestration |
+| `gsmlg-ai-tools` | request-scoped read/search/edit tools over proposed content |
+| `gsmlg-ai-review` | proposal UI, stale checks, apply / Apply All |
 | `gsmlg-lang-*` | non-overlapping file dispatch and tree-sitter/classic fallbacks |
 
 Magit remains in `gsmlg-vcs` with the lightweight VCS UI (diff-hl and friends)
@@ -194,10 +206,14 @@ via `use-package`. Dape is application-deferred through `gsmlg-debug`.
 `gsmlg-apps` registers:
 
 - `with-eval-after-load` for Org and Elfeed configuration modules;
-- autoloads for Agent commands and Dape;
+- autoloads for Agent commands, Dape, and AI Workbench / completion commands;
 - language dispatcher autoloads plus `auto-mode-alist` entries;
 - an interactive `after-init` load of `gsmlg-agent` so server lifecycle sensors
-  exist before `gsmlg-server-start-maybe`.
+  exist without starting MCP in batch mode.
+
+`gptel` and `minuet` are declared only in `gsmlg-app-packages` and load when an
+AI command first needs them. There is no `after-init-hook` that loads
+`gsmlg-ai`. Agent sensors still exist before `gsmlg-server-start-maybe`.
 
 Batch mode never loads Agent Editor MCP through that hook.
 

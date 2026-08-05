@@ -104,43 +104,68 @@ machine paths, private identities, and secrets there. XDG-backed
 `custom-file` is loaded first when present, then the local file is loaded
 last, so `setopt` can override any documented `gsmlg-*` user option.
 
-## Tree-sitter prerequisites
+## Tree-sitter
 
-No grammar is downloaded during startup. The configuration prefers a
-tree-sitter mode only when its grammar is installed and ready; otherwise it
-uses the documented built-in or maintained fallback.
+No grammar is downloaded during startup. Language dispatch prefers a
+tree-sitter major mode only when `treesit-ready-p` succeeds for that
+grammar; otherwise it uses the documented built-in or maintained classic
+fallback.
 
-Externally provide the grammars needed by your languages:
-
-```text
-bash  c  cpp  css  elixir  erlang  heex  html  javascript  json
-go  python  ruby  rust  toml  tsx  typescript  yaml
-```
-
-Use:
+### Supported grammars
 
 ```text
-M-x gsmlg-treesit-report
+bash  c  cpp  css  elixir  erlang  go  heex  html  javascript  json
+python  ruby  rust  toml  tsx  typescript  yaml
 ```
 
-to see current readiness. Default install recipes live in
-`gsmlg-treesit-default-sources` and fill gaps in
-`treesit-language-source-alist` without replacing entries you set in the
-local file. Compiled grammars install under the XDG data directory
-(`$XDG_DATA_HOME/emacs/tree-sitter/`). Explicit install commands:
+Erlang still uses maintained `erlang-mode` unless the running Emacs also
+supplies a compatible `erlang-ts-mode` and grammar. Terraform and HCL keep
+their maintained classic modes because GNU Emacs 30.2 does not provide
+corresponding tree-sitter major modes.
+
+### Commands
+
+| Command | Purpose |
+| --- | --- |
+| `M-x gsmlg-treesit-report` | Show ready vs missing for every grammar above |
+| `M-x gsmlg-treesit-install-language-grammar` | Install one grammar interactively |
+| `M-x gsmlg-treesit-install-all-language-grammars` | Install every missing grammar |
+
+`gsmlg-treesit-install-all-language-grammars`:
+
+- fills gaps in `treesit-language-source-alist` from
+  `gsmlg-treesit-default-sources` without replacing existing entries;
+- skips grammars that are already ready;
+- continues after individual failures and reports them in
+  `*GSMLG Tree-sitter Install*` when run interactively;
+- returns a plist with `:succeeded`, `:skipped`, and `:failed`;
+- never runs automatically at startup.
+
+Building grammars needs a working C toolchain (`cc` / `gcc` / `clang`) and
+network access to clone the recipe repositories.
+
+### Install location and load path
+
+Compiled grammars are written under the XDG data directory:
 
 ```text
-M-x gsmlg-treesit-install-language-grammar
-M-x gsmlg-treesit-install-all-language-grammars
+${XDG_DATA_HOME:-~/.local/share}/emacs/tree-sitter/
 ```
 
-The single-language helper installs one grammar. The install-all command
-skips grammars that are already ready, continues after failures, and never
-runs automatically. Erlang uses maintained
-`erlang-mode` unless the running Emacs also supplies a compatible
-`erlang-ts-mode` and grammar. Terraform and HCL use their maintained classic
-modes because GNU Emacs 30.2 does not provide corresponding tree-sitter major
-modes.
+`gsmlg-treesit` adds that directory to `treesit-extra-load-path`, so grammars
+installed by these helpers are discovered without changing system Emacs
+paths.
+
+### Custom recipes
+
+Default clone recipes live in `gsmlg-treesit-default-sources`. To override
+or extend them, set `treesit-language-source-alist` in the external local
+file. Existing entries win; defaults only fill missing languages:
+
+```elisp
+(setopt treesit-language-source-alist
+        '((elixir "https://example.invalid/tree-sitter-elixir")))
+```
 
 ## Language-server prerequisites
 

@@ -16,6 +16,7 @@
     gsmlg-bootstrap
     gsmlg-package-lock
     gsmlg-core
+    gsmlg-compat
     gsmlg-ui
     gsmlg-completion
     gsmlg-editing

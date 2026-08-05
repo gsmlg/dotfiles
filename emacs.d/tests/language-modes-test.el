@@ -191,7 +191,7 @@
                      (lambda (&rest _) project))
                     ((symbol-function #'eglot-managed-p)
                      (lambda () nil))
-                    ((symbol-function #'gsmlg-eglot-find-executable)
+                    ((symbol-function #'gsmlg-language-tools-find-executable)
                      (lambda (program)
                        (setq looked-up program)
                        "/usr/bin/bash-language-server"))

@@ -37,7 +37,7 @@ shell would not name an executable there."
 (defun gsmlg-language-tools-available-command (candidates)
   "Return the first executable command list from CANDIDATES."
   (cl-loop for candidate in candidates
-           when (gsmlg-eglot-find-executable (car candidate))
+           when (gsmlg-language-tools-find-executable (car candidate))
            return candidate))
 
 (defun gsmlg-language-tools-command-executable-p (program &optional root)
@@ -60,7 +60,7 @@ both local and TRAMP probes near the data rather than on the client host."
          (expand-file-name program root))))
      (t
       (let ((default-directory root))
-        (gsmlg-eglot-find-executable program))))))
+        (gsmlg-language-tools-find-executable program))))))
 
 (defun gsmlg-language-tools-normalize-override (override root)
   "Validate OVERRIDE from ROOT and return an Eglot-safe command.

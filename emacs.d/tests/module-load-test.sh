@@ -43,6 +43,7 @@ features=(
   gsmlg-package-lock
   gsmlg-package-maintenance
   gsmlg-core
+  gsmlg-compat
   gsmlg-ui
   gsmlg-completion
   gsmlg-editing

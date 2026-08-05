@@ -1103,7 +1103,11 @@
           "emacs_agent_format_range"))))))
 
 (ert-deftest emacs-agent-semantic-runtime-capabilities-reject-etags-without-tags ()
-  "A README buffer must not advertise unusable fallback etags support."
+  "A README buffer must not advertise unusable fallback etags support.
+
+Emacs 30 always exposes `etags' from `etags--xref-backend'.  Emacs 31+ only
+returns `etags' when a tags table is configured, so `xref-find-backend' is nil
+without tags.  Either way, xref tools must remain unavailable."
   (let ((root (make-temp-file "emacs-agent-semantic-gfm-" t)))
     (unwind-protect
         (with-temp-buffer
@@ -1115,14 +1119,18 @@
           (setq-local default-tags-table-function nil)
           (setq-local xref-backend-functions
                       (list #'etags--xref-backend))
-          (let* ((report
+          (let* ((etags-claims-backend (etags--xref-backend))
+                 (report
                   (emacs-agent-semantic-runtime-capabilities
                    (current-buffer)))
                  (providers (alist-get 'providers report))
                  (xref (alist-get 'xref providers))
                  (availability (alist-get 'tool_availability report)))
-            (should (eq (alist-get 'backend_present xref) t))
-            (should (equal (alist-get 'provider xref) "etags"))
+            (if etags-claims-backend
+                (progn
+                  (should (eq (alist-get 'backend_present xref) t))
+                  (should (equal (alist-get 'provider xref) "etags")))
+              (should (eq (alist-get 'backend_present xref) :false)))
             (should (eq (alist-get 'noninteractive_ready xref) :false))
             (should (eq (alist-get 'available xref) :false))
             (dolist (tool '("emacs_agent_project_symbols"
@@ -1137,6 +1145,45 @@
                     (equal (alist-get 'tool entry) tool))
                   availability))
                 :false)))))
+      (delete-directory root t))))
+
+(ert-deftest emacs-agent-semantic-runtime-capabilities-follow-etags-31-backend-gate ()
+  "When etags declines without tags, capabilities must not claim a backend."
+  (let ((root (make-temp-file "emacs-agent-semantic-gfm31-" t)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq buffer-file-name (expand-file-name "README.md" root)
+                default-directory (file-name-as-directory root))
+          (emacs-agent-semantic-test-gfm-mode)
+          (setq-local tags-file-name nil)
+          (setq-local tags-table-list nil)
+          (setq-local default-tags-table-function nil)
+          (setq-local xref-backend-functions
+                      (list #'etags--xref-backend))
+          (cl-letf (((symbol-function 'etags--xref-backend)
+                     (lambda ()
+                       (when (or tags-table-list tags-file-name)
+                         'etags))))
+            (let* ((report
+                    (emacs-agent-semantic-runtime-capabilities
+                     (current-buffer)))
+                   (xref (alist-get 'xref (alist-get 'providers report)))
+                   (availability (alist-get 'tool_availability report)))
+              (should (eq (alist-get 'backend_present xref) :false))
+              (should (eq (alist-get 'available xref) :false))
+              (should (eq (alist-get 'noninteractive_ready xref) :false))
+              (dolist (tool '("emacs_agent_project_symbols"
+                              "emacs_agent_symbol_definition"
+                              "emacs_agent_symbol_references"))
+                (should
+                 (eq
+                  (alist-get
+                   'available
+                   (seq-find
+                    (lambda (entry)
+                      (equal (alist-get 'tool entry) tool))
+                    availability))
+                  :false))))))
       (delete-directory root t))))
 
 (ert-deftest emacs-agent-semantic-runtime-capabilities-do-not-query-eglot ()

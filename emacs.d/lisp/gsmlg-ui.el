@@ -9,6 +9,7 @@
 
 (require 'gsmlg-paths)
 (require 'gsmlg-bootstrap)
+(require 'gsmlg-compat)
 (require 'project)
 (require 'seq)
 (require 'subr-x)
@@ -20,7 +21,6 @@
 (declare-function flymake-diagnostic-type "flymake" (diag))
 (declare-function flymake-running-backends "flymake")
 (declare-function flymake-reporting-backends "flymake")
-(declare-function flymake--lookup-type-property "flymake" (type prop &optional default))
 (defvar duskmoon-header-line-style)
 (defvar duskmoon-mode-line-style)
 (defvar org-mode-line-string)
@@ -354,13 +354,12 @@ fall back to `gsmlg-ui-glyphs-ascii'."
   (if (and (fboundp #'flymake-diagnostics)
            (fboundp #'flymake-diagnostic-type))
       (let ((target-severity
-             (and (fboundp #'flymake--lookup-type-property)
-                  (flymake--lookup-type-property type 'severity))))
+             (gsmlg-compat-flymake-diagnostic-severity type)))
         (seq-count
          (lambda (diag)
            (let ((diag-type (flymake-diagnostic-type diag)))
              (if target-severity
-                 (eq (flymake--lookup-type-property diag-type 'severity)
+                 (eq (gsmlg-compat-flymake-diagnostic-severity diag-type)
                      target-severity)
                (eq diag-type type))))
          (flymake-diagnostics)))

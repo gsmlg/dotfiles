@@ -7,6 +7,7 @@
 ;;; Code:
 
 (require 'test-helper)
+(require 'gsmlg-treesit)
 (require 'gsmlg-lang-beam)
 (require 'gsmlg-lang-web)
 (require 'gsmlg-lang-systems)
@@ -319,6 +320,59 @@
                       gsmlg-eglot-unavailable-cache))))
       (clrhash gsmlg-eglot-unavailable-cache)
       (delete-directory root t))))
+
+(ert-deftest gsmlg-treesit-install-all-installs-missing-and-continues ()
+  "Install every missing grammar and continue after failures."
+  (let* ((attempted nil)
+         (ready '(python))
+         (summary nil))
+    (cl-letf (((symbol-function #'gsmlg-treesit-ready-p)
+               (lambda (language)
+                 (memq language ready)))
+              ((symbol-function #'treesit-install-language-grammar)
+               (lambda (language &optional _out-dir)
+                 (push language attempted)
+                 (when (eq language 'elixir)
+                   (error "Missing source"))))
+              ((symbol-function #'message)
+               (lambda (&rest _arguments) nil)))
+      (setq summary (gsmlg-treesit-install-all-language-grammars)))
+    (should (memq 'elixir (plist-get summary :failed)))
+    (should (memq 'python (plist-get summary :skipped)))
+    (should (memq 'heex (plist-get summary :succeeded)))
+    (should (memq 'elixir attempted))
+    (should (memq 'heex attempted))
+    (should-not (memq 'python attempted))
+    (should (equal (length attempted)
+                   (- (length gsmlg-treesit-languages) 1)))))
+
+(ert-deftest gsmlg-treesit-default-sources-cover-registry-languages ()
+  "Every registry grammar should have a default install recipe."
+  (dolist (language gsmlg-treesit-languages)
+    (should (assq language gsmlg-treesit-default-sources))
+    (should (stringp (nth 1 (assq language gsmlg-treesit-default-sources))))))
+
+(ert-deftest gsmlg-treesit-ensure-sources-preserve-user-recipes ()
+  "Default recipes fill gaps without replacing user recipes."
+  (let ((treesit-language-source-alist
+         '((elixir "https://example.invalid/elixir"))))
+    (gsmlg-treesit-ensure-sources)
+    (should (equal (alist-get 'elixir treesit-language-source-alist)
+                   '("https://example.invalid/elixir")))
+    (should (assq 'heex treesit-language-source-alist))))
+
+(ert-deftest gsmlg-treesit-install-uses-data-directory ()
+  "Grammar installation should target the XDG data tree-sitter directory."
+  (let* ((out-dirs nil)
+         (directory (gsmlg-treesit-grammar-directory)))
+    (cl-letf (((symbol-function #'treesit-install-language-grammar)
+               (lambda (_language &optional out-dir)
+                 (push out-dir out-dirs))))
+      (gsmlg-treesit-install-language-grammar 'elixir))
+    (should (equal out-dirs (list directory)))
+    (should (string-prefix-p
+             (file-truename gsmlg-data-directory)
+             (file-truename directory)))))
 
 (provide 'language-modes-test)
 ;;; language-modes-test.el ends here

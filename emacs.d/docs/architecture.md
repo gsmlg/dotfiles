@@ -261,8 +261,12 @@ save hooks.
 
 Tree-sitter grammars are selected only when `treesit-ready-p` succeeds. A
 maintained classic mode remains the fallback. `M-x gsmlg-treesit-report`
-reports readiness; `M-x gsmlg-treesit-install-language-grammar` is an explicit
-user action and never runs during startup.
+reports readiness; `M-x gsmlg-treesit-install-language-grammar` and
+`M-x gsmlg-treesit-install-all-language-grammars` are explicit user actions
+and never run during startup. Default recipes come from
+`gsmlg-treesit-default-sources`; compiled grammars install under
+`gsmlg-data-directory/tree-sitter/` and are discovered through
+`treesit-extra-load-path`.
 
 ## Projects, Git worktrees, and environments
 

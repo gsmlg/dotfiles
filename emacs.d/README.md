@@ -123,15 +123,20 @@ Use:
 M-x gsmlg-treesit-report
 ```
 
-to see current readiness. If an explicit Emacs-side install is desired, first
-define the relevant entries in `treesit-language-source-alist` in the local
-file, then invoke:
+to see current readiness. Default install recipes live in
+`gsmlg-treesit-default-sources` and fill gaps in
+`treesit-language-source-alist` without replacing entries you set in the
+local file. Compiled grammars install under the XDG data directory
+(`$XDG_DATA_HOME/emacs/tree-sitter/`). Explicit install commands:
 
 ```text
 M-x gsmlg-treesit-install-language-grammar
+M-x gsmlg-treesit-install-all-language-grammars
 ```
 
-This helper is never called automatically. Erlang uses maintained
+The single-language helper installs one grammar. The install-all command
+skips grammars that are already ready, continues after failures, and never
+runs automatically. Erlang uses maintained
 `erlang-mode` unless the running Emacs also supplies a compatible
 `erlang-ts-mode` and grammar. Terraform and HCL use their maintained classic
 modes because GNU Emacs 30.2 does not provide corresponding tree-sitter major

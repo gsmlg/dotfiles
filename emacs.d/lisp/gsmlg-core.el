@@ -38,7 +38,7 @@
 (setq ring-bell-function #'ignore
       use-file-dialog nil
       use-dialog-box nil
-      confirm-kill-emacs #'yes-or-no-p
+      confirm-kill-emacs nil
       require-final-newline t
       read-process-output-max (* 1024 1024)
       enable-recursive-minibuffers t)

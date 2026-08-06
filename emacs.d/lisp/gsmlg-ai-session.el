@@ -14,6 +14,7 @@
 (defvar gptel-tools)
 (declare-function gptel-tool-function "gptel-request" (tool))
 (declare-function gptel-tool-args "gptel-request" (tool))
+(declare-function gptel-make-tool "gptel-request" (&rest slots))
 (declare-function project-current "project" (&optional maybe-prompt directory))
 (declare-function project-root "project" (project))
 (declare-function gsmlg-ai-tools-register "gsmlg-ai-tools" (session))
@@ -250,6 +251,18 @@ Optional ROOT is the creation root for staged new files."
       (message "AI edit failed: %s"
                (car (gsmlg-ai-session-errors session)))))))
 
+(defun gsmlg-ai-session--retire-active (&optional abort)
+  "Clear the active edit session from the registry and active slot.
+When ABORT is non-nil, abort its in-flight gptel request first."
+  (when-let* ((session gsmlg-ai-session--active))
+    (when abort
+      (when-let* ((buffer (gsmlg-ai-session-request-buffer session)))
+        (gsmlg-ai--abort buffer)))
+    (require 'gsmlg-ai-tools)
+    (gsmlg-ai-tools-unregister session)
+    (setq gsmlg-ai-session--active nil)
+    session))
+
 (defun gsmlg-ai-session-edit (prompt &optional choose-root)
   "Start a staged multi-file edit session for PROMPT.
 With prefix argument CHOOSE-ROOT, prompt for the creation root."
@@ -260,7 +273,10 @@ With prefix argument CHOOSE-ROOT, prompt for the creation root."
              (memq (gsmlg-ai-session-state gsmlg-ai-session--active)
                    '(preparing waiting tooling ready)))
     (unless (yes-or-no-p "Discard the existing AI proposal and start over? ")
-      (user-error "Edit session already active")))
+      (user-error "Edit session already active"))
+    (let ((old (gsmlg-ai-session--retire-active t)))
+      (when old
+        (gsmlg-ai-session--set-state old 'discarded))))
   (gsmlg-ai--ensure-gptel)
   (unless (fboundp #'gptel-make-tool)
     (user-error "Edit requires a tool-capable gptel"))
@@ -334,19 +350,40 @@ With prefix argument CHOOSE-ROOT, prompt for the creation root."
          :system gsmlg-ai-edit-system-directive)))))
 
 (defun gsmlg-ai-session-cancel ()
-  "Cancel the active workbench request and clean staged state."
+  "Cancel incomplete workbench requests.
+A ready edit proposal is left intact; use
+`gsmlg-ai-session-discard' to remove it."
   (interactive)
-  (dolist (session (delq nil (list gsmlg-ai-session--active
-                                   gsmlg-ai-session--oneshot)))
-    (when-let* ((buffer (gsmlg-ai-session-request-buffer session)))
-      (gsmlg-ai--abort buffer))
-    (gsmlg-ai-session--set-state session 'cancelled)
-    (when (eq (gsmlg-ai-session-kind session) 'edit)
-      (require 'gsmlg-ai-tools)
-      (gsmlg-ai-tools-unregister session)
-      (unless (eq (gsmlg-ai-session-state session) 'ready)
-        (setq gsmlg-ai-session--active nil))))
-  (message "AI request cancelled"))
+  (let ((cancelled nil)
+        (kept-ready nil))
+    (when-let* ((session gsmlg-ai-session--oneshot))
+      (when-let* ((buffer (gsmlg-ai-session-request-buffer session)))
+        (gsmlg-ai--abort buffer))
+      (gsmlg-ai-session--set-state session 'cancelled)
+      (setq gsmlg-ai-session--oneshot nil
+            cancelled t))
+    (when-let* ((session gsmlg-ai-session--active))
+      (let ((prior (gsmlg-ai-session-state session)))
+        (cond
+         ((eq prior 'ready)
+          (setq kept-ready t))
+         (t
+          (when-let* ((buffer (gsmlg-ai-session-request-buffer session)))
+            (gsmlg-ai--abort buffer))
+          (gsmlg-ai-session--set-state session 'cancelled)
+          (require 'gsmlg-ai-tools)
+          (gsmlg-ai-tools-unregister session)
+          (setq gsmlg-ai-session--active nil
+                cancelled t)))))
+    (cond
+     ((and kept-ready (not cancelled))
+      (message "Ready proposal kept; use discard to remove it"))
+     (kept-ready
+      (message "AI request cancelled; ready proposal kept"))
+     (cancelled
+      (message "AI request cancelled"))
+     (t
+      (message "No active AI request")))))
 
 (defun gsmlg-ai-session-discard ()
   "Discard the active edit proposal after confirmation."
@@ -355,9 +392,9 @@ With prefix argument CHOOSE-ROOT, prompt for the creation root."
     (user-error "No active proposal"))
   (unless (yes-or-no-p "Discard the AI proposal? ")
     (user-error "Discard cancelled"))
-  (require 'gsmlg-ai-tools)
-  (gsmlg-ai-tools-unregister gsmlg-ai-session--active)
-  (setq gsmlg-ai-session--active nil)
+  (let ((old (gsmlg-ai-session--retire-active t)))
+    (when old
+      (gsmlg-ai-session--set-state old 'discarded)))
   (message "AI proposal discarded"))
 
 (provide 'gsmlg-ai-session)

@@ -78,5 +78,25 @@
      (gsmlg-ai-context-entry-editable-p
       (car (gsmlg-ai-context-current-entries))))))
 
+(ert-deftest gsmlg-ai-context-region-and-file-coexist ()
+  "Region context does not replace a whole-file entry for the same path."
+  (gsmlg-ai-context-clear-all t)
+  (gsmlg-ai-test--with-temp-file
+   "whole\n"
+   (lambda (file)
+     (with-current-buffer (find-file-noselect file)
+       (gsmlg-ai-context-add-current-buffer)
+       (goto-char (point-min))
+       (set-mark (point))
+       (goto-char (point-max))
+       (activate-mark)
+       (gsmlg-ai-context-add-current-region)
+       (let ((entries (gsmlg-ai-context-current-entries)))
+         (should (= 2 (length entries)))
+         (should (cl-find 'file entries :key #'gsmlg-ai-context-entry-kind))
+         (should (cl-find 'region entries :key #'gsmlg-ai-context-entry-kind)))
+       (set-buffer-modified-p nil)
+       (kill-buffer (current-buffer))))))
+
 (provide 'ai-context-test)
 ;;; ai-context-test.el ends here

@@ -3,12 +3,13 @@
 ;;; Commentary:
 ;; Public commands, shared options, and deferred lifecycle for the AI
 ;; workbench.  Provider packages load only when a workbench command runs.
+;; DeepSeek (`deepseek-v4-flash`) is the default gptel backend; the API key
+;; is read from the environment and never stored in tracked files.
 
 ;;; Code:
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'gsmlg-paths)
 
 (defvar gptel-backend)
 (defvar gptel-model)
@@ -22,6 +23,9 @@
 (declare-function gptel-abort "gptel-request" (buf))
 (declare-function gptel-backend-name "gptel-request" (backend))
 (declare-function gptel-make-tool "gptel-request" (&rest slots))
+(declare-function gptel-make-deepseek "gptel-openai-extras" (name &rest keys))
+(declare-function gptel-get-preset "gptel" (name))
+(declare-function gsmlg-bootstrap-wait "gsmlg-bootstrap" ())
 (declare-function gsmlg-ai-session-ask "gsmlg-ai-session" (prompt))
 (declare-function gsmlg-ai-session-review "gsmlg-ai-session" (prompt))
 (declare-function gsmlg-ai-session-edit "gsmlg-ai-session" (prompt &optional choose-root))
@@ -40,10 +44,28 @@
   :group 'gsmlg
   :prefix "gsmlg-ai-")
 
+(defcustom gsmlg-ai-configure-deepseek-default t
+  "When non-nil, configure DeepSeek as the default gptel backend on first use.
+Only runs after a workbench command loads gptel; never during Emacs startup."
+  :type 'boolean
+  :group 'gsmlg-ai)
+
+(defcustom gsmlg-ai-deepseek-model 'deepseek-v4-flash
+  "Default DeepSeek model symbol for workbench requests."
+  :type 'symbol
+  :group 'gsmlg-ai)
+
+(defcustom gsmlg-ai-deepseek-api-key-env "DEEPSEEK_API_KEY"
+  "Environment variable name holding the DeepSeek API key.
+The value is never written to tracked configuration."
+  :type 'string
+  :group 'gsmlg-ai)
+
 (defcustom gsmlg-ai-default-preset nil
   "Optional gptel preset name used by workbench requests.
-When nil, use the active gptel backend and model."
+When nil, use the active gptel backend and model (DeepSeek by default)."
   :type '(choice (const :tag "Active backend/model" nil)
+                 (symbol :tag "Preset symbol")
                  (string :tag "Preset name"))
   :group 'gsmlg-ai)
 
@@ -130,17 +152,71 @@ When non-nil, called instead of `gptel-request' with the same arguments.")
 (defvar gsmlg-ai--ensure-gptel-function nil
   "Optional override for gptel loading used by offline tests.")
 
+(defvar gsmlg-ai--deepseek-configured nil
+  "Non-nil after DeepSeek has been registered as the default gptel backend.")
+
+(defun gsmlg-ai--deepseek-api-key ()
+  "Return the DeepSeek API key from `gsmlg-ai-deepseek-api-key-env'."
+  (let ((key (getenv gsmlg-ai-deepseek-api-key-env)))
+    (if (and key (not (string-empty-p key)))
+        key
+      (user-error "DeepSeek API key missing; export %s"
+                  gsmlg-ai-deepseek-api-key-env))))
+
+(defun gsmlg-ai--configure-deepseek ()
+  "Register DeepSeek as the default gptel backend when enabled.
+Idempotent and deferred: only runs after gptel is loaded for a command."
+  (when (and gsmlg-ai-configure-deepseek-default
+             (not gsmlg-ai--deepseek-configured))
+    (unless (fboundp #'gptel-make-deepseek)
+      (require 'gptel-openai-extras nil t))
+    (unless (fboundp #'gptel-make-deepseek)
+      (user-error "Gptel DeepSeek backend is unavailable; update gptel"))
+    (setq gptel-backend
+          (gptel-make-deepseek "DeepSeek"
+            :stream t
+            :key #'gsmlg-ai--deepseek-api-key)
+          gptel-model gsmlg-ai-deepseek-model
+          gsmlg-ai--deepseek-configured t)))
+
 (defun gsmlg-ai--ensure-gptel ()
   "Load gptel for workbench commands, or run the test override."
   (if gsmlg-ai--ensure-gptel-function
       (funcall gsmlg-ai--ensure-gptel-function)
     (require 'gptel)
     (when (fboundp #'gsmlg-bootstrap-wait)
-      (gsmlg-bootstrap-wait))))
+      (gsmlg-bootstrap-wait))
+    (gsmlg-ai--configure-deepseek)))
+
+(defun gsmlg-ai--preset-symbol ()
+  "Return `gsmlg-ai-default-preset' as a symbol, or nil."
+  (cond
+   ((null gsmlg-ai-default-preset) nil)
+   ((symbolp gsmlg-ai-default-preset) gsmlg-ai-default-preset)
+   ((and (stringp gsmlg-ai-default-preset)
+         (not (string-empty-p gsmlg-ai-default-preset)))
+    (intern gsmlg-ai-default-preset))
+   (t nil)))
 
 (defun gsmlg-ai--request (&rest arguments)
-  "Dispatch a gptel request with ARGUMENTS, honoring test overrides."
-  (apply (or gsmlg-ai--request-function #'gptel-request) arguments))
+  "Dispatch a gptel request with ARGUMENTS, honoring test overrides.
+When `gsmlg-ai-default-preset' is set, apply that gptel preset for the
+request."
+  (cond
+   (gsmlg-ai--request-function
+    (apply gsmlg-ai--request-function arguments))
+   ((gsmlg-ai--preset-symbol)
+    (let ((preset (gsmlg-ai--preset-symbol)))
+      (unless (and (fboundp #'gptel-get-preset)
+                   (gptel-get-preset preset))
+        (user-error "Unknown gptel preset: %s" preset))
+      (funcall (eval `(lambda (args)
+                        (gptel-with-preset ',preset
+                          (apply #'gptel-request args)))
+                     t)
+               arguments)))
+   (t
+    (apply #'gptel-request arguments))))
 
 (defun gsmlg-ai--abort (buffer)
   "Abort the active gptel request associated with BUFFER."
@@ -152,10 +228,8 @@ When non-nil, called instead of `gptel-request' with the same arguments.")
 (defun gsmlg-ai--backend-summary ()
   "Return a short description of the active backend/model or preset."
   (cond
-   ((and gsmlg-ai-default-preset
-         (stringp gsmlg-ai-default-preset)
-         (not (string-empty-p gsmlg-ai-default-preset)))
-    (format "preset:%s" gsmlg-ai-default-preset))
+   ((gsmlg-ai--preset-symbol)
+    (format "preset:%s" (gsmlg-ai--preset-symbol)))
    ((and (boundp 'gptel-backend) gptel-backend
          (boundp 'gptel-model) gptel-model)
     (format "%s/%s"
@@ -163,6 +237,8 @@ When non-nil, called instead of `gptel-request' with the same arguments.")
                      (gptel-backend-name gptel-backend))
                 gptel-backend)
             gptel-model))
+   (gsmlg-ai-configure-deepseek-default
+    (format "DeepSeek/%s" gsmlg-ai-deepseek-model))
    (t "unconfigured")))
 
 (defun gsmlg-ai--sensitive-path-p (path)

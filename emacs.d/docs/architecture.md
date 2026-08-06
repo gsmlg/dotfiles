@@ -213,7 +213,9 @@ via `use-package`. Dape is application-deferred through `gsmlg-debug`.
 
 `gptel` and `minuet` are declared only in `gsmlg-app-packages` and load when an
 AI command first needs them. There is no `after-init-hook` that loads
-`gsmlg-ai`. Agent sensors still exist before `gsmlg-server-start-maybe`.
+`gsmlg-ai`. On first workbench use, `gsmlg-ai` registers DeepSeek
+(`deepseek-v4-flash`) as the default gptel backend and reads the API key from
+`DEEPSEEK_API_KEY`. Agent sensors still exist before `gsmlg-server-start-maybe`.
 
 Batch mode never loads Agent Editor MCP through that hook.
 
@@ -293,9 +295,10 @@ linked worktree as separate roots.
 
 `gsmlg-project-search` invokes Consult ripgrep with the current project root.
 The `C-x p` prefix exposes project.el commands. envrc activates project
-environments, while existing `node_modules/.bin` directories are prepended to
-`exec-path` buffer-locally. On graphical macOS, exec-path-from-shell imports
-the login-shell environment once. No project executable directory is added
+environments when `gsmlg-envrc-enable` is non-nil (off by default).
+Existing `node_modules/.bin` directories are prepended to `exec-path`
+buffer-locally. On graphical macOS, exec-path-from-shell imports the
+login-shell environment once. No project executable directory is added
 globally.
 
 ## TRAMP compute-near-data behavior

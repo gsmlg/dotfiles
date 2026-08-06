@@ -109,8 +109,19 @@
             (equal (gsmlg-ai-context-entry-canonical-file entry) canonical)))
      (gsmlg-ai-context-current-entries))))
 
+(defun gsmlg-ai-context--same-file-kind-p (a b)
+  "Return non-nil when A and B are the same kind of file-backed entry.
+Region entries never replace whole-file/buffer entries and vice versa."
+  (let ((ka (gsmlg-ai-context-entry-kind a))
+        (kb (gsmlg-ai-context-entry-kind b)))
+    (or (eq ka kb)
+        (and (memq ka '(file buffer))
+             (memq kb '(file buffer))))))
+
 (defun gsmlg-ai-context--add-entry (entry)
-  "Add ENTRY to the current context, deduplicating file-backed entries."
+  "Add ENTRY to the current context, deduplicating matching file entries.
+Whole-file and buffer entries sharing a canonical path replace each
+other.  Region entries only replace other region entries for that path."
   (let* ((context (gsmlg-ai-context-ensure))
          (canonical (gsmlg-ai-context-entry-canonical-file entry))
          (entries (gsmlg-ai-context-entries context)))
@@ -118,8 +129,9 @@
       (setq entries
             (cl-remove-if
              (lambda (existing)
-               (equal (gsmlg-ai-context-entry-canonical-file existing)
-                      canonical))
+               (and (equal (gsmlg-ai-context-entry-canonical-file existing)
+                           canonical)
+                    (gsmlg-ai-context--same-file-kind-p existing entry)))
              entries)))
     (setf (gsmlg-ai-context-entries context) (append entries (list entry)))
     (gsmlg-ai-context--touch)
@@ -203,7 +215,9 @@
                 (goto-char (point-min))
                 (search-forward "\0" nil t))
           (gsmlg-ai-context--reject-binary canonical))
-        (when (> (buffer-size) gsmlg-ai-max-file-bytes)
+        (when (> (string-bytes
+                  (buffer-substring-no-properties (point-min) (point-max)))
+                 gsmlg-ai-max-file-bytes)
           (user-error "File exceeds gsmlg-ai-max-file-bytes: %s" canonical))
         (gsmlg-ai-context--add-entry
          (gsmlg-ai-context-entry--create

@@ -18,6 +18,7 @@
 (defvar minuet-auto-suggestion-throttle-delay)
 (defvar minuet-auto-suggestion-block-predicates)
 (defvar minuet-active-mode-map)
+(declare-function gsmlg-bootstrap-wait "gsmlg-bootstrap" ())
 (declare-function minuet-show-suggestion "minuet" ())
 (declare-function minuet-auto-suggestion-mode "minuet" (&optional arg))
 (declare-function minuet-accept-suggestion "minuet" ())
@@ -32,9 +33,10 @@
   :group 'gsmlg-ai
   :prefix "gsmlg-ai-completion-")
 
-(defcustom gsmlg-ai-completion-provider nil
+(defcustom gsmlg-ai-completion-provider 'openai-fim-compatible
   "Preferred Minuet provider symbol, or nil to leave Minuet's value unchanged.
-Examples: openai-fim-compatible, openai-compatible.  Never a secret."
+Default `openai-fim-compatible' uses DeepSeek FIM with
+`gsmlg-ai-deepseek-api-key-env'.  Never a secret."
   :type '(choice (const :tag "Use Minuet default" nil) symbol)
   :group 'gsmlg-ai-completion)
 
@@ -210,11 +212,23 @@ When MANUAL is non-nil, skip automatic-only mode predicates."
       (gsmlg-bootstrap-wait))
     (gsmlg-ai-completion--configure-minuet)))
 
+(defun gsmlg-ai-completion--configure-deepseek-fim ()
+  "Point Minuet FIM options at DeepSeek using the shared env key name."
+  (when (boundp 'minuet-openai-fim-compatible-options)
+    (plist-put minuet-openai-fim-compatible-options
+               :model (symbol-name gsmlg-ai-deepseek-model))
+    (plist-put minuet-openai-fim-compatible-options
+               :api-key gsmlg-ai-deepseek-api-key-env)
+    (plist-put minuet-openai-fim-compatible-options
+               :end-point "https://api.deepseek.com/beta/completions")))
+
 (defun gsmlg-ai-completion--configure-minuet ()
   "Apply GSMLG policy to public Minuet options once."
   (unless gsmlg-ai-completion--configured
     (when gsmlg-ai-completion-provider
       (setq minuet-provider gsmlg-ai-completion-provider))
+    (when (eq minuet-provider 'openai-fim-compatible)
+      (gsmlg-ai-completion--configure-deepseek-fim))
     (setopt minuet-n-completions gsmlg-ai-completion-candidate-count
             minuet-context-window gsmlg-ai-completion-context-window
             minuet-request-timeout gsmlg-ai-completion-timeout
@@ -328,8 +342,10 @@ When SILENT is non-nil, suppress the status message."
   "Non-nil when global AI inline completion is enabled.")
 
 (defun gsmlg-ai-completion--maybe-enable ()
-  "Enable local completion in eligible buffers for the global mode."
+  "Enable local completion in eligible buffers for the global mode.
+Honors `gsmlg-ai-completion-auto-enable'."
   (when (and gsmlg-ai-global-completion-mode
+             gsmlg-ai-completion-auto-enable
              (not (gsmlg-ai-completion-blocker)))
     (gsmlg-ai-completion-mode 1)))
 

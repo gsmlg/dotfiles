@@ -207,8 +207,11 @@ Emacs fallback for search when ripgrep is unavailable.
 project.el is the only project abstraction. Git repositories, nested
 repositories, and real Git worktrees retain their own `project-root`.
 `node_modules/.bin` is added only to a buffer-local `exec-path`, and envrc
-activates each project's environment before automatic Eglot discovery. envrc
-is enabled for SSH TRAMP buffers, so remote direnv environments remain remote.
+activates each project's environment before automatic Eglot discovery when
+`gsmlg-envrc-enable` is non-nil. That option defaults to off so Emacs does
+not run direnv or pop blocked-`.envrc` errors; set it in the external local
+file to opt in. When enabled, envrc also covers SSH TRAMP buffers so remote
+direnv environments remain remote.
 
 Remote development follows compute-near-data:
 
@@ -259,10 +262,13 @@ Prefix map: `C-c A` (Org Agenda remains `C-c a`).
 | `C-c A t` / `T` | buffer-local / global automatic completion |
 | `C-c A ?` | completion diagnostics |
 
-Configure gptel backends and Minuet providers in the external local override
-(see `local.el.example`). Multi-file edits stay in memory until you explicitly
-apply them; apply never saves. Inline completion is independent of workbench
-context and never writes before an accept command.
+Configure credentials with `export DEEPSEEK_API_KEY=...`. The workbench
+defaults to DeepSeek `deepseek-v4-flash` through gptel on first AI command
+(still deferred; no startup network). Override model or disable the default
+in the external local file (see `local.el.example`). Multi-file edits stay in
+memory until you explicitly apply them; apply never saves. Inline completion
+defaults to DeepSeek FIM via Minuet, stays independent of workbench context,
+and never writes before an accept command.
 
 ## Agent Editor MCP
 

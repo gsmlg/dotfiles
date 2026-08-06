@@ -21,6 +21,16 @@
   :type '(repeat string)
   :group 'gsmlg)
 
+(defcustom gsmlg-envrc-enable nil
+  "Whether interactive sessions should enable `envrc-global-mode'.
+
+Defaults to off so Emacs does not invoke direnv or surface blocked
+`.envrc' errors.  Set this non-nil in the external local file to opt in,
+including for remote TRAMP buffers when `envrc-remote' is non-nil.
+Batch sessions ignore this option."
+  :type 'boolean
+  :group 'gsmlg)
+
 (defvar gsmlg-exec-path-from-shell-initialized nil
   "Non-nil after importing the macOS login-shell environment.")
 
@@ -74,11 +84,21 @@
             (project-vc-dir "VC")
             (project-eshell "Eshell"))))
 
+(defun gsmlg-project-enable-envrc-maybe ()
+  "Enable envrc after local overrides when `gsmlg-envrc-enable' permits it."
+  (when (and gsmlg-envrc-enable
+             (not noninteractive)
+             (fboundp #'envrc-global-mode)
+             (not (bound-and-true-p envrc-global-mode)))
+    (envrc-global-mode 1)))
+
 (use-package envrc
   :demand t
   :config
   (setopt envrc-remote t)
-  (envrc-global-mode 1))
+  ;; Defer until `emacs-startup-hook' so local.el can setopt
+  ;; `gsmlg-envrc-enable' first.
+  (add-hook 'emacs-startup-hook #'gsmlg-project-enable-envrc-maybe 80))
 
 (use-package exec-path-from-shell
   :if (eq system-type 'darwin)

@@ -87,5 +87,20 @@
                            (file-name-as-directory root)))))
       (delete-directory root t))))
 
+(ert-deftest gsmlg-project-envrc-respects-enable-flag ()
+  "envrc-global-mode should stay off when `gsmlg-envrc-enable' is nil."
+  (let ((gsmlg-envrc-enable nil)
+        (noninteractive nil)
+        (envrc-global-mode nil)
+        enabled)
+    (cl-letf (((symbol-function #'envrc-global-mode)
+               (lambda (&optional _arg)
+                 (setq enabled t))))
+      (gsmlg-project-enable-envrc-maybe)
+      (should-not enabled)
+      (let ((gsmlg-envrc-enable t))
+        (gsmlg-project-enable-envrc-maybe)
+        (should enabled)))))
+
 (provide 'project-test)
 ;;; project-test.el ends here

@@ -26,6 +26,13 @@ Normal interactive startup starts an Emacs server by default. Set
 `gsmlg-server-autostart` to `nil` in the local override to disable it. Daemons
 already provide their own server, and batch mode cannot start one.
 
+UNIX server sockets use the Emacs / `emacsclient` default
+(`$XDG_RUNTIME_DIR/emacs` or `/tmp/emacs$UID`). They are no longer forced under
+`${XDG_STATE_HOME:-~/.local/state}/emacs/server/`; that directory still holds
+TCP authentication files only. Plain `emacsclient -c` therefore needs no
+`EMACS_SOCKET_NAME`. Restart Emacs once after upgrading so a stale state-tree
+socket is not left behind.
+
 ## Package and state migration
 
 Elpaca replaces package.el as the only third-party Emacs Lisp package manager.

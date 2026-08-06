@@ -87,8 +87,10 @@ owns external executables.
 
 Customizations, native compilation output, URL data, recentf, savehist,
 save-place, bookmarks, the project list, TRAMP persistence, desktop and
-Transient data, Org clock state, server files, Agent Editor metadata, backups,
-and auto-saves stay outside this checkout.
+Transient data, Org clock state, server authentication files, Agent Editor
+metadata, backups, and auto-saves stay outside this checkout. UNIX
+`emacsclient` sockets use the Emacs default runtime path (see
+[Server and daemon behavior](#server-and-daemon-behavior)), not XDG state.
 
 ## Local configuration
 
@@ -238,8 +240,48 @@ Set `gsmlg-server-autostart` to `nil` in the local file to opt out for an
 interactive, non-daemon process. Named daemons already provide an emacsclient
 server. Batch mode never opens a server socket.
 
-Optional desktop persistence is controlled by
-`gsmlg-desktop-save-enabled` and is off by default.
+### Socket location
+
+UNIX sockets stay on the stock Emacs / `emacsclient` path so clients need no
+extra environment:
+
+| Condition | Socket directory |
+| --- | --- |
+| `XDG_RUNTIME_DIR` is set | `$XDG_RUNTIME_DIR/emacs/` |
+| otherwise | `/tmp/emacs$UID/` |
+
+TCP authentication files remain under XDG state:
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/emacs/server/
+```
+
+Do not set `EMACS_SOCKET_NAME` for the default interactive server. After
+changing this policy, restart Emacs (or run `M-x server-force-delete` then
+`M-x gsmlg-server-start`) so an old socket under XDG state is not reused.
+
+### Connecting with emacsclient
+
+```sh
+emacsclient -c                 # new graphical frame
+emacsclient -nw                # frame in the current terminal
+emacsclient -n FILE            # visit FILE without waiting
+emacsclient -s agent-editor -c # named daemon (see below)
+```
+
+When several servers run, `-s NAME` selects the socket named `NAME` in the
+directory above. A bare name is enough; a full path is unnecessary for the
+default layout.
+
+### Named daemon example
+
+```sh
+EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
+emacsclient -s agent-editor -c
+```
+
+Optional desktop persistence is controlled by `gsmlg-desktop-save-enabled`
+and is on by default.
 
 ## GSMLG AI Workbench
 
@@ -379,9 +421,7 @@ absolute local files do not require project registration:
 ```sh
 EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
 
-emacsclient \
-  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/agent-editor" \
-  -c
+emacsclient -s agent-editor -c
 ```
 
 Connection metadata is written to

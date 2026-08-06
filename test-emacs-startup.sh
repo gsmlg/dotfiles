@@ -325,7 +325,8 @@ env "${test_environment[@]}" \
   --eval "$startup_assertions"
 
 daemon_name="gsmlg-xdg-test-$$"
-daemon_socket="$xdg_state_home/emacs/server/$daemon_name"
+# Match Emacs/emacsclient default: $XDG_RUNTIME_DIR/emacs/<name>
+daemon_socket="$xdg_runtime_dir/emacs/$daemon_name"
 daemon_log="$test_root/daemon.log"
 daemon_assertions="
 (progn

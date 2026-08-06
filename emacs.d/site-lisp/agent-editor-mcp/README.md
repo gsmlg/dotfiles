@@ -185,10 +185,13 @@ many optional projects:
 ```sh
 EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
 
-emacsclient \
-  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/agent-editor" \
-  -c
+emacsclient -s agent-editor -c
 ```
+
+The Emacs UNIX socket uses the stock `emacsclient` directory
+(`$XDG_RUNTIME_DIR/emacs` or `/tmp/emacs$UID`), so `-s agent-editor` is
+enough; do not point `--socket-name` at XDG state. MCP discovery remains the
+separate `connection.json` path below.
 
 Multiple daemons remain possible when a user wants process isolation, but
 project isolation does not require them.

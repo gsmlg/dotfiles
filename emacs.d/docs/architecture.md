@@ -240,7 +240,8 @@ The repository is immutable at runtime. Defaults are:
 | Configuration | `${XDG_CONFIG_HOME:-~/.config}/emacs/` | tracked source, lock file, feed list |
 | Package/application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` | Elpaca repositories and builds, Elfeed database |
 | Disposable cache | `${XDG_CACHE_HOME:-~/.cache}/emacs/` | Elpaca cache, native compilation, URL cache, Org persistence, local and remote auto-save files |
-| Mutable state | `${XDG_STATE_HOME:-~/.local/state}/emacs/` | customizations, backups, auto-save index, recentf, savehist, save-place, bookmarks, project list, TRAMP, desktop, Transient, multiple-cursors, Eshell, network security, Org clock/ID, server sockets/authentication |
+| Mutable state | `${XDG_STATE_HOME:-~/.local/state}/emacs/` | customizations, backups, auto-save index, recentf, savehist, save-place, bookmarks, project list, TRAMP, desktop, Transient, multiple-cursors, Eshell, network security, Org clock/ID, server authentication |
+
 | Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/` | per-daemon connection metadata |
 
 First-party compilation tests use temporary output and clean it. `.elc`, `.eln`,
@@ -337,6 +338,9 @@ Normal interactive startup calls `server-start` by default. Set
 `gsmlg-server-autostart` to `nil` in the local override to disable this for a
 non-daemon process. A daemon already provides its own server, and batch mode
 always refuses to start one. Server authentication files live under XDG state.
+UNIX server sockets stay on the Emacs/emacsclient default path
+(`$XDG_RUNTIME_DIR/emacs` or `/tmp/emacs$UID`) so `emacsclient` needs no
+`EMACS_SOCKET_NAME`.
 
 ## Agent Editor MCP model
 

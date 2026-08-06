@@ -116,9 +116,11 @@
                       mc/list-file
                       org-clock-persist-file
                       org-id-locations-file
-                      server-auth-dir
-                      server-socket-dir))
+                      server-auth-dir))
     (should (gsmlg-test-path-below-p path gsmlg-state-directory)))
+  ;; UNIX sockets stay on the emacsclient default path, not XDG state.
+  (should-not
+   (gsmlg-test-path-below-p server-socket-dir gsmlg-state-directory))
   (should
    (equal emacs-agent-editor-state-directory
           (file-name-as-directory

@@ -68,11 +68,18 @@ option."
       recentf-auto-cleanup 'never
       recentf-exclude '(gsmlg-recentf-remote-p))
 
+;; Keep TCP auth files under XDG state. Leave `server-socket-dir` at the
+;; Emacs/emacsclient default (`$XDG_RUNTIME_DIR/emacs` or `/tmp/emacs$UID`)
+;; so plain `emacsclient` finds the socket without EMACS_SOCKET_NAME.
 (let ((server-directory
        (gsmlg-ensure-directory (gsmlg-state-file "server/"))))
   (set-file-modes server-directory #o700)
-  (setopt server-auth-dir server-directory
-          server-socket-dir server-directory))
+  (setopt server-auth-dir server-directory))
+
+(when (and (stringp server-socket-dir)
+           (not (string-empty-p server-socket-dir)))
+  (let ((socket-directory (gsmlg-ensure-directory server-socket-dir)))
+    (set-file-modes socket-directory #o700)))
 
 (let ((auto-save-directory
        (gsmlg-ensure-directory (gsmlg-cache-file "auto-save/")))

@@ -19,8 +19,8 @@ Git plus network access. Subsequent startups use the installed builds and
 committed lock file without refreshing package sources.
 
 See [`emacs.d/README.md`](emacs.d/README.md) for prerequisites, local
-configuration, the GSMLG AI Workbench (DeepSeek setup and keybindings),
-tests, package maintenance, and recovery.
+configuration, server / `emacsclient` usage, the GSMLG AI Workbench
+(DeepSeek setup and keybindings), tests, package maintenance, and recovery.
 
 ## Repository structure
 

@@ -247,28 +247,114 @@ The AI Workbench (`gsmlg-ai-*`) and inline completion (`gsmlg-ai-completion-*`)
 are deferred applications. Normal startup does not load `gptel` or `minuet`,
 and no network request runs until you invoke a command.
 
-Prefix map: `C-c A` (Org Agenda remains `C-c a`).
+### What you need to do
+
+1. **Export an API key** in the shell that starts Emacs (or your login
+   environment). Never put the secret in Git or in tracked Lisp:
+
+   ```sh
+   export DEEPSEEK_API_KEY=sk-...
+   ```
+
+   GUI Emacs on macOS often does not inherit interactive shell exports. Prefer
+   a login-shell env, LaunchAgent/`environment.plist`, or import via
+   `exec-path-from-shell` so `getenv` sees the key.
+
+2. **First AI use installs packages** if Elpaca has not realized `gptel` /
+   `minuet` / `plz` yet (needs network once). Afterwards they load from the
+   locked builds.
+
+3. **Use the workbench** with prefix `C-c A` (Org Agenda remains `C-c a`).
+
+4. **Inline auto-completion stays off** until you enable it. Manual one-shot
+   suggestions work without enabling a mode.
+
+Optional machine overrides go in the external local file (see
+`local.el.example`), for example
+`${XDG_CONFIG_HOME:-~/.config}/gsmlg/emacs-local.el`.
+
+### Defaults
+
+| Setting | Default |
+| --- | --- |
+| Workbench backend | DeepSeek via `gptel-make-deepseek` |
+| Workbench model | `deepseek-v4-flash` |
+| API key env var | `DEEPSEEK_API_KEY` |
+| Inline completion provider | Minuet `openai-fim-compatible` (DeepSeek FIM) |
+| Automatic inline completion | off |
+| Send confirmation | `when-sensitive` (paths matching secret patterns) |
+
+On first workbench command, `gsmlg-ai` registers DeepSeek as the gptel default
+when `gsmlg-ai-configure-deepseek-default` is non-nil. Missing
+`DEEPSEEK_API_KEY` fails at request time with a clear error.
+
+### Commands
 
 | Command | Purpose |
 | --- | --- |
 | `C-c A g` / `gsmlg-ai-chat` | gptel chat |
+| `C-c A m` / `gsmlg-ai-menu` | gptel model / request menu |
 | `C-c A a` / `gsmlg-ai-ask` | one-shot question over selected context |
 | `C-c A v` / `gsmlg-ai-review` | read-only review |
 | `C-c A r` / `gsmlg-ai-rewrite-region` | preview-based region rewrite |
 | `C-c A e` / `gsmlg-ai-edit` | staged multi-file edit proposal |
-| `C-c A c` | context manager |
+| `C-c A c` / `b` / `f` / `d` | context manager / add buffer / file / Dired |
 | `C-c A p` | proposal review / apply |
+| `C-c A x` | cancel incomplete request (keeps a ready proposal) |
 | `C-c A i` | manual inline suggestion |
-| `C-c A t` / `T` | buffer-local / global automatic completion |
+| `C-c A t` | toggle buffer-local automatic completion |
+| `C-c A T` | toggle global automatic completion |
 | `C-c A ?` | completion diagnostics |
 
-Configure credentials with `export DEEPSEEK_API_KEY=...`. The workbench
-defaults to DeepSeek `deepseek-v4-flash` through gptel on first AI command
-(still deferred; no startup network). Override model or disable the default
-in the external local file (see `local.el.example`). Multi-file edits stay in
-memory until you explicitly apply them; apply never saves. Inline completion
-defaults to DeepSeek FIM via Minuet, stays independent of workbench context,
-and never writes before an accept command.
+Region / project-file / clear context commands are available via `M-x`
+(`gsmlg-ai-context-add-region`, `gsmlg-ai-context-add-project-files`,
+`gsmlg-ai-context-clear`) and inside the context manager buffer.
+
+### Inline completion
+
+| Goal | Action |
+| --- | --- |
+| One suggestion at point | `C-c A i` |
+| Auto-complete in this buffer | `C-c A t` |
+| Auto-complete in eligible buffers | set `gsmlg-ai-completion-auto-enable` to `t`, then `C-c A T` |
+| Check blockers / provider | `C-c A ?` |
+
+Completion is independent of workbench context. It never writes the buffer
+before an accept command. Remote/TRAMP buffers are blocked unless
+`gsmlg-ai-completion-allow-remote` is non-nil.
+
+### Common options
+
+Put overrides in the local file, not in tracked modules:
+
+```elisp
+;; Model / key env name (secret still comes from the environment)
+(setopt gsmlg-ai-deepseek-model 'deepseek-v4-flash
+        gsmlg-ai-deepseek-api-key-env "DEEPSEEK_API_KEY")
+
+;; Disable the built-in DeepSeek default and configure gptel yourself
+;; (setopt gsmlg-ai-configure-deepseek-default nil)
+
+;; Opt into global automatic completion after C-c A T
+(setopt gsmlg-ai-completion-auto-enable t)
+
+;; Confirm every outbound workbench request
+;; (setopt gsmlg-ai-confirm-before-send 'always)
+```
+
+More examples (local OpenAI-compatible servers, alternate Minuet providers)
+are in `local.el.example`. Keybinding details live in
+[docs/keybindings.md](docs/keybindings.md).
+
+### Behavior notes
+
+- Ask / review / edit use an explicit in-memory context; add buffers or files
+  before sending when you need more than the default selection.
+- Multi-file edits stay staged until you apply them from the proposal UI;
+  apply never saves.
+- `C-c A x` cancels in-flight ask/edit requests but leaves a ready proposal;
+  discard it from the proposal buffer or with the discard command.
+- Batch mode does not autoload or start AI providers.
 
 ## Agent Editor MCP
 

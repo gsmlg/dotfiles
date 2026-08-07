@@ -1139,6 +1139,36 @@
                 :false)))))
       (delete-directory root t))))
 
+(ert-deftest emacs-agent-semantic-runtime-capabilities-keep-hooked-etags-on-nil-backend ()
+  "Emacs 31+ etags returns nil without TAGS; hooked etags stays present."
+  (let ((root (make-temp-file "emacs-agent-semantic-gfm-nil-" t)))
+    (unwind-protect
+        (with-temp-buffer
+          (setq buffer-file-name (expand-file-name "README.md" root)
+                default-directory (file-name-as-directory root))
+          (emacs-agent-semantic-test-gfm-mode)
+          (setq-local tags-file-name nil)
+          (setq-local tags-table-list nil)
+          (setq-local default-tags-table-function nil)
+          (setq-local xref-backend-functions
+                      (list #'etags--xref-backend))
+          (cl-letf (((symbol-function #'etags--xref-backend)
+                     (lambda () nil))
+                    ((symbol-function #'xref-find-backend)
+                     (lambda ()
+                       (run-hook-with-args-until-success
+                        'xref-backend-functions))))
+            (let* ((report
+                    (emacs-agent-semantic-runtime-capabilities
+                     (current-buffer)))
+                   (xref (alist-get 'xref (alist-get 'providers report))))
+              (should (eq (alist-get 'backend_present xref) t))
+              (should (equal (alist-get 'provider xref) "etags"))
+              (should (eq (alist-get 'available xref) :false))
+              (should
+               (eq (alist-get 'noninteractive_ready xref) :false)))))
+      (delete-directory root t))))
+
 (ert-deftest emacs-agent-semantic-runtime-capabilities-do-not-query-eglot ()
   (with-temp-buffer
     (fundamental-mode)

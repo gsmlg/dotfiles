@@ -121,3 +121,7 @@ test -x /usr/local/bin/terraform && complete -o nospace -C /usr/local/bin/terraf
 [[ -f ~/.dart-cli-completion/zsh-config.zsh ]] && . ~/.dart-cli-completion/zsh-config.zsh || true
 ## [/Completion]
 
+if test -f ~/.zshrc.local
+then
+  source ~/.zshrc.local
+fi

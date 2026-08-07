@@ -87,7 +87,7 @@
          :created-at 0 :updated-at 0))
   (let ((token (gsmlg-ai-tools-register gsmlg-ai-session--active))
         (gsmlg-ai--abort-function
-         (lambda (_buffer) (error "should not abort ready"))))
+         (lambda (_buffer) (error "Should not abort ready"))))
     (gsmlg-ai-session-cancel)
     (should gsmlg-ai-session--active)
     (should (eq (gsmlg-ai-session-state gsmlg-ai-session--active) 'ready))

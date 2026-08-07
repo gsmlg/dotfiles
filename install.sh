@@ -163,12 +163,15 @@ else
 fi
 
 # Step 4: Oh-My-Zsh configuration
+# Skip linking when ~/.zshrc already exists (e.g. managed by Nix/home-manager).
 echo "[4/5] Installing Oh-My-Zsh configuration..."
 mkdir -p "$DOTFILES_DIR/oh-my-zsh/cache"
 if is_symlink_to "$HOME/.zshrc" "$DOTFILES_DIR/oh-my-zsh/zshrc"; then
   echo "  - Already linked ~/.zshrc (skipping)"
+elif [ -e "$HOME/.zshrc" ] || [ -L "$HOME/.zshrc" ]; then
+  echo "  - ~/.zshrc already exists (skipping; not managed by this installer)"
 else
-  ln -sf "$DOTFILES_DIR/oh-my-zsh/zshrc" "$HOME/.zshrc"
+  ln -s "$DOTFILES_DIR/oh-my-zsh/zshrc" "$HOME/.zshrc"
   echo "  ✓ Symlinked ~/.zshrc and ensured cache directory"
 fi
 

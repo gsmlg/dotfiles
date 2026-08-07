@@ -87,8 +87,8 @@
                            (file-name-as-directory root)))))
       (delete-directory root t))))
 
-(ert-deftest gsmlg-project-envrc-respects-enable-flag ()
-  "envrc-global-mode should stay off when `gsmlg-envrc-enable' is nil."
+(ert-deftest gsmlg-project-envrc-respects-enable-setting ()
+  "Envrc-global-mode should stay off when `gsmlg-envrc-enable' is nil."
   (let ((gsmlg-envrc-enable nil)
         (noninteractive nil)
         (envrc-global-mode nil)

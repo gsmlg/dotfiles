@@ -182,13 +182,41 @@ that are waiting in the Emacs event loop."
      #'emacs-agent-semantic--etags-table-ready-p
      (emacs-agent-semantic--etags-table-candidates)))))
 
+(defun emacs-agent-semantic--etags-backend-hooked-p ()
+  "Return non-nil when `etags--xref-backend' is on `xref-backend-functions'.
+
+Emacs 31+ makes `etags--xref-backend' return nil when no TAGS table is
+configured.  Capability reporting still treats that hook entry as a present
+but unavailable etags provider."
+  (let ((functions xref-backend-functions))
+    (cond
+     ((functionp functions)
+      (memq functions (list #'etags--xref-backend 'etags--xref-backend)))
+     ((listp functions)
+      (seq-some
+       (lambda (fn)
+         (or (eq fn #'etags--xref-backend)
+             (eq fn 'etags--xref-backend)))
+       functions))
+     (t nil))))
+
+(defun emacs-agent-semantic--find-xref-backend ()
+  "Return the configured xref backend symbol, or nil.
+
+Prefer `xref-find-backend'.  When that returns nil because Emacs 31+ etags
+refuses to claim a backend without TAGS, still report `etags' when the etags
+hook remains configured."
+  (or
+   (condition-case nil
+       (emacs-agent-semantic--call-xref
+        'xref #'xref-find-backend)
+     (emacs-agent-error nil))
+   (and (emacs-agent-semantic--etags-backend-hooked-p)
+        'etags)))
+
 (defun emacs-agent-semantic--xref-runtime ()
   "Return the active xref backend and non-interactive readiness."
-  (let* ((backend
-          (condition-case nil
-              (emacs-agent-semantic--call-xref
-               'xref #'xref-find-backend)
-            (emacs-agent-error nil)))
+  (let* ((backend (emacs-agent-semantic--find-xref-backend))
          (provider
           (and backend
                (emacs-agent-semantic--provider-name

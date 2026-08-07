@@ -72,6 +72,8 @@
          (gsmlg-python-mode gsmlg-lang-scripting)
          (gsmlg-ruby-mode gsmlg-lang-scripting)
          (gsmlg-shell-mode gsmlg-lang-scripting)
+         (gsmlg-zsh-mode gsmlg-lang-scripting)
+         (gsmlg-posix-shell-mode gsmlg-lang-scripting)
          (gsmlg-yaml-mode gsmlg-lang-infra)
          (gsmlg-toml-mode gsmlg-lang-infra)))
     (autoload (car spec) (symbol-name (cadr spec)) nil t)))
@@ -95,8 +97,17 @@
          ("\\.rs\\'" . gsmlg-rust-mode)
          ("\\.\\(?:cc\\|cpp\\|cxx\\|hh\\|hpp\\|hxx\\)\\'" . gsmlg-c++-mode)
          ("\\.c\\'" . gsmlg-c-mode)
-         ("\\.zsh\\'" . sh-mode)
+         ("\\(?:\\`\\|/\\)\\.?z\\(?:login\\|logout\\|profile\\|shenv\\|shrc\\)\\'"
+          . gsmlg-zsh-mode)
+         ("\\.\\(?:zsh\\|zsh-theme\\|zsh-template\\|zshrc\\)\\'"
+          . gsmlg-zsh-mode)
+         ("\\(?:\\`\\|/\\)\\.?bash\\(?:_login\\|_logout\\|_profile\\|rc\\)\\'"
+          . gsmlg-shell-mode)
+         ("\\(?:\\`\\|/\\)bash\\.bashrc\\'" . gsmlg-shell-mode)
+         ("\\(?:\\`\\|/\\)\\.?\\(?:profile\\|shrc\\)\\'"
+          . gsmlg-posix-shell-mode)
          ("\\.\\(?:sh\\|bash\\)\\'" . gsmlg-shell-mode)
+         ("\\(?:\\`\\|/\\)oh-my-zsh\\.sh\\'" . gsmlg-zsh-mode)
          ("\\.rb\\'" . gsmlg-ruby-mode)
          ("\\.py\\'" . gsmlg-python-mode)
          ("\\(?:\\`\\|/\\)\\.\\(?:env\\|editorconfig\\|gitconfig\\)\\'"

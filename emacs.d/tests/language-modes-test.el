@@ -21,6 +21,15 @@
   "Select MODE without requiring its tree-sitter grammar."
   (setq major-mode mode))
 
+(defun gsmlg-test-shell-selection-for-file (name)
+  "Return the major mode and shell dialect selected for file NAME."
+  (let ((file (expand-file-name name gsmlg-test-xdg-root)))
+    (write-region "" nil file nil 'silent)
+    (with-temp-buffer
+      (setq buffer-file-name file)
+      (set-auto-mode)
+      (cons major-mode sh-shell))))
+
 (ert-deftest gsmlg-language-missing-grammars-use-fallbacks ()
   "Representative extensions should choose maintained fallback modes."
   (cl-letf (((symbol-function #'gsmlg-treesit-ready-p)
@@ -53,6 +62,30 @@
                     ("sample.tf" . terraform-mode)
                     ("README.md" . gfm-mode)))
       (should (eq (gsmlg-test-mode-for-file (car case)) (cdr case))))))
+
+(ert-deftest gsmlg-language-shell-startup-files-select-correct-dialect ()
+  "Shell startup and Oh My Zsh files should select the right dialect."
+  (cl-letf (((symbol-function #'gsmlg-treesit-ready-p)
+             (lambda (_language) nil)))
+    (dolist (case '(("bashrc" sh-mode . bash)
+                    (".bashrc" sh-mode . bash)
+                    ("bash.bashrc" sh-mode . bash)
+                    ("bash_profile" sh-mode . bash)
+                    (".bash_logout" sh-mode . bash)
+                    ("zshrc" sh-mode . zsh)
+                    (".zshrc" sh-mode . zsh)
+                    ("zprofile" sh-mode . zsh)
+                    (".zshenv" sh-mode . zsh)
+                    ("minimal.zshrc" sh-mode . zsh)
+                    ("robbyrussell.zsh-theme" sh-mode . zsh)
+                    ("zshrc.zsh-template" sh-mode . zsh)
+                    ("oh-my-zsh.sh" sh-mode . zsh)
+                    ("profile" sh-mode . sh)
+                    (".profile" sh-mode . sh)
+                    ("shrc" sh-mode . sh)))
+      (should
+       (equal (gsmlg-test-shell-selection-for-file (car case))
+              (cdr case))))))
 
 (ert-deftest gsmlg-language-ready-grammars-use-tree-sitter ()
   "Available representative grammars should select tree-sitter modes."

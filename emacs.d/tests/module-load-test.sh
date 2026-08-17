@@ -61,6 +61,7 @@ features=(
   gsmlg-tramp
   gsmlg-session
   gsmlg-org
+  org-note
   gsmlg-elfeed
   gsmlg-agent
   gsmlg-ai
@@ -93,6 +94,7 @@ for feature in "${features[@]}"; do
     -L "$repo_root/emacs.d/lisp" \
     -L "$repo_root/emacs.d/lisp/lang" \
     -L "$repo_root/emacs.d/site-lisp/agent-editor-mcp" \
+    -L "$repo_root/emacs.d/site-lisp/org-note" \
     --eval "
 (progn
   (require '$feature)

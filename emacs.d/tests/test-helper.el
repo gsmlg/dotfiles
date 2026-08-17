@@ -32,6 +32,9 @@
 (add-to-list 'load-path
              (expand-file-name "site-lisp/agent-editor-mcp"
                                gsmlg-test-emacs-directory))
+(add-to-list 'load-path
+             (expand-file-name "site-lisp/org-note"
+                               gsmlg-test-emacs-directory))
 
 (defun gsmlg-test-mode-for-file (name)
   "Return the major mode selected for a temporary file named NAME."

@@ -24,9 +24,9 @@ deployed symlink under `$HOME`; edit the tracked source in this repository.
   do not turn it into a configuration dumping ground.
 - First-party modules live in `emacs.d/lisp/` and are named `gsmlg-*.el`.
 - Language dispatch modules live in `emacs.d/lisp/lang/`.
-- The only vendored package on `load-path` is
-  `emacs.d/site-lisp/agent-editor-mcp/`; add that exact directory, never scan
-  `site-lisp` recursively.
+- The only vendored packages on `load-path` are the exact directories
+  `emacs.d/site-lisp/agent-editor-mcp/` and
+  `emacs.d/site-lisp/org-note/`; never scan `site-lisp` recursively.
 - Every first-party Emacs Lisp file must use lexical binding, a standard
   feature name and `provide` form, and the `gsmlg-` prefix for public
   variables and functions.
@@ -83,10 +83,10 @@ Update packages only as an explicit maintenance operation:
 ## XDG and mutable-state rules
 
 The tracked `emacs.d/` tree is configuration, tests, documentation, snippets,
-the feed list, the Agent Editor MCP source, and the Elpaca lock file. Do not
-write package repositories, builds, native compilation output, caches,
-history, desktop data, bookmarks, project lists, customizations, TRAMP state,
-server files, Agent Editor metadata, `.elc`, or `.eln` files there.
+the feed list, the Agent Editor MCP and Org Note sources, and the Elpaca lock
+file. Do not write package repositories, builds, native compilation output,
+caches, history, desktop data, bookmarks, project lists, customizations, TRAMP
+state, server files, Agent Editor metadata, `.elc`, or `.eln` files there.
 
 Use the path helpers from `gsmlg-paths.el`:
 
@@ -128,7 +128,7 @@ compilers, and tests on the remote host. Use `process-file` or
 strip a TRAMP prefix from a data path, or silently select a local executable.
 Do not override the user's SSH control settings.
 
-## Org, server, and Agent Editor MCP
+## Org, server, Agent Editor MCP, and Org Note
 
 - Preserve the Org workflow, capture templates, agenda commands, TODO states,
   clocking, speed commands, Babel policy, and macOS behavior when editing
@@ -140,7 +140,8 @@ Do not override the user's SSH control settings.
 - The bundled MCP implementation supports direct absolute files and zero or
   more explicitly registered projects in one Emacs process. Never introduce
   implicit current-project request state.
-- Run the package's own test suite after any integration or package change.
+- Run each affected vendored package's own test suite after any integration or
+  package change.
 
 ## Installer safety
 
@@ -168,6 +169,7 @@ The component entrypoints are:
 ./emacs.d/tests/module-load-test.sh
 ./lint-emacs-config.sh
 ./emacs.d/site-lisp/agent-editor-mcp/run_tests.sh
+./emacs.d/site-lisp/org-note/run_tests.sh
 ```
 
 The complete runner owns the ERT suite. First-party byte-compiler warnings are

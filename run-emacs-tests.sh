@@ -103,6 +103,10 @@ printf '\n==> Agent Editor MCP package suite\n'
 EMACS="$emacs" \
   "$repo_root/emacs.d/site-lisp/agent-editor-mcp/run_tests.sh"
 
+printf '\n==> Org Note package suite\n'
+EMACS="$emacs" \
+  "$repo_root/emacs.d/site-lisp/org-note/run_tests.sh"
+
 git -C "$repo_root" status --short --untracked-files=all --ignored \
   >"$status_after"
 checkout_digest >"$digest_after"

@@ -12,6 +12,7 @@
 
 (defconst gsmlg-apps-features
   '(gsmlg-org
+    org-note
     gsmlg-elfeed
     gsmlg-agent
     gsmlg-ai
@@ -35,7 +36,8 @@
 
 (defun gsmlg-apps--prepare-org ()
   "Load Org configuration when the built-in Org library activates."
-  (gsmlg-apps-require 'gsmlg-org))
+  (gsmlg-apps-require 'gsmlg-org)
+  (require 'org-note))
 
 (defun gsmlg-apps--prepare-elfeed ()
   "Load Elfeed configuration when the Elfeed library activates."

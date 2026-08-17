@@ -19,8 +19,8 @@ real file, directory, or broken link to a timestamped backup and prints its
 path. Repeating the installer leaves the correct link unchanged.
 
 `init.el` is now an explicit orchestrator. The old recursive site-lisp scan is
-gone; only `lisp/`, `lisp/lang/`, and the exact Agent Editor MCP directory are
-added to `load-path`.
+gone; only `lisp/`, `lisp/lang/`, and the exact Agent Editor MCP and Org Note
+package directories are added to `load-path`.
 
 Normal interactive startup starts an Emacs server by default. Set
 `gsmlg-server-autostart` to `nil` in the local override to disable it. Daemons
@@ -154,6 +154,30 @@ macros or external automation:
 - `make-orgcapture-frame` → `gsmlg-org-capture-frame`
 - the two former `gsmlg/...org-clock...header-line` hook names → their
   `gsmlg-org-*` replacements
+
+## Org Note
+
+The vendored Org Note client is loaded directly after the Org configuration.
+Loading it is inert: it performs no request, starts no timer, and creates no
+global binding. `M-x org-note-workspaces` opens the workspace browser; from
+there, buffer-local keys open remote Org documents or move through paginated
+workspace and document lists.
+
+Remote document buffers save their complete Org source directly to the Agent
+Note service. They do not visit a local file and create no local mirror. A
+stale save keeps the local content and exposes explicit compare, reload, and
+rebase commands instead of choosing a version automatically.
+
+Queue, agenda, context, and event views expose Agent Note operational data.
+Their local action dispatcher provides claim, lease, progress, result,
+transition, review, dependency, and note-link operations with confirmations
+where applicable. Fencing tokens stay in the in-memory lease registry, and
+user-initiated non-heartbeat mutations are never retried automatically.
+Automatic lease heartbeats may retry retryable heartbeat failures. The
+default endpoint is `https://agent-note.gsmlg.net/`; the client sends no
+authentication credential and creates no persistent or on-disk service-data
+cache or local mirror. UI, lease, and conflict data may exist transiently in
+memory.
 
 ## Elfeed
 

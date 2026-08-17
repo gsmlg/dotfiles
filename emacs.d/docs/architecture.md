@@ -64,15 +64,17 @@ emacs.d/
 │       ├── gsmlg-lang-scripting.el
 │       └── gsmlg-lang-infra.el
 ├── site-lisp/agent-editor-mcp/
+├── site-lisp/org-note/
 ├── tests/
 ├── docs/
 ├── README.md
 └── local.el.example
 ```
 
-The three load-path additions are explicit: `lisp/`, `lisp/lang/`, and the
-exact Agent Editor MCP package directory. `site-lisp/` is never scanned
-recursively.
+The four load-path additions are explicit: `lisp/`, `lisp/lang/`, the exact
+Agent Editor MCP package directory, and the exact Org Note package directory.
+These are the only two vendored packages on `load-path`; `site-lisp/` is never
+scanned recursively.
 
 ## Startup phases
 
@@ -96,7 +98,7 @@ It does not install packages or configure applications or languages.
 
 ### Orchestration
 
-`init.el` first rejects Emacs versions older than 30.2, adds the three explicit
+`init.el` first rejects Emacs versions older than 30.2, adds the four explicit
 load paths, and requires modules in two layers:
 
 ```text
@@ -112,7 +114,7 @@ Core (sync require):
        -> XDG custom file -> external local override
 
 Application (deferred by gsmlg-apps):
-  Org, Elfeed, Agent Editor MCP, GSMLG AI Workbench / inline completion,
+  Org -> Org Note, Elfeed, Agent Editor MCP, GSMLG AI Workbench / inline completion,
   Dape (gsmlg-debug), language dispatch modules (gsmlg-lang-*)
 ```
 
@@ -189,6 +191,10 @@ and commands are asserted by the keybinding module.
 | `gsmlg-org` | agenda, capture, TODO, clock, Babel, Pomodoro and Org presentation |
 | `gsmlg-elfeed` | tracked feed source and XDG-backed Elfeed database |
 | `gsmlg-agent` | Agent Editor MCP state machine, reconcile, and thin server sensors |
+| `org-note-client` | Agent Note REST transport, JSON decoding, and safe error reporting |
+| `org-note-operation` | API operations and in-memory lease and heartbeat ownership |
+| `org-note-document` | remote-backed Org document buffers, saves, and explicit conflict handling |
+| `org-note` | workspace, document, operational, context, and event user interfaces |
 | `gsmlg-ai` | AI Workbench facade, shared options, chat/rewrite entry points |
 | `gsmlg-ai-completion` | Minuet policy wrapper, eligibility, CAPF coexistence, diagnostics |
 | `gsmlg-ai-context` | in-memory context manager, snapshots, sensitive/size checks |
@@ -205,7 +211,8 @@ via `use-package`. Dape is application-deferred through `gsmlg-debug`.
 
 `gsmlg-apps` registers:
 
-- `with-eval-after-load` for Org and Elfeed configuration modules;
+- `with-eval-after-load` for Org and Elfeed configuration modules, with the
+  `org-note` entry package loaded directly after `gsmlg-org`;
 - autoloads for Agent commands, Dape, and AI Workbench / completion commands;
 - language dispatcher autoloads plus `auto-mode-alist` entries;
 - an interactive `after-init` load of `gsmlg-agent` so server lifecycle sensors
@@ -218,6 +225,11 @@ AI command first needs them. There is no `after-init-hook` that loads
 `DEEPSEEK_API_KEY`. Agent sensors still exist before `gsmlg-server-start-maybe`.
 
 Batch mode never loads Agent Editor MCP through that hook.
+
+Requiring `org-note` is inert: it performs no network request, starts no timer,
+and installs no global binding. Requests begin only when an Org Note command
+is invoked; lease heartbeat timers begin only after an explicit successful
+claim or retry.
 
 ## Agent Editor MCP lifecycle
 
@@ -408,7 +420,9 @@ If the package bootstrap is damaged:
 3. Keep `elpaca-lock.el`; it is the reproducibility input.
 4. Start Emacs once with network access to realize pinned Elpaca and the locked
    package graph.
-5. Run the startup, ERT, lint, and Agent Editor MCP tests.
+5. Run the startup, ERT, and lint tests, then both vendored package suites:
+   `./emacs.d/site-lisp/agent-editor-mcp/run_tests.sh` and
+   `./emacs.d/site-lisp/org-note/run_tests.sh`.
 6. Start again with `GSMLG_EMACS_OFFLINE=1` to verify the warm installation.
 
 Moving the Elpaca data aside is recoverable. Do not delete configuration,

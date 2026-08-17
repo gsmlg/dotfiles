@@ -16,7 +16,8 @@
    (file-name-directory (or load-file-name buffer-file-name)))
   "Directory containing the active GSMLG Emacs configuration.")
 
-(dolist (directory '("lisp" "lisp/lang" "site-lisp/agent-editor-mcp"))
+(dolist (directory '("lisp" "lisp/lang" "site-lisp/agent-editor-mcp"
+                     "site-lisp/org-note"))
   (add-to-list 'load-path (expand-file-name directory gsmlg-init-directory)))
 
 (require 'gsmlg-paths)

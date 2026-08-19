@@ -361,6 +361,31 @@ When EMPTY is non-nil, collection sections are empty."
        (counts . ((ready . 1) (running . 0) (blocked . 0) (review . 0)))))
     '("workspace-a" . ["workspace-a" "alpha" "4" "1" "0" "0" "0"]))))
 
+(ert-deftest org-note-new-document-path-validation ()
+  (should (org-note--new-document-path-p "notes/today.org"))
+  (should (org-note--new-document-path-p "inbox.org"))
+  (should-not (org-note--new-document-path-p ""))
+  (should-not (org-note--new-document-path-p nil))
+  (should-not (org-note--new-document-path-p "/abs/notes.org"))
+  (should-not (org-note--new-document-path-p "notes//today.org"))
+  (should-not (org-note--new-document-path-p "templates/base.org"))
+  (should-not (org-note--new-document-path-p "templates/")))
+
+(ert-deftest org-note-filter-template-documents-uses-path-prefix ()
+  (let* ((template (org-note-test--document-row
+                    "template-a" "templates/base.org" 1))
+         (nested (org-note-test--document-row
+                  "template-b" "templates/nested/x.org" 2))
+         (normal (org-note-test--document-row
+                  "document-a" "notes/a.org" 3))
+         (almost (org-note-test--document-row
+                  "document-b" "template/base.org" 4)))
+    (should (equal
+             (mapcar (lambda (row) (alist-get 'id row))
+                     (org-note--filter-template-documents
+                      (list normal template almost nested)))
+             '("template-a" "template-b")))))
+
 (ert-deftest org-note-documents-render-and-retain-workspace-context ()
   "Document pages retain their workspace and complete source rows."
   (let ((row (org-note-test--document-row "document-a" "notes/a.org" 11))

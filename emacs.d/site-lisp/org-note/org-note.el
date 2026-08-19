@@ -296,6 +296,35 @@ compatibility alias used by older fixtures."
                 '("Org Note workspace row has invalid workspace_revision")))
       value)))
 
+(defconst org-note-document-template-path-prefix "templates/"
+  "Path prefix that marks Org documents usable as create templates.")
+
+(defun org-note--template-document-path-p (path)
+  "Return non-nil when PATH is under the template prefix."
+  (and (stringp path)
+       (string-prefix-p org-note-document-template-path-prefix path)))
+
+(defun org-note--new-document-path-p (path)
+  "Return non-nil when PATH is valid for a newly created document."
+  (and (stringp path)
+       (> (length path) 0)
+       (not (file-name-absolute-p path))
+       (not (string-match-p "\\`/" path))
+       (not (string-match-p "/\\'" path))
+       (not (string-match-p "//" path))
+       (not (org-note--template-document-path-p path))
+       (let ((segments (split-string path "/" t)))
+         (and segments
+              (cl-every (lambda (segment) (> (length segment) 0))
+                        segments)))))
+
+(defun org-note--filter-template-documents (rows)
+  "Return ROWS whose paths are template documents."
+  (cl-remove-if-not
+   (lambda (row)
+     (org-note--template-document-path-p (alist-get 'path row)))
+   rows))
+
 (defun org-note--workspace-row (row)
   "Validate and return the tabulated representation of workspace ROW."
   (unless (org-note--symbol-alist-p row)

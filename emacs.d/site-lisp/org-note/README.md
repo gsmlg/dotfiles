@@ -56,6 +56,9 @@ Org Note has no authentication option and sends no authentication credential.
 - `org-note-workspace-open`: open the selected workspace's documents.
 - `org-note-document-list-open`: open the selected remote Org document.
 - `org-note-document-open`: open a document by workspace and document ID.
+- `org-note-document-create`: create a blank Org document or copy one from
+  `templates/`, then open it. In the document list, `c` runs the same command.
+  New paths must not start with `templates/`.
 - `org-note-document-save`: save the current remote document; normal
   `C-x C-s` uses the same path.
 - `org-note-document-compare-latest`: compare a stale local buffer with the
@@ -108,6 +111,7 @@ Org Note installs no global bindings. Its browser modes use buffer-local keys:
 | Key | Action |
 | --- | --- |
 | `RET` | Open the selected workspace, document, or work item |
+| `c` | Create a document (document list only) |
 | `g` | Refresh the current view |
 | `n` | Fetch the next page |
 | `p` | Return to the previous page |

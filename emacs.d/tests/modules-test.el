@@ -77,6 +77,7 @@
   (dolist (command '(org-note-workspaces
                      org-note-documents
                      org-note-document-open
+                     org-note-document-create
                      org-note-queue
                      org-note-agenda
                      org-note-events

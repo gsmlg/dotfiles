@@ -19,6 +19,8 @@ documents.
 ## Goals
 
 - Open server documents as normal editable Org buffers.
+- Create new Org documents as blank notes or by copying `source` from documents
+  under the `templates/` path prefix.
 - Make `C-x C-s` save directly to Agent Note with optimistic concurrency.
 - Reject stale saves without discarding either the local or remote version.
 - Browse workspaces, documents, indexed queues, agendas, item context, and
@@ -37,14 +39,15 @@ documents.
 - Authentication; the configured endpoint is accessed without credentials.
 - Autonomous scheduling or capability-aware dispatch.
 - Workspace creation, policy editing, archival, import, or export.
-- Structured item creation, follow-up creation, assignment, or scheduling.
+- Structured work-item creation, follow-up creation, assignment, or scheduling.
+- Dedicated server-side template catalog API (templates are Org documents under
+  `templates/`).
 - Persistent recovery of leases after Emacs exits.
 - Changes to the existing local Org capture, agenda, TODO, Babel, or keybinding
   workflows.
 
-The omitted structured mutations remain possible through server-side tools or,
-where appropriate, revision-safe document editing. They can be added as later
-package features without changing the transport or buffer model.
+Web UI product scope is separate from this Emacs client. Omissions above are
+Emacs-client non-goals, not a claim that Agent Note itself lacks those flows.
 
 ## Architecture
 
@@ -117,6 +120,23 @@ possible with an opaque server cursor.
 `M-x org-note-documents` can open the same document list directly after
 workspace selection. Each row contains the path and revision. `RET` retrieves
 the document and creates a uniquely named, non-file-visiting Org buffer.
+`c` or `M-x org-note-document-create` creates a new document in the current
+workspace.
+
+### Document creation
+
+Creation reuses:
+
+```text
+PUT /api/org/documents/{document_id}
+```
+
+with a client-generated UUID, path, source, empty `lease_proofs`, and **no**
+positive `expected_revision`. The user chooses Blank (`source` is `""`) or
+Template (copy `source` from a document whose path starts with the literal
+prefix `templates/`). New paths must be relative and must not start with
+`templates/`. On success the client opens the new document through the normal
+open path and refreshes an originating document list when applicable.
 
 Each document buffer stores these values buffer-locally:
 

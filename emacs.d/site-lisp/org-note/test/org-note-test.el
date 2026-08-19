@@ -288,7 +288,9 @@ When EMPTY is non-nil, collection sections are empty."
                     (append tabulated-list-format nil))
             '("Path" "Revision")))
     (should (eq (keymap-lookup org-note-document-list-mode-map "RET")
-                #'org-note-document-list-open)))
+                #'org-note-document-list-open))
+    (should (eq (keymap-lookup org-note-document-list-mode-map "c")
+                #'org-note-document-create)))
   (dolist (map (list org-note-workspace-list-mode-map
                      org-note-document-list-mode-map))
     (should (eq (keymap-lookup map "g") #'org-note-browser-refresh))
@@ -385,6 +387,112 @@ When EMPTY is non-nil, collection sections are empty."
                      (org-note--filter-template-documents
                       (list normal template almost nested)))
              '("template-a" "template-b")))))
+
+(ert-deftest org-note-document-create-blank-opens-new-document ()
+  (let (created opened buffer)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-id-uuid)
+                   (lambda () "11111111-1111-4111-8111-111111111111"))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) "Blank"))
+                  ((symbol-function 'read-string)
+                   (lambda (&rest _) "notes/created.org"))
+                  ((symbol-function 'org-note-operation-create-document)
+                   (lambda (workspace-id document-id path source &rest _)
+                     (setq created
+                           (list workspace-id document-id path source))
+                     '((document_revisions
+                        . (("11111111-1111-4111-8111-111111111111" . 1))))))
+                  ((symbol-function 'org-note-document-open)
+                   (lambda (workspace-id document-id)
+                     (setq opened (list workspace-id document-id))
+                     (setq buffer (get-buffer-create " *org-note-create*"))
+                     buffer)))
+          (should (eq (org-note-document-create "workspace-a") buffer))
+          (should (buffer-live-p buffer))
+          (should (equal created
+                         '("workspace-a"
+                           "11111111-1111-4111-8111-111111111111"
+                           "notes/created.org"
+                           "")))
+          (should (equal opened
+                         '("workspace-a"
+                           "11111111-1111-4111-8111-111111111111"))))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
+(ert-deftest org-note-document-create-template-copies-source ()
+  (let (created)
+    (cl-letf (((symbol-function 'org-id-uuid)
+               (lambda () "22222222-2222-4222-8222-222222222222"))
+              ((symbol-function 'completing-read)
+               (let ((n 0))
+                 (lambda (&rest _)
+                   (setq n (1+ n))
+                   (pcase n
+                     (1 "Template")
+                     (_ "templates/base.org")))))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) "notes/from-template.org"))
+              ((symbol-function 'org-note--list-all-documents)
+               (lambda (_workspace-id)
+                 (list (org-note-test--document-row
+                        "template-a" "templates/base.org" 1)
+                       (org-note-test--document-row
+                        "document-a" "notes/a.org" 2))))
+              ((symbol-function 'org-note-operation-get-document)
+               (lambda (_workspace-id document-id)
+                 (should (equal document-id "template-a"))
+                 '((id . "template-a")
+                   (workspace_id . "workspace-a")
+                   (path . "templates/base.org")
+                   (source . "* Template body\n")
+                   (content_hash . "hash")
+                   (revision . 1))))
+              ((symbol-function 'org-note-operation-create-document)
+               (lambda (workspace-id document-id path source &rest _)
+                 (setq created
+                       (list workspace-id document-id path source))
+                 '((document_revisions
+                    . (("22222222-2222-4222-8222-222222222222" . 1))))))
+              ((symbol-function 'org-note-document-open)
+               (lambda (&rest _) (get-buffer-create " *org-note-create*"))))
+      (org-note-document-create "workspace-a")
+      (should (equal created
+                     '("workspace-a"
+                       "22222222-2222-4222-8222-222222222222"
+                       "notes/from-template.org"
+                       "* Template body\n")))
+      (kill-buffer " *org-note-create*"))))
+
+(ert-deftest org-note-document-create-rejects-templates-destination ()
+  (cl-letf (((symbol-function 'completing-read)
+             (lambda (&rest _) "Blank"))
+            ((symbol-function 'read-string)
+             (lambda (&rest _) "templates/nope.org"))
+            ((symbol-function 'org-note-operation-create-document)
+             (lambda (&rest _)
+               (ert-fail "create must not run for templates/ paths"))))
+    (should-error (org-note-document-create "workspace-a")
+                  :type 'user-error)))
+
+(ert-deftest org-note-document-create-failure-leaves-no-buffer ()
+  (let ((before (buffer-list)))
+    (cl-letf (((symbol-function 'org-id-uuid)
+               (lambda () "33333333-3333-4333-8333-333333333333"))
+              ((symbol-function 'completing-read)
+               (lambda (&rest _) "Blank"))
+              ((symbol-function 'read-string)
+               (lambda (&rest _) "notes/fail.org"))
+              ((symbol-function 'org-note-operation-create-document)
+               (lambda (&rest _)
+                 (signal 'org-note-error '("create failed"))))
+              ((symbol-function 'org-note-document-open)
+               (lambda (&rest _)
+                 (ert-fail "open must not run after create failure"))))
+      (should-error (org-note-document-create "workspace-a")
+                    :type 'org-note-error)
+      (should (equal (buffer-list) before)))))
 
 (ert-deftest org-note-documents-render-and-retain-workspace-context ()
   "Document pages retain their workspace and complete source rows."

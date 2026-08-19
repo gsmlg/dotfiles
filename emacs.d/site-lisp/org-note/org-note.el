@@ -11,6 +11,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'org)
+(require 'org-id)
 (require 'subr-x)
 (require 'tabulated-list)
 (require 'org-note-client)
@@ -102,6 +103,7 @@
   :doc "Keymap for `org-note-document-list-mode'."
   :parent tabulated-list-mode-map
   "RET" #'org-note-document-list-open
+  "c" #'org-note-document-create
   "g" #'org-note-browser-refresh
   "n" #'org-note-browser-next-page
   "p" #'org-note-browser-previous-page
@@ -627,6 +629,89 @@ used."
     (org-note-document-open
      org-note--browser-workspace-id
      (org-note--required-string row 'id "document row" t))))
+
+(defun org-note--list-all-documents (workspace-id)
+  "Return every document row in WORKSPACE-ID."
+  (let ((cursor nil)
+        (rows nil)
+        done)
+    (while (not done)
+      (let* ((response
+              (org-note-operation-list-documents
+               workspace-id :cursor cursor))
+             (page (org-note--prepare-page response #'org-note--document-row))
+             (row-data (nth 1 page))
+             (next (nth 2 page)))
+        (maphash (lambda (_id row) (push row rows)) row-data)
+        (if next
+            (setq cursor next)
+          (setq done t))))
+    (nreverse rows)))
+
+(defun org-note--read-workspace-id-for-create ()
+  "Prompt for one workspace identifier for document creation."
+  (let* ((response (org-note-operation-list-workspaces))
+         (page (org-note--prepare-page response #'org-note--workspace-row))
+         (row-data (nth 1 page))
+         (choices nil))
+    (maphash
+     (lambda (id row)
+       (push (cons (or (alist-get 'slug row) id) id) choices))
+     row-data)
+    (unless choices
+      (user-error "No Org Note workspaces available"))
+    (let ((selected (completing-read "Workspace: " choices nil t)))
+      (or (cdr (assoc selected choices)) selected))))
+
+(defun org-note--read-create-source (workspace-id)
+  "Return SOURCE string for a new document in WORKSPACE-ID."
+  (pcase (completing-read
+          "Create from: " '("Blank" "Template") nil t nil nil "Blank")
+    ("Blank" "")
+    ("Template"
+     (let* ((templates
+             (org-note--filter-template-documents
+              (org-note--list-all-documents workspace-id)))
+            (choices
+             (mapcar (lambda (row)
+                       (cons (alist-get 'path row) row))
+                     templates)))
+       (unless choices
+         (user-error "No Org Note templates under templates/"))
+       (let* ((path (completing-read "Template: " choices nil t))
+              (row (cdr (assoc path choices)))
+              (document-id (alist-get 'id row))
+              (response
+               (org-note-operation-get-document workspace-id document-id))
+              (source (alist-get 'source response)))
+         (unless (stringp source)
+           (signal 'org-note-error
+                   '("Org Note template source is malformed")))
+         source)))
+    (_ (user-error "Unknown Org Note create source"))))
+
+(defun org-note-document-create (&optional workspace-id)
+  "Create a new Org Note document in WORKSPACE-ID and open it.
+
+When WORKSPACE-ID is nil, use the current document list workspace or prompt."
+  (interactive
+   (list (or org-note--browser-workspace-id
+             (org-note--read-workspace-id-for-create))))
+  (unless (org-note--valid-identifier-p workspace-id)
+    (user-error "Org Note workspace id must be a non-empty string"))
+  (let* ((source (org-note--read-create-source workspace-id))
+         (path (read-string "New document path: "))
+         (document-id (org-id-uuid))
+         list-buffer)
+    (unless (org-note--new-document-path-p path)
+      (user-error "Invalid Org Note document path: %s" path))
+    (when (derived-mode-p 'org-note-document-list-mode)
+      (setq list-buffer (current-buffer)))
+    (org-note-operation-create-document workspace-id document-id path source)
+    (prog1 (org-note-document-open workspace-id document-id)
+      (when (buffer-live-p list-buffer)
+        (with-current-buffer list-buffer
+          (org-note-browser-refresh))))))
 
 (defun org-note--proper-list-p (object)
   "Return non-nil when OBJECT is a finite proper list."

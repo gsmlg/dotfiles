@@ -3,8 +3,8 @@
 ;;; Commentary:
 ;; Register autoloads, file associations, and lightweight hooks for application
 ;; modules without synchronously requiring them on every startup.  Core
-;; modules remain required by `init.el'; Org, Elfeed, Agent Editor MCP, Dape,
-;; and language integrations activate on demand.
+;; modules remain required by `init.el'; Org, Org Note, Elfeed, Agent Editor
+;; MCP, Dape, and language integrations activate on demand.
 
 ;;; Code:
 
@@ -36,8 +36,7 @@
 
 (defun gsmlg-apps--prepare-org ()
   "Load Org configuration when the built-in Org library activates."
-  (gsmlg-apps-require 'gsmlg-org)
-  (require 'org-note))
+  (gsmlg-apps-require 'gsmlg-org))
 
 (defun gsmlg-apps--prepare-elfeed ()
   "Load Elfeed configuration when the Elfeed library activates."
@@ -130,6 +129,18 @@
 (autoload 'gsmlg-agent-start "gsmlg-agent" nil t)
 (autoload 'gsmlg-agent-stop "gsmlg-agent" nil t)
 (autoload 'gsmlg-agent-reconcile "gsmlg-agent" nil t)
+
+(dolist
+    (command
+     '(org-note-workspaces
+       org-note-documents
+       org-note-document-open
+       org-note-queue
+       org-note-agenda
+       org-note-events
+       org-note-item-context
+       org-note-item-dispatch))
+  (autoload command "org-note" nil t))
 
 (dolist
     (command

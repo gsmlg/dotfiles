@@ -71,6 +71,19 @@
         (format "(require '%s)" (regexp-quote (symbol-name feature)))
         nil t)))))
 
+(ert-deftest gsmlg-modules-org-note-entry-commands-are-autoloaded ()
+  "Org Note entry commands must be callable before Org or org-note loads."
+  (should-not (featurep 'org-note))
+  (dolist (command '(org-note-workspaces
+                     org-note-documents
+                     org-note-document-open
+                     org-note-queue
+                     org-note-agenda
+                     org-note-events
+                     org-note-item-context
+                     org-note-item-dispatch))
+    (should (autoloadp (symbol-function command)))))
+
 (ert-deftest gsmlg-modules-maintenance-is-not-on-startup-path ()
   "Package maintenance must stay off the normal startup require graph."
   (dolist (file (list (expand-file-name "init.el" gsmlg-config-directory)

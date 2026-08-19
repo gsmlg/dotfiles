@@ -13,7 +13,7 @@
   "Return a complete workspace row for ID, SLUG, and REVISION."
   `((workspace_id . ,id)
     (slug . ,(or slug "workspace-slug"))
-    (revision . ,(or revision 3))
+    (workspace_revision . ,(or revision 3))
     (counts . ((ready . 4)
                (running . 2)
                (blocked . 1)
@@ -333,6 +333,34 @@ When EMPTY is non-nil, collection sections are empty."
             (should-not org-note--browser-cursor-history)))
       (org-note-test--kill-browser-buffers))))
 
+(ert-deftest org-note-workspaces-accept-json-array-items ()
+  "Workspace pages accept JSON array vectors from the HTTP client."
+  (let ((row (org-note-test--workspace-row "workspace-a" "alpha" 9))
+        buffer)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note-operation-list-workspaces)
+                   (lambda (&rest _)
+                     `((items . ,(vector row))
+                       (next_cursor . nil)))))
+          (setq buffer (save-window-excursion (org-note-workspaces)))
+          (with-current-buffer buffer
+            (should
+             (equal tabulated-list-entries
+                    '(("workspace-a"
+                       ["workspace-a" "alpha" "9" "4" "2" "1" "5"]))))))
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-workspace-row-accepts-revision-alias ()
+  "Workspace rows still accept the older revision alias."
+  (should
+   (equal
+    (org-note--workspace-row
+     '((workspace_id . "workspace-a")
+       (slug . "alpha")
+       (revision . 4)
+       (counts . ((ready . 1) (running . 0) (blocked . 0) (review . 0)))))
+    '("workspace-a" . ["workspace-a" "alpha" "4" "1" "0" "0" "0"]))))
+
 (ert-deftest org-note-documents-render-and-retain-workspace-context ()
   "Document pages retain their workspace and complete source rows."
   (let ((row (org-note-test--document-row "document-a" "notes/a.org" 11))
@@ -487,13 +515,13 @@ When EMPTY is non-nil, collection sections are empty."
                     (org-note-test--page
                      (list '((workspace_id . "workspace-b")
                              (slug . 9)
-                             (revision . 1)
+                             (workspace_revision . 1)
                              (counts . ((ready . 1) (running . 1)
                                         (blocked . 1) (review . 1))))) nil)
                     (org-note-test--page
                      (list '((workspace_id . "workspace-b")
                              (slug . "beta")
-                             (revision . 1)
+                             (workspace_revision . 1)
                              (counts . ((ready . -1) (running . 1)
                                         (blocked . 1) (review . 1))))) nil)))
                 (setq response malformed)

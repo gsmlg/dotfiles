@@ -157,11 +157,11 @@ macros or external automation:
 
 ## Org Note
 
-The vendored Org Note client is loaded directly after the Org configuration.
-Loading it is inert: it performs no request, starts no timer, and creates no
-global binding. `M-x org-note-workspaces` opens the workspace browser; from
-there, buffer-local keys open remote Org documents or move through paginated
-workspace and document lists.
+The vendored Org Note client is available through startup autoloads. Loading
+it is inert: it performs no request, starts no timer, and creates no global
+binding. `M-x org-note-workspaces` opens the workspace browser without first
+opening a local Org file; from there, buffer-local keys open remote Org
+documents or move through paginated workspace and document lists.
 
 Remote document buffers save their complete Org source directly to the Agent
 Note service. They do not visit a local file and create no local mirror. A

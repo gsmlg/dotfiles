@@ -280,6 +280,22 @@ When NONEMPTY is non-nil, reject the empty string."
               (list (format "Org Note %s has invalid %s" context key))))
     value))
 
+(defun org-note--workspace-revision (row)
+  "Return the nonnegative workspace revision from ROW.
+
+Accept `workspace_revision' from the live API, with `revision' as a
+compatibility alias used by older fixtures."
+  (let ((entry (or (assq 'workspace_revision row)
+                   (assq 'revision row))))
+    (unless entry
+      (signal 'org-note-error
+              '("Org Note workspace row lacks workspace_revision")))
+    (let ((value (cdr entry)))
+      (unless (and (integerp value) (>= value 0))
+        (signal 'org-note-error
+                '("Org Note workspace row has invalid workspace_revision")))
+      value)))
+
 (defun org-note--workspace-row (row)
   "Validate and return the tabulated representation of workspace ROW."
   (unless (org-note--symbol-alist-p row)
@@ -287,7 +303,7 @@ When NONEMPTY is non-nil, reject the empty string."
   (let* ((id (org-note--required-string
               row 'workspace_id "workspace row" t))
          (slug (org-note--required-string row 'slug "workspace row"))
-         (revision (org-note--required-count row 'revision "workspace row"))
+         (revision (org-note--workspace-revision row))
          (counts (org-note--required-value row 'counts "workspace row")))
     (unless (org-note--symbol-alist-p counts)
       (signal 'org-note-error '("Org Note workspace counts are malformed")))
@@ -329,18 +345,14 @@ When NONEMPTY is non-nil, reject the empty string."
   "Validate RESPONSE with ROW-PARSER and return prepared page data."
   (unless (org-note--symbol-alist-p response)
     (signal 'org-note-error '("Org Note page response is malformed")))
-  (let* ((items (org-note--required-value response 'items "page response"))
+  (let* ((raw-items (org-note--required-value response 'items "page response"))
          (next-cursor
           (org-note--required-value response 'next_cursor "page response"))
          (row-data (make-hash-table :test #'equal))
          entries)
-    (unless (and (listp items)
-                 (let ((tail items))
-                   (while (consp tail)
-                     (setq tail (cdr tail)))
-                   (null tail)))
+    (unless (org-note--json-array-or-list-p raw-items)
       (signal 'org-note-error '("Org Note page items are malformed")))
-    (dolist (row items)
+    (dolist (row (org-note--as-proper-list raw-items))
       (let* ((rendered (funcall row-parser row))
              (id (car rendered)))
         (when (gethash id row-data)
@@ -594,13 +606,30 @@ used."
       (setq tail (cdr tail)))
     (null tail)))
 
+(defun org-note--as-proper-list (value)
+  "Return VALUE as a proper list when it is a JSON array or proper list.
+
+JSON arrays arrive as vectors from `org-note-client--parse-json'.  Proper
+lists, including nil, are returned unchanged.  Signal nothing here; callers
+must reject unsupported shapes."
+  (cond
+   ((vectorp value) (append value nil))
+   ((org-note--proper-list-p value) value)
+   (t value)))
+
+(defun org-note--json-array-or-list-p (value)
+  "Return non-nil when VALUE is a JSON array vector or a proper list."
+  (or (vectorp value) (org-note--proper-list-p value)))
+
 (defun org-note--required-list (alist key context)
-  "Return proper list KEY from ALIST for CONTEXT."
+  "Return proper list KEY from ALIST for CONTEXT.
+
+JSON arrays are accepted and normalized to lists."
   (let ((value (org-note--required-value alist key context)))
-    (unless (org-note--proper-list-p value)
+    (unless (org-note--json-array-or-list-p value)
       (signal 'org-note-error
               (list (format "Org Note %s has invalid %s" context key))))
-    value))
+    (org-note--as-proper-list value)))
 
 (defun org-note--required-object (alist key context)
   "Return symbol-keyed object KEY from ALIST for CONTEXT."

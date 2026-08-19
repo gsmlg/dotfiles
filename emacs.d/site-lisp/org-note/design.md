@@ -259,9 +259,11 @@ and recover through normal server-side expiry semantics.
 ## Dotfiles Integration
 
 The repository adds only the exact `emacs.d/site-lisp/org-note/` directory to
-`load-path`; it does not scan `site-lisp` recursively. `gsmlg-apps.el` requires
-`org-note` immediately after `gsmlg-org` so Org is available first. Package
-loading remains inert and cannot make startup depend on the network.
+`load-path`; it does not scan `site-lisp` recursively. `gsmlg-apps.el`
+registers autoloads for Org Note entry commands at startup so they are
+callable without first opening a local Org file. The first command invocation
+loads `org-note` (and Org). Package loading remains inert and cannot make
+startup depend on the network.
 
 The integration updates the architecture and migration documentation, test
 load paths, module-load coverage, the complete test runner, and any existing

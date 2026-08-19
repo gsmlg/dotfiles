@@ -211,9 +211,9 @@ via `use-package`. Dape is application-deferred through `gsmlg-debug`.
 
 `gsmlg-apps` registers:
 
-- `with-eval-after-load` for Org and Elfeed configuration modules, with the
-  `org-note` entry package loaded directly after `gsmlg-org`;
-- autoloads for Agent commands, Dape, and AI Workbench / completion commands;
+- `with-eval-after-load` for Org and Elfeed configuration modules;
+- autoloads for Org Note entry commands, Agent commands, Dape, and AI
+  Workbench / completion commands;
 - language dispatcher autoloads plus `auto-mode-alist` entries;
 - an interactive `after-init` load of `gsmlg-agent` so server lifecycle sensors
   exist without starting MCP in batch mode.

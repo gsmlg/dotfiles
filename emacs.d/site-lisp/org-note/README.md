@@ -13,10 +13,11 @@ buffer to the service with its current document revision.
 ## Loading
 
 The dotfiles configuration adds only the exact
-`emacs.d/site-lisp/org-note/` directory to `load-path` and loads `org-note`
-directly after the Org configuration. Requiring `org-note` defines commands,
-modes, and local keymaps, but performs no request, starts no timer, and adds no
-global binding.
+`emacs.d/site-lisp/org-note/` directory to `load-path` and registers
+autoloads for the entry commands at startup. The first `M-x org-note-*`
+invocation loads `org-note`. Requiring `org-note` defines commands, modes, and
+local keymaps, but performs no request, starts no timer, and adds no global
+binding.
 
 For a standalone setup, add the package directory explicitly and require the
 entry feature after Org:

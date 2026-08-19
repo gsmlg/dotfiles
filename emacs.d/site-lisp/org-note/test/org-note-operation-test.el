@@ -1115,15 +1115,16 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
          (expected_revision . 3)
          (lease_proofs . ((lease . "proof"))))))))
 
-(ert-deftest org-note-operation-puts-document-sends-empty-proof-object ()
+(ert-deftest org-note-operation-puts-document-omits-nil-expected-revision ()
   (let* ((org-note-actor-id "emacs:test@example")
          (request
-         (org-note-operation-test--capture-request
-          (org-note-operation-put-document
+          (org-note-operation-test--capture-request
+           (org-note-operation-put-document
             "workspace-1" "document-1" "notes/today.org" "* Today" nil nil)))
          (body (nth 3 request))
          (operation-id (alist-get 'operation_id body)))
     (should (stringp operation-id))
+    (should-not (assq 'expected_revision body))
     (org-note-operation-test--should-equal-json-object
      body
      `((schema_version . 1)
@@ -1132,9 +1133,28 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
        (workspace_id . "workspace-1")
        (path . "notes/today.org")
        (source . "* Today")
-       (expected_revision . nil)
        (lease_proofs . ,(org-note-client-empty-object))))))
 
+(ert-deftest org-note-operation-create-document-omits-expected-revision ()
+  (let* ((org-note-actor-id "emacs:test@example")
+         (request
+          (org-note-operation-test--capture-request
+           (org-note-operation-create-document
+            "workspace-1" "document-new" "notes/new.org" ""
+            :operation-id "operation-create")))
+         (body (nth 3 request)))
+    (should (equal (cl-subseq request 0 3)
+                   '("PUT" "/api/org/documents/document-new" nil)))
+    (should-not (assq 'expected_revision body))
+    (org-note-operation-test--should-equal-json-object
+     body
+     `((schema_version . 1)
+       (actor_id . "emacs:test@example")
+       (operation_id . "operation-create")
+       (workspace_id . "workspace-1")
+       (path . "notes/new.org")
+       (source . "")
+       (lease_proofs . ,(org-note-client-empty-object))))))
 (ert-deftest org-note-operation-queries-queue-with-all-filters ()
   (let ((request
          (org-note-operation-test--capture-request

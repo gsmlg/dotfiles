@@ -620,9 +620,10 @@ OPERATION-ID, when non-nil, is used as the operation identifier."
                   &key operation-id)
   "Write DOCUMENT-ID in WORKSPACE-ID with PATH and SOURCE.
 
-EXPECTED-REVISION controls optimistic concurrency.  LEASE-PROOFS is required;
-a nil value is encoded as an empty JSON object.  OPERATION-ID optionally
-supplies the mutation ID."
+EXPECTED-REVISION controls optimistic concurrency for updates.  When it is
+nil, the field is omitted so the service can create the document.
+LEASE-PROOFS is required; a nil value is encoded as an empty JSON object.
+OPERATION-ID optionally supplies the mutation ID."
   (org-note-client-request
    "PUT"
    (format "/api/org/documents/%s"
@@ -630,11 +631,22 @@ supplies the mutation ID."
    nil
    (org-note-operation--mutation-body
     workspace-id
-    `((path . ,path)
-      (source . ,source)
-      (expected_revision . ,expected-revision)
-      (lease_proofs . ,(or lease-proofs (org-note-client-empty-object))))
+    (append
+     `((path . ,path)
+       (source . ,source))
+     (and expected-revision
+          `((expected_revision . ,expected-revision)))
+     `((lease_proofs . ,(or lease-proofs (org-note-client-empty-object)))))
     operation-id)))
+
+(cl-defun org-note-operation-create-document
+    (workspace-id document-id path source &key operation-id)
+  "Create DOCUMENT-ID in WORKSPACE-ID at PATH with SOURCE.
+
+SOURCE may be the empty string.  The request omits expected_revision."
+  (org-note-operation-put-document
+   workspace-id document-id path source nil nil
+   :operation-id operation-id))
 
 (defun org-note-operation--validated-view (view supported-views kind)
   "Return VIEW after checking it is in SUPPORTED-VIEWS for KIND."

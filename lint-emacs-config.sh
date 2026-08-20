@@ -176,7 +176,7 @@ env "${test_environment[@]}" "$emacs" -Q --batch \
            (directory-files (expand-file-name "lisp/lang" root)
                             t "\\`gsmlg-.*\\.el$")
            (directory-files (expand-file-name "tests" root)
-                            t "\\.el$")))
+                            t "\\`[^.].*\\.el$")))
          (byte-compile-error-on-warn t)
          (byte-compile-dest-file-function
           (lambda (file)
@@ -205,7 +205,7 @@ env "${test_environment[@]}" "$emacs" -Q --batch \
            (directory-files (expand-file-name "lisp/lang" root)
                             t "\\`gsmlg-.*\\.el$")
            (directory-files (expand-file-name "tests" root)
-                            t "\\.el$")))
+                            t "\\`[^.].*\\.el$")))
          failures)
     (dolist (file files)
       (with-current-buffer (find-file-noselect file)

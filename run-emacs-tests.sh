@@ -89,7 +89,7 @@ env \
 (progn
   (dolist (file
            (directory-files \"$repo_root/emacs.d/tests\"
-                            t \"-test\\\\.el\\\\'\"))
+                            t \"^[^.].*-test\\\\.el$\"))
     (load file nil 'nomessage))
   (run-hooks 'after-init-hook 'emacs-startup-hook))" \
   --funcall ert-run-tests-batch-and-exit

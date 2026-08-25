@@ -20,11 +20,12 @@
                (review . 5)))
     (extra . "complete-row-data")))
 
-(defun org-note-test--document-row (id &optional path revision)
-  "Return a complete document row for ID, PATH, and REVISION."
+(defun org-note-test--document-row (id &optional path revision archived-at)
+  "Return a complete document row for ID, PATH, REVISION, and ARCHIVED-AT."
   `((id . ,id)
     (path . ,(or path "notes/example.org"))
     (revision . ,(or revision 7))
+    (archived_at . ,(or archived-at nil))
     (extra . "complete-row-data")))
 
 (defun org-note-test--page (items next-cursor)
@@ -286,11 +287,19 @@ When EMPTY is non-nil, collection sections are empty."
     (should
      (equal (mapcar (lambda (column) (car column))
                     (append tabulated-list-format nil))
-            '("Path" "Revision")))
+            '("Path" "Revision" "Status")))
     (should (eq (keymap-lookup org-note-document-list-mode-map "RET")
                 #'org-note-document-list-open))
     (should (eq (keymap-lookup org-note-document-list-mode-map "c")
-                #'org-note-document-create)))
+                #'org-note-document-create))
+    (should (eq (keymap-lookup org-note-document-list-mode-map "d")
+                #'org-note-document-archive))
+    (should (eq (keymap-lookup org-note-document-list-mode-map "r")
+                #'org-note-document-rename))
+    (should (eq (keymap-lookup org-note-document-list-mode-map "u")
+                #'org-note-document-restore))
+    (should (eq (keymap-lookup org-note-document-list-mode-map "A")
+                #'org-note-document-toggle-archived)))
   (dolist (map (list org-note-workspace-list-mode-map
                      org-note-document-list-mode-map))
     (should (eq (keymap-lookup map "g") #'org-note-browser-refresh))
@@ -494,6 +503,94 @@ When EMPTY is non-nil, collection sections are empty."
                     :type 'org-note-error)
       (should (equal (buffer-list) before)))))
 
+(ert-deftest org-note-document-archived-p-uses-archived-at ()
+  (should-not (org-note--document-archived-p
+               (org-note-test--document-row "document-a")))
+  (should (org-note--document-archived-p
+           (org-note-test--document-row "document-b" nil nil 1787629138))))
+
+(ert-deftest org-note-document-archive-from-list-refreshes-page ()
+  (let ((row (org-note-test--document-row "document-a" "notes/a.org" 11))
+        (archived nil)
+        (refreshes 0))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note-operation-list-documents)
+                   (lambda (&rest _) (org-note-test--page (list row) nil)))
+                  ((symbol-function 'y-or-n-p) (lambda (&rest _) t))
+                  ((symbol-function 'org-note-operation-archive-document)
+                   (lambda (&rest arguments)
+                     (setq archived arguments)
+                     '((document_revisions . ((document-a . 12)))))))
+          (with-current-buffer
+              (save-window-excursion (org-note-documents "workspace-a"))
+            (org-note--goto-row-id "document-a")
+            (cl-letf (((symbol-function 'org-note-browser-refresh)
+                       (lambda () (setq refreshes (1+ refreshes)))))
+              (call-interactively #'org-note-document-archive)))
+          (should (equal archived '("workspace-a" "document-a" 11)))
+          (should (= refreshes 1)))
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-document-rename-from-buffer-updates-metadata ()
+  (let ((buffer (generate-new-buffer " *org-note-rename-test*"))
+        renamed)
+    (unwind-protect
+        (with-current-buffer buffer
+          (org-note-document-mode)
+          (setq-local org-note-document-workspace-id "workspace-a"
+                      org-note-document-id "document-a"
+                      org-note-document-path "notes/example.org"
+                      org-note-document-revision 1
+                      org-note-document-content-hash "content-hash"
+                      org-note-document-base-source "body\n")
+          (insert "body\n")
+          (set-buffer-modified-p nil)
+          (cl-letf (((symbol-function 'org-note-operation-rename-document-path)
+                     (lambda (&rest arguments)
+                       (setq renamed arguments)
+                       `((document_revisions . ((document-a . 8)))
+                         (data . ((path . "notes/renamed.org"))))))
+                    ((symbol-function 'read-string)
+                     (lambda (&rest _) "notes/renamed.org")))
+            (call-interactively #'org-note-document-rename))
+          (should (equal renamed '("workspace-a" "document-a" 1 "notes/renamed.org")))
+          (should (equal org-note-document-path "notes/renamed.org"))
+          (should (= org-note-document-revision 8))
+          (should (string= (buffer-name) "*Org Note: notes/renamed.org*")))
+      (when (buffer-live-p buffer)
+        (let ((kill-buffer-query-functions nil))
+          (kill-buffer buffer))))))
+
+(ert-deftest org-note-document-restore-requires-archived-row ()
+  (let ((row (org-note-test--document-row "document-a" "notes/a.org" 11)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note-operation-list-documents)
+                   (lambda (&rest _) (org-note-test--page (list row) nil))))
+          (with-current-buffer
+              (save-window-excursion (org-note-documents "workspace-a"))
+            (org-note--goto-row-id "document-a")
+            (should-error (call-interactively #'org-note-document-restore)
+                          :type 'user-error)))
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-document-toggle-archived-passes-include-archived ()
+  (let ((row (org-note-test--document-row "document-a"))
+        calls)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note-operation-list-documents)
+                   (lambda (workspace-id &rest arguments)
+                     (push (cons workspace-id arguments) calls)
+                     (org-note-test--page (list row) nil))))
+          (with-current-buffer
+              (save-window-excursion (org-note-documents "workspace-a"))
+            (call-interactively #'org-note-document-toggle-archived)
+            (should (equal org-note--browser-include-archived t))
+            (should
+             (cl-some (lambda (call)
+                        (equal call '("workspace-a" :cursor nil :include-archived t)))
+                      calls))))
+      (org-note-test--kill-browser-buffers))))
+
 (ert-deftest org-note-documents-render-and-retain-workspace-context ()
   "Document pages retain their workspace and complete source rows."
   (let ((row (org-note-test--document-row "document-a" "notes/a.org" 11))
@@ -507,11 +604,11 @@ When EMPTY is non-nil, collection sections are empty."
                 (save-window-excursion (org-note-documents "workspace-a")))
           (with-current-buffer buffer
             (should (derived-mode-p 'org-note-document-list-mode))
-            (should (equal calls '(("workspace-a" :cursor nil))))
+            (should (equal calls '(("workspace-a" :cursor nil :include-archived nil))))
             (should (equal org-note--browser-workspace-id "workspace-a"))
             (should
              (equal tabulated-list-entries
-                    '(("document-a" ["notes/a.org" "11"]))))
+                    '(("document-a" ["notes/a.org" "11" "Active"]))))
             (should (equal (gethash "document-a" org-note--browser-row-data)
                            row))))
       (org-note-test--kill-browser-buffers))))

@@ -69,6 +69,9 @@ to change the selection."
 (defvar-local org-note--browser-workspace-id nil
   "Workspace identifier associated with a document browser.")
 
+(defvar-local org-note--browser-include-archived nil
+  "When non-nil, the document browser lists archived documents.")
+
 (defvar-local org-note--browser-context-key nil
   "Identity of the request context installed in a reusable browser.")
 
@@ -122,6 +125,10 @@ to change the selection."
   :parent tabulated-list-mode-map
   "RET" #'org-note-document-list-open
   "c" #'org-note-document-create
+  "d" #'org-note-document-archive
+  "r" #'org-note-document-rename
+  "u" #'org-note-document-restore
+  "A" #'org-note-document-toggle-archived
   "g" #'org-note-browser-refresh
   "n" #'org-note-browser-next-page
   "p" #'org-note-browser-previous-page
@@ -171,6 +178,7 @@ to change the selection."
               org-note--browser-cursor-history nil
               org-note--browser-row-data (make-hash-table :test #'equal)
               org-note--browser-workspace-id nil
+              org-note--browser-include-archived nil
               org-note--browser-context-key nil
               org-note--browser-request-generation 0
               org-note--browser-request-token nil
@@ -196,8 +204,9 @@ to change the selection."
   "Major mode for browsing Org Note documents."
   (org-note--initialize-browser)
   (setq-local tabulated-list-format
-              [("Path" 56 t)
-               ("Revision" 10 t)])
+              [("Path" 44 t)
+               ("Revision" 10 t)
+               ("Status" 10 t)])
   (tabulated-list-init-header))
 
 (defun org-note--initialize-operational-browser ()
@@ -368,14 +377,21 @@ compatibility alias used by older fixtures."
              (number-to-string
               (org-note--required-count counts 'review "workspace counts"))))))
 
+(defun org-note--document-archived-p (row)
+  "Return non-nil when document ROW is archived."
+  (let ((archived-at (org-note--optional-count row 'archived_at "document row")))
+    (and archived-at (> archived-at 0))))
+
 (defun org-note--document-row (row)
   "Validate and return the tabulated representation of document ROW."
   (unless (org-note--symbol-alist-p row)
     (signal 'org-note-error '("Org Note document row is malformed")))
-  (let ((id (org-note--required-string row 'id "document row" t))
-        (path (org-note--required-string row 'path "document row" t))
-        (revision (org-note--required-count row 'revision "document row")))
-    (cons id (vector path (number-to-string revision)))))
+  (let* ((id (org-note--required-string row 'id "document row" t))
+         (path (org-note--required-string row 'path "document row" t))
+         (revision (org-note--required-count row 'revision "document row"))
+         (_archived-at (org-note--optional-count row 'archived_at "document row"))
+         (status (if (org-note--document-archived-p row) "Archived" "Active")))
+    (cons id (vector path (number-to-string revision) status))))
 
 (defun org-note--sanitize-tabulated-vector (columns)
   "Return safe string COLUMNS for a tabulated row."
@@ -579,9 +595,16 @@ used."
   "Fetch the workspace page identified by opaque CURSOR."
   (org-note-operation-list-workspaces :cursor cursor))
 
-(defun org-note--fetch-documents (workspace-id cursor)
-  "Fetch opaque CURSOR for documents in WORKSPACE-ID."
-  (org-note-operation-list-documents workspace-id :cursor cursor))
+(defun org-note--document-browser-context-key (workspace-id include-archived)
+  "Return the browser context key for WORKSPACE-ID and INCLUDE-ARCHIVED."
+  (list 'documents workspace-id include-archived))
+
+(defun org-note--fetch-documents-for-browser (cursor)
+  "Fetch opaque CURSOR for the current document browser."
+  (org-note-operation-list-documents
+   org-note--browser-workspace-id
+   :cursor cursor
+   :include-archived org-note--browser-include-archived))
 
 (defun org-note--valid-identifier-p (identifier)
   "Return non-nil when IDENTIFIER is a nonempty string."
@@ -616,9 +639,12 @@ used."
                    (equal org-note--browser-workspace-id workspace-id))
         (org-note-document-list-mode)
         (setq-local org-note--browser-workspace-id workspace-id
+                    org-note--browser-include-archived nil
                     org-note--browser-fetcher
-                    (apply-partially #'org-note--fetch-documents workspace-id)
-                    org-note--browser-row-parser #'org-note--document-row))
+                    #'org-note--fetch-documents-for-browser
+                    org-note--browser-row-parser #'org-note--document-row
+                    org-note--browser-context-key
+                    (org-note--document-browser-context-key workspace-id nil)))
       (org-note-browser-refresh))
     (pop-to-buffer buffer)
     buffer))
@@ -751,6 +777,149 @@ When WORKSPACE-ID is nil, use the current document list workspace or prompt."
       (when (buffer-live-p list-buffer)
         (with-current-buffer list-buffer
           (org-note-browser-refresh))))))
+
+(defconst org-note-document-archive-prompt
+  "Archive this Org Note document? ")
+
+(defconst org-note-document-archive-unsaved-prompt
+  "Archive with unsaved changes? ")
+
+(defun org-note--refresh-document-list-buffer (list-buffer)
+  "Refresh LIST-BUFFER when it is a live document list."
+  (when (buffer-live-p list-buffer)
+    (with-current-buffer list-buffer
+      (when (derived-mode-p 'org-note-document-list-mode)
+        (org-note-browser-refresh)))))
+
+(defun org-note--document-lifecycle-from-context ()
+  "Return lifecycle identifiers from the current list or document buffer.
+
+The returned list is
+`(WORKSPACE-ID DOCUMENT-ID PATH REVISION ARCHIVED-P SOURCE-BUFFER)'."
+  (cond
+   ((derived-mode-p 'org-note-document-mode)
+    (org-note-document--require-metadata)
+    (list org-note-document-workspace-id
+          org-note-document-id
+          org-note-document-path
+          org-note-document-revision
+          nil
+          (current-buffer)))
+   ((derived-mode-p 'org-note-document-list-mode)
+    (unless (org-note--valid-identifier-p org-note--browser-workspace-id)
+      (user-error "Current document browser has no workspace context"))
+    (let ((row (org-note--current-row)))
+      (list org-note--browser-workspace-id
+            (org-note--required-string row 'id "document row" t)
+            (org-note--required-string row 'path "document row" t)
+            (org-note--required-count row 'revision "document row")
+            (org-note--document-archived-p row)
+            (current-buffer))))
+   (t nil)))
+
+(defun org-note--read-document-lifecycle-identifiers ()
+  "Prompt for workspace and document identifiers and return lifecycle data."
+  (let* ((workspace-id (org-note--read-workspace-id-for-create))
+         (document-id (read-string "Document ID: "))
+         (response (org-note-operation-get-document workspace-id document-id))
+         (path (alist-get 'path response))
+         (revision (alist-get 'revision response))
+         (archived-at (alist-get 'archived_at response)))
+    (unless (and (stringp path) (integerp revision))
+      (user-error "Org Note document metadata is malformed"))
+    (list workspace-id document-id path revision
+          (and archived-at (> archived-at 0))
+          nil)))
+
+(defun org-note--document-lifecycle-context ()
+  "Return lifecycle identifiers from context or from prompts."
+  (or (org-note--document-lifecycle-from-context)
+      (org-note--read-document-lifecycle-identifiers)))
+
+(defun org-note-document-archive ()
+  "Archive the current Org Note document."
+  (interactive)
+  (pcase-let ((`(,workspace-id ,document-id ,path ,revision ,_archived ,source-buffer)
+               (org-note--document-lifecycle-context)))
+    (unless (y-or-n-p (concat org-note-document-archive-prompt path))
+      (user-error "Org Note archive cancelled"))
+    (when (and (derived-mode-p 'org-note-document-mode)
+               (buffer-modified-p)
+               (not (y-or-n-p org-note-document-archive-unsaved-prompt)))
+      (user-error "Org Note archive cancelled"))
+    (let ((document-buffer
+           (and (derived-mode-p 'org-note-document-mode)
+                (current-buffer)))
+          (list-buffer
+           (if (derived-mode-p 'org-note-document-list-mode)
+               source-buffer
+             (get-buffer (org-note--document-buffer-name workspace-id)))))
+      (org-note-operation-archive-document
+       workspace-id document-id revision)
+      (message "Archived Org Note %s" path)
+      (org-note--refresh-document-list-buffer list-buffer)
+      (when document-buffer
+        (with-current-buffer document-buffer
+          (org-note-document--kill-buffer-safely))))))
+
+(defun org-note-document-rename (&optional new-path)
+  "Rename the current Org Note document to NEW-PATH."
+  (interactive)
+  (pcase-let ((`(,workspace-id ,document-id ,path ,revision ,_archived ,source-buffer)
+               (org-note--document-lifecycle-context)))
+    (setq new-path (or new-path (read-string "New document path: " path)))
+    (unless (org-note--new-document-path-p new-path)
+      (user-error "Invalid Org Note document path: %s" new-path))
+    (when (string= new-path path)
+      (user-error "Org Note document path is unchanged"))
+    (let ((response
+           (org-note-operation-rename-document-path
+            workspace-id document-id revision new-path))
+          (list-buffer
+           (if (derived-mode-p 'org-note-document-list-mode)
+               source-buffer
+             (get-buffer (org-note--document-buffer-name workspace-id)))))
+      (message "Renamed Org Note %s to %s" path new-path)
+      (when (and (bufferp source-buffer)
+                 (derived-mode-p 'org-note-document-mode)
+                 (eq source-buffer (current-buffer)))
+        (org-note-document--apply-lifecycle-metadata response document-id))
+      (org-note--refresh-document-list-buffer list-buffer))))
+
+(defun org-note-document-restore ()
+  "Restore the selected archived Org Note document."
+  (interactive)
+  (unless (derived-mode-p 'org-note-document-list-mode)
+    (user-error "Restore an Org Note document from the document list"))
+  (unless (org-note--valid-identifier-p org-note--browser-workspace-id)
+    (user-error "Current document browser has no workspace context"))
+  (let* ((row (org-note--current-row))
+         (workspace-id org-note--browser-workspace-id)
+         (document-id (org-note--required-string row 'id "document row" t))
+         (path (org-note--required-string row 'path "document row" t))
+         (revision (org-note--required-count row 'revision "document row")))
+    (unless (org-note--document-archived-p row)
+      (user-error "Selected Org Note document is not archived"))
+    (org-note-operation-restore-document workspace-id document-id revision)
+    (message "Restored Org Note %s" path)
+    (org-note--refresh-document-list-buffer (current-buffer))))
+
+(defun org-note-document-toggle-archived ()
+  "Toggle whether the document list includes archived documents."
+  (interactive)
+  (unless (derived-mode-p 'org-note-document-list-mode)
+    (user-error "Not in an Org Note document list"))
+  (setq org-note--browser-include-archived
+        (not org-note--browser-include-archived))
+  (org-note--browser-load-page
+   nil nil
+   #'org-note--fetch-documents-for-browser
+   #'org-note--document-row
+   (org-note--document-browser-context-key
+    org-note--browser-workspace-id org-note--browser-include-archived)
+   t)
+  (message "Org Note document list is %s archived documents"
+           (if org-note--browser-include-archived "including" "excluding")))
 
 (defun org-note--proper-list-p (object)
   "Return non-nil when OBJECT is a finite proper list."
@@ -2525,6 +2694,9 @@ PAIRS alternate keyword symbols and their optional values."
            'org-note--action-choice-history))
          (command (cdr (assoc choice org-note--item-actions))))
     (call-interactively command)))
+
+(keymap-set org-note-document-mode-map "C-c C-a" #'org-note-document-archive)
+(keymap-set org-note-document-mode-map "C-c C-r" #'org-note-document-rename)
 
 (provide 'org-note)
 

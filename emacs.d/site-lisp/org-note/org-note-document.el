@@ -397,6 +397,24 @@ An unsuccessful fetch or validation leaves the existing conflict cache intact."
   (org-note-document--require-metadata)
   (save-buffer))
 
+(defun org-note-document--apply-lifecycle-metadata (response document-id)
+  "Update path and revision from lifecycle RESPONSE for DOCUMENT-ID."
+  (org-note-document--require-metadata)
+  (let* ((data (org-note-document--response-value response 'data))
+         (path (org-note-document--object-value data 'path)))
+    (unless (org-note-document--non-empty-string-p path)
+      (org-note-document--invalid-response))
+    (setq-local org-note-document-path path
+                org-note-document-revision
+                (org-note-document--response-revision response document-id))
+    (rename-buffer (format "*Org Note: %s*" path) t)
+    path))
+
+(defun org-note-document--kill-buffer-safely ()
+  "Kill the current Org Note document buffer without a kill query."
+  (let ((kill-buffer-query-functions nil))
+    (kill-buffer)))
+
 (defun org-note-document--save-remote ()
   "Save the current Org Note document while preserving its view state."
   (org-note-document--require-metadata)

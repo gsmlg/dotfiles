@@ -61,6 +61,13 @@ Org Note has no authentication option and sends no authentication credential.
 - `org-note-document-create`: create a blank Org document or copy one from
   `templates/`, then open it. In the document list, `c` runs the same command.
   New paths must not start with `templates/`.
+- `org-note-document-archive`: archive the current document. In the document
+  list, `d` runs the same command. In a document buffer, `C-c C-a` does too.
+- `org-note-document-rename`: rename the current document. In the document
+  list, `r` runs the same command. In a document buffer, `C-c C-r` does too.
+- `org-note-document-restore`: restore the selected archived document. In the
+  document list, `u` runs the same command.
+- In the document list, `A` toggles whether archived documents are shown.
 - `org-note-document-save`: save the current remote document; normal
   `C-x C-s` uses the same path.
 - `org-note-document-compare-latest`: compare a stale local buffer with the

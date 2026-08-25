@@ -648,6 +648,42 @@ SOURCE may be the empty string.  The request omits expected_revision."
    workspace-id document-id path source nil nil
    :operation-id operation-id))
 
+(cl-defun org-note-operation-archive-document
+    (workspace-id document-id expected-revision &key operation-id)
+  "Archive DOCUMENT-ID in WORKSPACE-ID at EXPECTED-REVISION."
+  (org-note-client-request
+   "POST"
+   (format "/api/org/documents/%s/archive"
+           (org-note-operation--path-segment document-id))
+   nil
+   (org-note-operation--mutation-body
+    workspace-id `((expected_revision . ,expected-revision)) operation-id)))
+
+(cl-defun org-note-operation-restore-document
+    (workspace-id document-id expected-revision &key operation-id)
+  "Restore archived DOCUMENT-ID in WORKSPACE-ID at EXPECTED-REVISION."
+  (org-note-client-request
+   "POST"
+   (format "/api/org/documents/%s/restore"
+           (org-note-operation--path-segment document-id))
+   nil
+   (org-note-operation--mutation-body
+    workspace-id `((expected_revision . ,expected-revision)) operation-id)))
+
+(cl-defun org-note-operation-rename-document-path
+    (workspace-id document-id expected-revision new-path &key operation-id)
+  "Rename DOCUMENT-ID in WORKSPACE-ID to NEW-PATH at EXPECTED-REVISION."
+  (org-note-client-request
+   "PATCH"
+   (format "/api/org/documents/%s/path"
+           (org-note-operation--path-segment document-id))
+   nil
+   (org-note-operation--mutation-body
+    workspace-id
+    `((expected_revision . ,expected-revision)
+      (new_path . ,new-path))
+    operation-id)))
+
 (defun org-note-operation--validated-view (view supported-views kind)
   "Return VIEW after checking it is in SUPPORTED-VIEWS for KIND."
   (let ((name (cond

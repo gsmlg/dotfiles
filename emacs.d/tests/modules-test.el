@@ -78,6 +78,9 @@
                      org-note-documents
                      org-note-document-open
                      org-note-document-create
+                     org-note-document-archive
+                     org-note-document-rename
+                     org-note-document-restore
                      org-note-configure-agenda-workspaces
                      org-note-configure-queue-workspaces
                      org-note-queue

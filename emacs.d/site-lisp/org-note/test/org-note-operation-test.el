@@ -1155,6 +1155,57 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
        (path . "notes/new.org")
        (source . "")
        (lease_proofs . ,(org-note-client-empty-object))))))
+
+(ert-deftest org-note-operation-archives-document ()
+  (let* ((org-note-actor-id "emacs:test@example")
+         (request
+          (org-note-operation-test--capture-request
+           (org-note-operation-archive-document
+            "workspace-1" "document-1" 4 :operation-id "operation-archive"))))
+    (should (equal (cl-subseq request 0 3)
+                   '("POST" "/api/org/documents/document-1/archive" nil)))
+    (org-note-operation-test--should-equal-json-object
+     (nth 3 request)
+     '((schema_version . 1)
+       (actor_id . "emacs:test@example")
+       (operation_id . "operation-archive")
+       (workspace_id . "workspace-1")
+       (expected_revision . 4)))))
+
+(ert-deftest org-note-operation-restores-document ()
+  (let* ((org-note-actor-id "emacs:test@example")
+         (request
+          (org-note-operation-test--capture-request
+           (org-note-operation-restore-document
+            "workspace-1" "document-1" 5 :operation-id "operation-restore"))))
+    (should (equal (cl-subseq request 0 3)
+                   '("POST" "/api/org/documents/document-1/restore" nil)))
+    (org-note-operation-test--should-equal-json-object
+     (nth 3 request)
+     '((schema_version . 1)
+       (actor_id . "emacs:test@example")
+       (operation_id . "operation-restore")
+       (workspace_id . "workspace-1")
+       (expected_revision . 5)))))
+
+(ert-deftest org-note-operation-renames-document-path ()
+  (let* ((org-note-actor-id "emacs:test@example")
+         (request
+          (org-note-operation-test--capture-request
+           (org-note-operation-rename-document-path
+            "workspace-1" "document-1" 6 "notes/renamed.org"
+            :operation-id "operation-rename"))))
+    (should (equal (cl-subseq request 0 3)
+                   '("PATCH" "/api/org/documents/document-1/path" nil)))
+    (org-note-operation-test--should-equal-json-object
+     (nth 3 request)
+     '((schema_version . 1)
+       (actor_id . "emacs:test@example")
+       (operation_id . "operation-rename")
+       (workspace_id . "workspace-1")
+       (expected_revision . 6)
+       (new_path . "notes/renamed.org")))))
+
 (ert-deftest org-note-operation-queries-queue-with-all-filters ()
   (let ((request
          (org-note-operation-test--capture-request

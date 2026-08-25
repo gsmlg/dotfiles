@@ -21,6 +21,8 @@ documents.
 - Open server documents as normal editable Org buffers.
 - Create new Org documents as blank notes or by copying `source` from documents
   under the `templates/` path prefix.
+- Archive, restore, and rename Org documents from the document list or an open
+  remote document buffer.
 - Make `C-x C-s` save directly to Agent Note with optimistic concurrency.
 - Reject stale saves without discarding either the local or remote version.
 - Browse workspaces, documents, indexed queues, agendas, item context, and
@@ -38,7 +40,7 @@ documents.
 - MCP transport; the client uses the documented REST API directly.
 - Authentication; the configured endpoint is accessed without credentials.
 - Autonomous scheduling or capability-aware dispatch.
-- Workspace creation, policy editing, archival, import, or export.
+- Workspace creation, policy editing, workspace archival, import, or export.
 - Structured work-item creation, follow-up creation, assignment, or scheduling.
 - Dedicated server-side template catalog API (templates are Org documents under
   `templates/`).
@@ -118,10 +120,11 @@ keeps an in-memory cursor stack so forward and backward navigation remain
 possible with an opaque server cursor.
 
 `M-x org-note-documents` can open the same document list directly after
-workspace selection. Each row contains the path and revision. `RET` retrieves
-the document and creates a uniquely named, non-file-visiting Org buffer.
-`c` or `M-x org-note-document-create` creates a new document in the current
-workspace.
+workspace selection. Each row contains the path, revision, and archived status.
+`RET` retrieves the document and creates a uniquely named, non-file-visiting Org
+buffer. `c` or `M-x org-note-document-create` creates a new document in the
+current workspace. `d`, `r`, and `u` archive, rename, and restore the selected
+document. `A` toggles whether archived documents are included in the list.
 
 ### Document creation
 
@@ -137,6 +140,31 @@ Template (copy `source` from a document whose path starts with the literal
 prefix `templates/`). New paths must be relative and must not start with
 `templates/`. On success the client opens the new document through the normal
 open path and refreshes an originating document list when applicable.
+
+### Document lifecycle
+
+Archive and restore use:
+
+```text
+POST /api/org/documents/{document_id}/archive
+POST /api/org/documents/{document_id}/restore
+```
+
+Rename uses:
+
+```text
+PATCH /api/org/documents/{document_id}/path
+```
+
+Lifecycle mutation bodies include the normal envelope plus
+`expected_revision`. They omit `lease_proofs`. Rename adds `new_path`. The
+document list can pass `include_archived` when fetching rows.
+
+`M-x org-note-document-archive` and `C-c C-a` in a document buffer archive the
+current document after confirmation. `M-x org-note-document-rename` and
+`C-c C-r` rename it. `M-x org-note-document-restore` restores a selected
+archived row from the document list. Successful lifecycle operations refresh the
+originating document list and update or kill open document buffers as needed.
 
 Each document buffer stores these values buffer-locally:
 

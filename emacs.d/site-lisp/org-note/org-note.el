@@ -27,6 +27,24 @@
 (defconst org-note--agenda-buffer-name "*Org Note Agenda*"
   "Name of the Org Note agenda browser buffer.")
 
+(defcustom org-note-agenda-workspace-ids nil
+  "Workspace IDs used by `org-note-agenda'.
+
+The interactive command stores IDs while configuration prompts show workspace
+slugs. Use `org-note-configure-agenda-workspaces' or `C-u M-x org-note-agenda'
+to change the selection."
+  :type '(repeat string)
+  :group 'org-note)
+
+(defcustom org-note-queue-workspace-ids nil
+  "Workspace IDs used by `org-note-queue'.
+
+The interactive command stores IDs while configuration prompts show workspace
+slugs. Use `org-note-configure-queue-workspaces' or `C-u M-x org-note-queue'
+to change the selection."
+  :type '(repeat string)
+  :group 'org-note)
+
 (defconst org-note--event-buffer-name "*Org Note Events*"
   "Name of the Org Note event browser buffer.")
 
@@ -648,16 +666,37 @@ used."
           (setq done t))))
     (nreverse rows)))
 
+(defun org-note--workspace-choice-label (row)
+  "Return the human-readable label for workspace ROW."
+  (or (alist-get 'slug row)
+      (org-note--required-string row 'workspace_id "workspace row" t)))
+
+(defun org-note--list-all-workspaces ()
+  "Return every workspace row from the Org Note service."
+  (let ((cursor nil)
+        (rows nil)
+        done)
+    (while (not done)
+      (let* ((response
+              (org-note-operation-list-workspaces :cursor cursor))
+             (page (org-note--prepare-page response #'org-note--workspace-row))
+             (row-data (nth 1 page))
+             (next (nth 2 page)))
+        (maphash (lambda (_id row) (push row rows)) row-data)
+        (if next
+            (setq cursor next)
+          (setq done t))))
+    (nreverse rows)))
+
 (defun org-note--read-workspace-id-for-create ()
   "Prompt for one workspace identifier for document creation."
-  (let* ((response (org-note-operation-list-workspaces))
-         (page (org-note--prepare-page response #'org-note--workspace-row))
-         (row-data (nth 1 page))
-         (choices nil))
-    (maphash
-     (lambda (id row)
-       (push (cons (or (alist-get 'slug row) id) id) choices))
-     row-data)
+  (let* ((rows (org-note--list-all-workspaces))
+         (choices
+          (mapcar (lambda (row)
+                    (let ((id (org-note--required-string
+                               row 'workspace_id "workspace row" t)))
+                      (cons (org-note--workspace-choice-label row) id)))
+                  rows)))
     (unless choices
       (user-error "No Org Note workspaces available"))
     (let ((selected (completing-read "Workspace: " choices nil t)))
@@ -973,11 +1012,128 @@ Known string views are accepted without interning arbitrary input."
       (user-error "Unknown Org Note %s view: %s" label view))
     validated))
 
-(defun org-note--read-workspace-ids ()
-  "Read one or more comma-separated workspace identifiers."
-  (org-note--validated-workspace-ids
-   (split-string (read-string "Workspace IDs (comma separated): ")
-                 "," t "[[:space:]]+")))
+(defun org-note--save-workspace-preference (variable workspace-ids)
+  "Persist WORKSPACE-IDS to operational preference VARIABLE."
+  (setq workspace-ids (org-note--validated-workspace-ids workspace-ids))
+  (set variable workspace-ids)
+  (customize-save-variable variable)
+  workspace-ids)
+
+(defun org-note--workspace-toggle-choices (rows selected-ids)
+  "Return toggle choices for ROWS and SELECTED-IDS."
+  (append
+   (mapcar
+    (lambda (row)
+      (let* ((id (org-note--required-string
+                  row 'workspace_id "workspace row" t))
+             (workspace-label (org-note--workspace-choice-label row)))
+        (cons
+         (if (member id selected-ids)
+             (format "[x] %s" workspace-label)
+           (format "[ ] %s" workspace-label))
+         id)))
+   rows)
+   (when selected-ids '(("Done" . done)))))
+
+(defun org-note--configure-workspaces (variable label)
+  "Configure VARIABLE with one or more workspaces for operational LABEL."
+  (let* ((all-rows (org-note--list-all-workspaces))
+         (selected-ids (copy-sequence (symbol-value variable)))
+         done)
+    (unless all-rows
+      (user-error "No Org Note workspaces available"))
+    (while (not done)
+      (let* ((choices (org-note--workspace-toggle-choices all-rows selected-ids))
+             (selected
+              (completing-read
+               (format "Org Note %s workspace (toggle, then Done): " label)
+               choices nil t))
+             (choice (assoc selected choices)))
+        (unless choice
+          (user-error "Unknown Org Note workspace selection: %s" selected))
+        (pcase (cdr choice)
+          ('done (setq done t))
+          (id
+           (setq selected-ids
+                 (if (member id selected-ids)
+                     (delete id selected-ids)
+                   (cons id selected-ids)))))))
+    (org-note--save-workspace-preference variable selected-ids)))
+
+(defun org-note--available-workspace-ids (rows)
+  "Return workspace IDs from ROWS."
+  (mapcar (lambda (row)
+            (org-note--required-string row 'workspace_id "workspace row" t))
+          rows))
+
+(defun org-note--reconcile-operational-workspace-ids
+    (workspace-ids variable label available-ids)
+  "Return valid WORKSPACE-IDS for LABEL, updating VARIABLE when needed.
+
+AVAILABLE-IDS is the current workspace ID list from the service."
+  (let* ((valid
+          (cl-remove-if-not
+           (lambda (workspace-id)
+             (member workspace-id available-ids))
+           workspace-ids))
+         (stale
+          (cl-remove-if
+           (lambda (workspace-id)
+             (member workspace-id available-ids))
+           workspace-ids)))
+    (cond
+     ((and stale (null valid))
+      (message "Org Note %s workspaces are no longer available; reconfigure."
+               label)
+      (org-note--configure-workspaces variable label))
+     (stale
+      (if (y-or-n-p
+           (format "Some Org Note %s workspaces are unavailable (%s). Reconfigure?"
+                   label (mapconcat #'identity stale ", ")))
+          (org-note--configure-workspaces variable label)
+        (org-note--save-workspace-preference variable valid)))
+     (t workspace-ids))))
+
+(defun org-note--resolve-operational-workspace-ids
+    (variable label &optional reconfigure-p)
+  "Return configured workspace IDs for operational LABEL.
+
+When RECONFIGURE-P is non-nil, or VARIABLE is unset, prompt for workspaces."
+  (let ((just-configured nil)
+        workspace-ids)
+    (setq workspace-ids
+          (if (or reconfigure-p (null (symbol-value variable)))
+              (prog1 (org-note--configure-workspaces variable label)
+                (setq just-configured t))
+            (copy-sequence (symbol-value variable))))
+    (unless just-configured
+      (setq workspace-ids
+            (org-note--reconcile-operational-workspace-ids
+             workspace-ids variable label
+             (org-note--available-workspace-ids
+              (org-note--list-all-workspaces)))))
+    (org-note--validated-workspace-ids workspace-ids)))
+
+(defun org-note--read-operational-workspace-ids (variable label)
+  "Read operational workspace IDs for LABEL from VARIABLE.
+
+Honors `current-prefix-arg' as a reconfigure request."
+  (org-note--resolve-operational-workspace-ids
+   variable label current-prefix-arg))
+
+(defun org-note-configure-agenda-workspaces ()
+  "Select and persist workspaces for `org-note-agenda'."
+  (interactive)
+  (org-note--configure-workspaces 'org-note-agenda-workspace-ids "agenda")
+  (message "Org Note agenda workspaces configured: %s"
+           (mapconcat #'identity org-note-agenda-workspace-ids ", ")))
+
+(defun org-note-configure-queue-workspaces ()
+  "Select and persist workspaces for `org-note-queue'."
+  (interactive)
+  (org-note--configure-workspaces 'org-note-queue-workspace-ids "queue")
+  (message "Org Note queue workspaces configured: %s"
+           (mapconcat #'identity org-note-queue-workspace-ids ", ")))
 
 (defun org-note--read-view (prompt views)
   "Read with PROMPT one exact view from VIEWS without arbitrary interning."
@@ -1042,9 +1198,14 @@ view for LABEL."
     buffer))
 
 (defun org-note-queue (workspace-ids view)
-  "Display queue VIEW across WORKSPACE-IDS and return its buffer."
+  "Display queue VIEW across WORKSPACE-IDS and return its buffer.
+
+When called interactively without WORKSPACE-IDS, use
+`org-note-queue-workspace-ids'.  With a prefix argument, reconfigure that
+preference before opening the queue."
   (interactive
-   (list (org-note--read-workspace-ids)
+   (list (org-note--read-operational-workspace-ids
+          'org-note-queue-workspace-ids "queue")
          (org-note--read-view
           "Queue view: " org-note-operation-queue-views)))
   (org-note--show-operational
@@ -1052,9 +1213,14 @@ view for LABEL."
    org-note-operation-queue-views 'queue "queue"))
 
 (defun org-note-agenda (workspace-ids view)
-  "Display agenda VIEW across WORKSPACE-IDS and return its buffer."
+  "Display agenda VIEW across WORKSPACE-IDS and return its buffer.
+
+When called interactively without WORKSPACE-IDS, use
+`org-note-agenda-workspace-ids'.  With a prefix argument, reconfigure that
+preference before opening the agenda."
   (interactive
-   (list (org-note--read-workspace-ids)
+   (list (org-note--read-operational-workspace-ids
+          'org-note-agenda-workspace-ids "agenda")
          (org-note--read-view
           "Agenda view: " org-note-operation-agenda-views)))
   (org-note--show-operational

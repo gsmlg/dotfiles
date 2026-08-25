@@ -181,13 +181,15 @@ No automatic merge or last-writer-wins fallback is permitted.
 
 ## Operational Views
 
-`M-x org-note-queue` prompts for one or more workspaces and one queue view:
+`M-x org-note-queue` uses the configured queue workspaces and prompts for one
+queue view:
 
 ```text
 ready, assigned, running, blocked, review, failed, expired_lease, completed
 ```
 
-`M-x org-note-agenda` prompts for workspaces and one agenda view:
+`M-x org-note-agenda` uses the configured agenda workspaces and prompts for one
+agenda view:
 
 ```text
 scheduled, upcoming_deadline
@@ -195,8 +197,10 @@ scheduled, upcoming_deadline
 
 Both commands use the indexed server endpoints, render paginated
 `tabulated-list-mode` buffers, preserve opaque cursors, and never scan Org
-documents. Rows show the item type, title, state, priority, assignee, schedule
-or deadline where relevant, attempt state, readiness, and lease state.
+documents. Workspace preferences are configured through dedicated commands or
+with `C-u` on the main commands. Rows show the item type, title, state,
+priority, assignee, schedule or deadline where relevant, attempt state,
+readiness, and lease state.
 
 `RET` opens `org-note-item-context`, a read-only Org buffer with sections for:
 

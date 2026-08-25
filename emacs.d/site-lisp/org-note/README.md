@@ -38,6 +38,8 @@ The package provides these user options:
   `emacs:<user-login-name>@<system-name>`.
 - `org-note-request-timeout`: synchronous request timeout in seconds. The
   default is 30.
+- `org-note-agenda-workspace-ids`: workspace IDs used by `org-note-agenda`.
+- `org-note-queue-workspace-ids`: workspace IDs used by `org-note-queue`.
 
 For example:
 
@@ -73,8 +75,14 @@ Org Note has no authentication option and sends no authentication credential.
 
 ## Queue, agenda, context, and event commands
 
-- `org-note-queue`: browse a queue view across selected workspaces.
-- `org-note-agenda`: browse an agenda view across selected workspaces.
+- `org-note-configure-agenda-workspaces`: choose and persist the workspaces
+  used by `org-note-agenda`.
+- `org-note-configure-queue-workspaces`: choose and persist the workspaces
+  used by `org-note-queue`.
+- `org-note-queue`: browse a queue view across configured workspaces. Use
+  `C-u` to reconfigure workspaces before opening.
+- `org-note-agenda`: browse an agenda view across configured workspaces. Use
+  `C-u` to reconfigure workspaces before opening.
 - `org-note-operational-open`: open the selected work item's context.
 - `org-note-item-context`: display one work item's complete context as
   read-only Org.

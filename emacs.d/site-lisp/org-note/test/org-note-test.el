@@ -849,10 +849,171 @@ When EMPTY is non-nil, collection sections are empty."
 
 (ert-deftest org-note-operational-public-functions-are-commands ()
   "Operational entry, open, and refresh functions are interactive commands."
-  (dolist (command '(org-note-queue org-note-agenda
+  (dolist (command '(org-note-configure-agenda-workspaces
+                     org-note-configure-queue-workspaces
+                     org-note-queue org-note-agenda
                      org-note-operational-open org-note-item-context
                      org-note-item-context-refresh org-note-events))
     (should (commandp command))))
+
+(ert-deftest org-note-configure-agenda-workspaces-saves-selection ()
+  "Agenda workspace configuration stores selected IDs."
+  (let ((saved nil)
+        (rows (list (org-note-test--workspace-row "workspace-a" "alpha")
+                    (org-note-test--workspace-row "workspace-b" "beta"))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda () rows))
+                  ((symbol-function 'completing-read)
+                   (let ((n 0))
+                     (lambda (&rest _)
+                       (setq n (1+ n))
+                       (pcase n
+                         (1 "[ ] alpha")
+                         (2 "Done")))))
+                  ((symbol-function 'customize-save-variable)
+                   (lambda (_variable)
+                     (setq saved (copy-sequence org-note-agenda-workspace-ids)))))
+          (setq org-note-agenda-workspace-ids nil)
+          (org-note-configure-agenda-workspaces)
+          (should (equal org-note-agenda-workspace-ids '("workspace-a")))
+          (should saved))
+      (setq org-note-agenda-workspace-ids nil))))
+
+(ert-deftest org-note-configure-queue-workspaces-uses-separate-preference ()
+  "Queue workspace configuration does not overwrite agenda preferences."
+  (let ((rows (list (org-note-test--workspace-row "workspace-b" "beta"))))
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda () rows))
+                  ((symbol-function 'completing-read)
+                   (let ((n 0))
+                     (lambda (&rest _)
+                       (setq n (1+ n))
+                       (pcase n
+                         (1 "[ ] beta")
+                         (2 "Done")))))
+                  ((symbol-function 'customize-save-variable) #'ignore))
+          (setq org-note-agenda-workspace-ids '("workspace-a")
+                org-note-queue-workspace-ids nil)
+          (org-note-configure-queue-workspaces)
+          (should (equal org-note-queue-workspace-ids '("workspace-b")))
+          (should (equal org-note-agenda-workspace-ids '("workspace-a"))))
+      (setq org-note-agenda-workspace-ids nil
+            org-note-queue-workspace-ids nil))))
+
+(ert-deftest org-note-agenda-uses-configured-workspaces ()
+  "Interactive agenda uses saved workspace preferences."
+  (let ((row (org-note-test--operational-row "item-a" "workspace-a"))
+        calls)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda ()
+                     (list (org-note-test--workspace-row "workspace-a" "alpha"))))
+                  ((symbol-function 'org-note-operation-query-agenda)
+                   (lambda (&rest arguments)
+                     (push arguments calls)
+                     (org-note-test--operational-page (list row) nil)))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) "upcoming_deadline")))
+          (setq org-note-agenda-workspace-ids '("workspace-a"))
+          (save-window-excursion (call-interactively #'org-note-agenda))
+          (should (equal calls
+                         '((:workspace-ids ("workspace-a")
+                            :view upcoming_deadline :cursor nil)))))
+      (setq org-note-agenda-workspace-ids nil)
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-queue-prompts-to-configure-when-unset ()
+  "Interactive queue configures workspaces before opening when unset."
+  (let ((row (org-note-test--operational-row "item-a" "workspace-a"))
+        calls)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda ()
+                     (list (org-note-test--workspace-row "workspace-a" "alpha"))))
+                  ((symbol-function 'org-note-operation-query-queue)
+                   (lambda (&rest arguments)
+                     (push arguments calls)
+                     (org-note-test--operational-page (list row) nil)))
+                  ((symbol-function 'completing-read)
+                   (let ((n 0))
+                     (lambda (&rest _)
+                       (setq n (1+ n))
+                       (pcase n
+                         (1 "[ ] alpha")
+                         (2 "Done")
+                         (_ "ready")))))
+                  ((symbol-function 'customize-save-variable) #'ignore))
+          (setq org-note-queue-workspace-ids nil)
+          (save-window-excursion (call-interactively #'org-note-queue))
+          (should (equal org-note-queue-workspace-ids '("workspace-a")))
+          (should (equal calls
+                         '((:workspace-ids ("workspace-a")
+                            :view ready :cursor nil)))))
+      (setq org-note-queue-workspace-ids nil)
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-agenda-prefix-reconfigures-workspaces ()
+  "A prefix argument reconfigures agenda workspaces before opening."
+  (let ((row (org-note-test--operational-row "item-a" "workspace-b"))
+        calls)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda ()
+                     (list (org-note-test--workspace-row "workspace-a" "alpha")
+                           (org-note-test--workspace-row "workspace-b" "beta"))))
+                  ((symbol-function 'org-note-operation-query-agenda)
+                   (lambda (&rest arguments)
+                     (push arguments calls)
+                     (org-note-test--operational-page (list row) nil)))
+                  ((symbol-function 'completing-read)
+                   (let ((n 0))
+                     (lambda (&rest _)
+                       (setq n (1+ n))
+                     (pcase n
+                       (1 "[x] alpha")
+                       (2 "[ ] beta")
+                       (3 "Done")
+                       (_ "upcoming_deadline")))))
+                  ((symbol-function 'customize-save-variable) #'ignore)
+                  (current-prefix-arg '(4)))
+          (setq org-note-agenda-workspace-ids '("workspace-a"))
+          (save-window-excursion (call-interactively #'org-note-agenda))
+          (should (equal org-note-agenda-workspace-ids '("workspace-b")))
+          (should (equal calls
+                         '((:workspace-ids ("workspace-b")
+                            :view upcoming_deadline :cursor nil)))))
+      (setq org-note-agenda-workspace-ids nil)
+      (org-note-test--kill-browser-buffers))))
+
+(ert-deftest org-note-agenda-trims-stale-workspaces-when-declined ()
+  "Agenda keeps valid saved workspaces when reconfigure is declined."
+  (let ((row (org-note-test--operational-row "item-a" "workspace-a"))
+        calls saved)
+    (unwind-protect
+        (cl-letf (((symbol-function 'org-note--list-all-workspaces)
+                   (lambda ()
+                     (list (org-note-test--workspace-row "workspace-a" "alpha"))))
+                  ((symbol-function 'y-or-n-p) (lambda (&rest _) nil))
+                  ((symbol-function 'org-note-operation-query-agenda)
+                   (lambda (&rest arguments)
+                     (push arguments calls)
+                     (org-note-test--operational-page (list row) nil)))
+                  ((symbol-function 'completing-read)
+                   (lambda (&rest _) "scheduled"))
+                  ((symbol-function 'customize-save-variable)
+                   (lambda (_variable)
+                     (setq saved (copy-sequence org-note-agenda-workspace-ids)))))
+          (setq org-note-agenda-workspace-ids '("workspace-a" "workspace-stale"))
+          (save-window-excursion (call-interactively #'org-note-agenda))
+          (should (equal org-note-agenda-workspace-ids '("workspace-a")))
+          (should saved)
+          (should (equal calls
+                         '((:workspace-ids ("workspace-a")
+                            :view scheduled :cursor nil)))))
+      (setq org-note-agenda-workspace-ids nil)
+      (org-note-test--kill-browser-buffers))))
 
 (ert-deftest org-note-queue-fetches-exact-context-and-renders-complete-row ()
   "Queue pages pass exact arguments, render fields, and retain source rows."

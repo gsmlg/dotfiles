@@ -136,6 +136,8 @@
        org-note-documents
        org-note-document-open
        org-note-document-create
+       org-note-configure-agenda-workspaces
+       org-note-configure-queue-workspaces
        org-note-queue
        org-note-agenda
        org-note-events

@@ -122,7 +122,7 @@
   (should
    (equal emacs-agent-editor-state-directory
           (file-name-as-directory
-           (expand-file-name "../emacs-agent-editor/"
+           (expand-file-name "agent-editor/"
                              gsmlg-state-directory)))))
 
 (ert-deftest gsmlg-smoke-empty-xdg-values-use-home-fallbacks ()
@@ -162,11 +162,11 @@
     (should (= enabled 1))
     (should (equal restored-directory desktop-dirname))))
 
-(ert-deftest gsmlg-smoke-desktop-restores-frames-by-default ()
-  "Desktop persistence should restore frame size, position, and layout."
+(ert-deftest gsmlg-smoke-desktop-restores-buffers-not-frames ()
+  "Desktop persistence restores buffers but not stale GUI frames."
   (should gsmlg-desktop-save-enabled)
   (should (eq desktop-save t))
-  (should desktop-restore-frames))
+  (should-not desktop-restore-frames))
 
 (ert-deftest gsmlg-smoke-lock-file-is-present ()
   "The committed Elpaca lock file should be configured and readable."

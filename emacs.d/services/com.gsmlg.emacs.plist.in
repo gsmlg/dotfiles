@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gsmlg.emacs</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>emacs</string>
+    <string>--fg-daemon=main</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>XDG_CONFIG_HOME</key>
+    <string>REPLACE_WITH_HOME/.config</string>
+    <key>XDG_DATA_HOME</key>
+    <string>REPLACE_WITH_HOME/.local/share</string>
+    <key>XDG_CACHE_HOME</key>
+    <string>REPLACE_WITH_HOME/.cache</string>
+    <key>XDG_STATE_HOME</key>
+    <string>REPLACE_WITH_HOME/.local/state</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>REPLACE_WITH_HOME/.local/state/emacs/launchd-main.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPLACE_WITH_HOME/.local/state/emacs/launchd-main.log</string>
+</dict>
+</plist>

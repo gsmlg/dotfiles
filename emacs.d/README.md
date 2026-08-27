@@ -83,7 +83,7 @@ owns external executables.
 | Elpaca and application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` |
 | Disposable caches and auto-saves | `${XDG_CACHE_HOME:-~/.cache}/emacs/` |
 | Mutable state and backups | `${XDG_STATE_HOME:-~/.local/state}/emacs/` |
-| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/` |
+| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/` |
 
 Customizations, native compilation output, URL data, recentf, savehist,
 save-place, bookmarks, the project list, TRAMP persistence, desktop and
@@ -224,50 +224,69 @@ remote desktop buffers are not restored by default.
 
 ## Server and daemon behavior
 
-A normal interactive GUI or terminal process starts an Emacs server by
-default. Start one explicitly if autostart has been disabled:
+Each OS user runs one formal interactive Emacs server named `main`. Prefer the
+OS user service templates under `services/` and the `bin/gsmlg-emacs` helper:
+
+```sh
+# macOS launchd (after substituting HOME into the plist template)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gsmlg.emacs.plist
+
+# systemd user unit
+systemctl --user enable --now gsmlg-emacs.service
+
+# diagnose / open clients
+gsmlg-emacs status
+gsmlg-emacs gui
+gsmlg-emacs tty
+```
+
+Shell aliases in `oh-my-zsh/zshrc` point `EDITOR`, `VISUAL`, and `GIT_EDITOR` at
+`emacsclient -s main`. Use `emacs-solo` only for diagnosis.
+
+A normal interactive GUI or terminal process can still call:
 
 ```text
 M-x gsmlg-server-start
 ```
 
 Set `gsmlg-server-autostart` to `nil` in the local file to opt out for an
-interactive, non-daemon process. Named daemons already provide an emacsclient
-server. Batch mode never opens a server socket.
+interactive, non-daemon process. Batch mode and `GSMLG_EMACS_TESTING=1` never
+join the user singleton. Batch mode never opens a server socket.
 
-Optional desktop persistence is controlled by
-`gsmlg-desktop-save-enabled` and is off by default.
+Desktop persistence is controlled by `gsmlg-desktop-save-enabled`. The single
+desktop file is `${XDG_STATE_HOME}/emacs/desktop/desktop.el`. Frames are not
+restored (`desktop-restore-frames` is nil); emacsclient creates frames for the
+current display.
 
 ## Agent Editor MCP
 
-Agent Editor MCP autostart is off by default and always off in batch mode. No
-project or startup directory is required; run:
+Agent Editor MCP starts with the formal interactive Emacs server by default
+and is always off in batch mode. No project or startup directory is required;
+run:
 
 ```text
 M-x gsmlg-agent-start
 ```
 
 The listener is loopback-only. Port 9876 is the default; `EMACS_AGENT_PORT`
-overrides it. To opt into interactive autostart, set
-`gsmlg-agent-autostart` or `EMACS_AGENT_AUTOSTART=1`.
+overrides it. To opt out of interactive autostart, set
+`gsmlg-agent-autostart` to nil. `EMACS_AGENT_AUTOSTART=1` still enables
+autostart explicitly.
 
 The endpoint supports MCP versions `2026-07-28`, `2025-11-25`, and
 Codex-compatible `2025-06-18`.
 
-The recommended deployment is one dedicated named daemon, one MCP endpoint,
-and zero or more projects registered through MCP after startup. Direct
-absolute local files do not require project registration:
+The recommended deployment is one `main` Emacs server, one MCP endpoint, and
+zero or more projects registered through MCP after startup. Direct absolute
+local files do not require project registration:
 
 ```sh
-EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
-
-emacsclient \
-  --socket-name="${XDG_STATE_HOME:-$HOME/.local/state}/emacs/server/agent-editor" \
-  -c
+emacs --daemon=main
+emacsclient -s main -c
 ```
 
 Connection metadata is written to
-`${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json`.
+`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/connection.json`.
 `M-x gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup
 catches MCP failures so they cannot prevent the editor from opening. See the
 bundled [Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its

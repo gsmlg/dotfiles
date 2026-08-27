@@ -17,6 +17,7 @@
     gsmlg-package-lock
     gsmlg-core
     gsmlg-compat
+    gsmlg-server
     gsmlg-ui
     gsmlg-completion
     gsmlg-editing

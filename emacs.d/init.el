@@ -24,6 +24,7 @@
 (require 'gsmlg-package-lock)
 
 (require 'gsmlg-core)
+(require 'gsmlg-server)
 (require 'gsmlg-session)
 (require 'gsmlg-ui)
 (require 'gsmlg-completion)

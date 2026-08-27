@@ -181,8 +181,8 @@ OS User Service
 - Create: systemd user service（NixOS/Linux）
 - Possibly modify: `install.sh` / shell docs
 
-- [ ] **Step 1:** 登录后启动唯一 `main` server；异常退出重启；最后 frame 关闭不退出
-- [ ] **Step 2:** 正常关机保存 session；固定 XDG state/cache/server socket
+- [x] **Step 1:** 登录后启动唯一 `main` server；异常退出重启；最后 frame 关闭不退出
+- [x] **Step 2:** 正常关机保存 session；固定 XDG state/cache/server socket
 
 ### Task 6: 入口统一 emacsclient
 
@@ -190,8 +190,8 @@ OS User Service
 - Modify: oh-my-zsh aliases / EDITOR / VISUAL / GIT_EDITOR
 - Create: 诊断命令（PID、socket、alive、restart、safe quit、GUI/TTY client）
 
-- [ ] **Step 1:** GUI/TTY/打开文件/eval 全部 `-s main`
-- [ ] **Step 2:** 直接独立 GUI Emacs 不再是正式工作流；保留诊断入口
+- [x] **Step 1:** GUI/TTY/打开文件/eval 全部 `-s main`
+- [x] **Step 2:** 直接独立 GUI Emacs 不再是正式工作流；保留诊断入口
 
 ### Task 7: Lisp `gsmlg-server.el`
 
@@ -201,9 +201,9 @@ OS User Service
 - Modify: `emacs.d/lisp/gsmlg-session.el`, `emacs.d/lisp/gsmlg-agent.el`
 - Test: server/session focused ERT + `./run-emacs-tests.sh`
 
-- [ ] **Step 1:** 定义唯一 server name、启动/验证、identity、health/status、shutdown/session hooks
-- [ ] **Step 2:** 明确 Server-owned vs frame-owned 状态边界
-- [ ] **Step 3:** 避免 client frame 创建时重复初始化核心服务
+- [x] **Step 1:** 定义唯一 server name、启动/验证、identity、health/status、shutdown/session hooks
+- [x] **Step 2:** 明确 Server-owned vs frame-owned 状态边界
+- [x] **Step 3:** 避免 client frame 创建时重复初始化核心服务
 
 ### Task 8: Agent Editor 单次启动与 metadata
 
@@ -212,10 +212,10 @@ OS User Service
 - Modify: `emacs.d/site-lisp/agent-editor-mcp/`（若 connection path / idempotency 需改）
 - Test: `emacs.d/tests/agent-test.el` + package tests
 
-- [ ] **Step 1:** 仅在正式 Server 进程启动一次；`gsmlg-agent-start` 幂等
-- [ ] **Step 2:** 固定端口 `9876`；metadata 固定路径 `${XDG_STATE_HOME}/emacs/agent-editor/connection.json`
-- [ ] **Step 3:** metadata 描述 Editor Server（instance_id/server_name/pid/endpoint/started_at）；project 列表不写入连接文件
-- [ ] **Step 4:** frame hooks 不得创建 Agent Runtime
+- [x] **Step 1:** 仅在正式 Server 进程启动一次；`gsmlg-agent-start` 幂等
+- [x] **Step 2:** 固定端口 `9876`；metadata 固定路径 `${XDG_STATE_HOME}/emacs/agent-editor/connection.json`
+- [x] **Step 3:** metadata 描述 Editor Server（instance_id/server_name/pid/endpoint/started_at）；project 列表不写入连接文件
+- [x] **Step 4:** frame hooks 不得创建 Agent Runtime
 
 ### Task 9: 全局单一 Desktop Session
 
@@ -223,9 +223,9 @@ OS User Service
 - Modify: `emacs.d/lisp/gsmlg-session.el`
 - Modify: `emacs.d/tests/smoke-test.el`（当前断言 `desktop-restore-frames` 为 t）
 
-- [ ] **Step 1:** 单一路径 `${XDG_STATE_HOME}/emacs/desktop/desktop.el`
-- [ ] **Step 2:** `desktop-restore-frames nil`；恢复 buffers/位置/必要 variables；不恢复历史 GUI/TTY frame 与 monitor 坐标
-- [ ] **Step 3:** client frame 关闭不保存/覆盖 desktop
+- [x] **Step 1:** 单一路径 `${XDG_STATE_HOME}/emacs/desktop/desktop.el`
+- [x] **Step 2:** `desktop-restore-frames nil`；恢复 buffers/位置/必要 variables；不恢复历史 GUI/TTY frame 与 monitor 坐标
+- [x] **Step 3:** client frame 关闭不保存/覆盖 desktop
 
 ### Task 10: 测试 profile 绕过单例副作用
 
@@ -233,7 +233,7 @@ OS User Service
 - Modify: startup/test harness、agent connection writers
 - Env: `GSMLG_EMACS_TESTING=1` 和/或 `noninteractive`
 
-- [ ] **Step 1:** 测试不得连接真实 `main`、绑定真实 `9876`、改真实 connection/desktop、因 Server 已存在而退出
+- [x] **Step 1:** 测试不得连接真实 `main`、绑定真实 `9876`、改真实 connection/desktop、因 Server 已存在而退出
 
 ### 第二批验收
 
@@ -249,6 +249,8 @@ Agent Editor 只有一份 connection.json
 绝对路径文件可以不依赖 project 直接操作
 CI 与 batch test 不连接用户真实 Server
 ```
+
+本地验证（2026-08-06）：`./run-emacs-tests.sh` 一方 254（252 expected + 2 skipped）/ Agent MCP 229；byte-compile/checkdoc 通过。
 
 ---
 

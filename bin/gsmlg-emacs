@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# Manage the canonical GSMLG Emacs server (name: main).
+set -euo pipefail
+
+server_name="${GSMLG_EMACS_SERVER_NAME:-main}"
+emacs_bin="${EMACS:-emacs}"
+emacsclient_bin="${EMACSCLIENT:-emacsclient}"
+
+xdg_state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+socket_dir="${xdg_state_home}/emacs/server"
+socket_path="${socket_dir}/${server_name}"
+connection_file="${xdg_state_home}/emacs/agent-editor/connection.json"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <command>
+
+Commands:
+  status     Show server PID, socket, and Agent Editor connection
+  ping       Check whether the main server responds
+  start      Start emacs --daemon=${server_name} if needed
+  stop       Save and quit the main server
+  restart    stop then start
+  gui        Open a GUI emacsclient frame (-c)
+  tty        Open a TTY emacsclient frame (-t)
+  edit PATH  Open PATH in the main server
+  eval FORM  Evaluate FORM in the main server
+EOF
+}
+
+client() {
+  "$emacsclient_bin" -s "$server_name" "$@"
+}
+
+server_alive() {
+  client --eval 't' >/dev/null 2>&1
+}
+
+cmd_status() {
+  printf 'server_name=%s\n' "$server_name"
+  printf 'socket=%s\n' "$socket_path"
+  if server_alive; then
+    printf 'alive=yes\n'
+    printf 'pid=%s\n' "$(client --eval '(emacs-pid)' 2>/dev/null | tr -d '"')"
+  else
+    printf 'alive=no\n'
+  fi
+  if [[ -f "$connection_file" ]]; then
+    printf 'agent_connection=%s\n' "$connection_file"
+  else
+    printf 'agent_connection=missing\n'
+  fi
+}
+
+cmd_start() {
+  if server_alive; then
+    printf 'Server %s is already running\n' "$server_name"
+    return 0
+  fi
+  mkdir -p "$socket_dir"
+  "$emacs_bin" --daemon="$server_name"
+  printf 'Started Emacs server %s\n' "$server_name"
+}
+
+cmd_stop() {
+  if ! server_alive; then
+    printf 'Server %s is not running\n' "$server_name"
+    return 0
+  fi
+  client --eval '(save-buffers-kill-emacs t)' >/dev/null
+  printf 'Stopped Emacs server %s\n' "$server_name"
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  status) cmd_status ;;
+  ping)
+    if server_alive; then
+      printf 'ok\n'
+    else
+      printf 'down\n'
+      exit 1
+    fi
+    ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart)
+    cmd_stop || true
+    cmd_start
+    ;;
+  gui) client -c -n "$@" ;;
+  tty) client -t "$@" ;;
+  edit)
+    [[ $# -ge 1 ]] || { usage >&2; exit 2; }
+    client -n "$@"
+    ;;
+  eval)
+    [[ $# -ge 1 ]] || { usage >&2; exit 2; }
+    client --eval "$*"
+    ;;
+  ""|-h|--help|help) usage ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

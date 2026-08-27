@@ -83,13 +83,20 @@ One of `disabled', `available', `starting', `running', `stopping', or
 
 (defun gsmlg-agent--server-owned-p ()
   "Return non-nil when this Emacs process owns a live server."
-  (and server-mode
-       (process-live-p server-process)))
+  (if (fboundp #'gsmlg-server-owned-p)
+      (gsmlg-server-owned-p)
+    (and server-mode
+         (boundp 'server-process)
+         (process-live-p server-process))))
 
 (defun gsmlg-agent--desired-state ()
   "Return the desired Agent lifecycle state for the current session."
   (cond
    (noninteractive 'disabled)
+   ((and (fboundp #'gsmlg-server-testing-p)
+         (gsmlg-server-testing-p)
+         (not (gsmlg-agent--server-owned-p)))
+    'disabled)
    ((not (gsmlg-agent--autostart-enabled-p)) 'disabled)
    ((gsmlg-agent--server-owned-p) 'running)
    (t 'disabled)))
@@ -103,11 +110,9 @@ directory."
   (setq emacs-agent-editor-host "127.0.0.1"))
 
 (defun gsmlg-agent--align-state-directory ()
-  "Place Agent Editor MCP state beside the Emacs XDG state directory."
+  "Place Agent Editor MCP connection metadata under Emacs XDG state."
   (setq emacs-agent-editor-state-directory
-        (file-name-as-directory
-         (expand-file-name "../emacs-agent-editor/"
-                           gsmlg-state-directory))))
+        (gsmlg-ensure-directory (gsmlg-state-file "agent-editor/"))))
 
 (defun gsmlg-agent--ensure-package ()
   "Load the bundled Agent Editor MCP package when needed.
@@ -151,20 +156,42 @@ Return non-nil when the package is available."
           (if gsmlg-agent-package-available-p 'available 'disabled)))))
 
 (defun gsmlg-agent--remove-legacy-connection-file ()
-  "Remove the exact connection file published by the former integration."
-  (when-let* ((canonical emacs-agent-editor--connection-file)
-              ((stringp canonical))
-              (daemon
-               (file-name-nondirectory
-                (directory-file-name
-                 (file-name-directory canonical))))
-              (legacy
-               (expand-file-name
-                (format "agent-editor/%s/connection.json" daemon)
-                gsmlg-state-directory))
-              ((file-exists-p legacy))
-              ((not (file-equal-p legacy canonical))))
-    (delete-file legacy)))
+  "Remove obsolete per-daemon connection metadata files.
+
+Keep the singleton connection.json under the agent-editor state directory.
+Delete older per-daemon layouts under emacs-agent-editor/ or agent-editor/
+when they are not the active connection file."
+  (let* ((canonical emacs-agent-editor--connection-file)
+         (legacy-roots
+          (delq nil
+                (list
+                 (and (stringp gsmlg-state-directory)
+                      (expand-file-name "../emacs-agent-editor/"
+                                        gsmlg-state-directory))
+                 (and (stringp gsmlg-state-directory)
+                      (expand-file-name "agent-editor/"
+                                        gsmlg-state-directory))))))
+    (dolist (root legacy-roots)
+      (when (file-directory-p root)
+        (dolist (entry (directory-files root t "\\`[^.]" t))
+          (cond
+           ;; Old per-daemon directories: <root>/<daemon>/connection.json
+           ((file-directory-p entry)
+            (let ((legacy (expand-file-name "connection.json" entry)))
+              (when (and (file-regular-p legacy)
+                         (or (not (stringp canonical))
+                             (not (file-equal-p legacy canonical))))
+                (delete-file legacy))))
+           ;; Do not delete the singleton <root>/connection.json when it is
+           ;; the active canonical target.
+           ((and (equal (file-name-nondirectory entry) "connection.json")
+                 (file-regular-p entry)
+                 (stringp canonical)
+                 (not (file-equal-p entry canonical))
+                 ;; Only treat sibling-tree top-level files as legacy.
+                 (string-suffix-p "/emacs-agent-editor/"
+                                 (file-name-as-directory root)))
+            (delete-file entry))))))))
 
 (defun gsmlg-agent--transition-start (&optional noerror)
   "Start the Agent Editor MCP listener and update lifecycle state.

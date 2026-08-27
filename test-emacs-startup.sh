@@ -123,6 +123,7 @@ test_environment=(
   "XDG_STATE_HOME=$xdg_state_home"
   "XDG_RUNTIME_DIR=$xdg_runtime_dir"
   "GSMLG_EMACS_LOCAL="
+  "GSMLG_EMACS_TESTING=1"
   "EMACS_AGENT_AUTOSTART="
   "EMACS_AGENT_PORT=$agent_port"
 )

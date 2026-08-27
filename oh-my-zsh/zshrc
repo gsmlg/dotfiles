@@ -121,3 +121,27 @@ test -x /usr/local/bin/terraform && complete -o nospace -C /usr/local/bin/terraf
 [[ -f ~/.dart-cli-completion/zsh-config.zsh ]] && . ~/.dart-cli-completion/zsh-config.zsh || true
 ## [/Completion]
 
+# GSMLG Emacs: one formal server named `main`; daily editing uses emacsclient.
+export GSMLG_EMACS_SERVER_NAME="${GSMLG_EMACS_SERVER_NAME:-main}"
+_gsmlg_emacs_bin="${GSMLG_EMACS:-emacs}"
+_gsmlg_emacsclient_bin="${GSMLG_EMACSCLIENT:-emacsclient}"
+_gsmlg_emacs_helper="${DOTFILES_DIR:-$HOME/.dotfiles}/bin/gsmlg-emacs"
+
+export EDITOR="${EDITOR:-${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -nw}"
+export VISUAL="${VISUAL:-${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -c}"
+export GIT_EDITOR="${GIT_EDITOR:-$EDITOR}"
+
+alias emacs="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME}"
+alias e="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -n"
+alias ec="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -c -n"
+alias et="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -t"
+alias emacs-gui="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -c -n"
+alias emacs-tty="${_gsmlg_emacsclient_bin} -s ${GSMLG_EMACS_SERVER_NAME} -t"
+alias emacs-status="${_gsmlg_emacs_helper} status"
+alias emacs-ping="${_gsmlg_emacs_helper} ping"
+alias emacs-restart="${_gsmlg_emacs_helper} restart"
+alias emacs-stop="${_gsmlg_emacs_helper} stop"
+alias emacs-start="${_gsmlg_emacs_helper} start"
+# Escape hatch: standalone Emacs for diagnosis only.
+alias emacs-solo="command ${_gsmlg_emacs_bin}"
+

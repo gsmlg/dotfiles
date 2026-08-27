@@ -49,7 +49,24 @@
   :group 'gsmlg)
 
 (defvar gsmlg-ui-nerd-font-available nil
-  "Non-nil when the configured Nerd Font is available.")
+  "Non-nil when the configured Nerd Font is available on the selected frame.
+
+Prefer `gsmlg-ui-nerd-font-available-p' for frame-aware rendering.")
+
+(defconst gsmlg-ui-nerd-font-parameter 'gsmlg-nerd-font-available
+  "Frame parameter storing whether Nerd Font glyphs can render on a frame.")
+
+(defvar-local gsmlg-ui--breadcrumb-cache nil
+  "Buffer-local cached file breadcrumb for the header line.")
+
+(defvar-local gsmlg-ui--breadcrumb-cache-key nil
+  "Cache key for `gsmlg-ui--breadcrumb-cache'.")
+
+(defvar-local gsmlg-ui--vc-cache nil
+  "Buffer-local cached VC mode-line segment.")
+
+(defvar-local gsmlg-ui--vc-cache-key nil
+  "Cache key for `gsmlg-ui--vc-cache'.")
 
 (defconst gsmlg-ui-glyphs-ascii
   '((:checker-info . ?i)
@@ -147,21 +164,30 @@ otherwise `gsmlg-ui-glyphs-ascii'.  Missing keys fall back to ASCII."
   "Face for the major-mode name in the mode line."
   :group 'gsmlg)
 
+(defun gsmlg-ui-nerd-font-available-p (&optional frame)
+  "Return non-nil when FRAME can render configured Nerd Font glyphs."
+  (let ((frame (or frame (selected-frame))))
+    (and (display-graphic-p frame)
+         (frame-parameter frame gsmlg-ui-nerd-font-parameter))))
+
 (defun gsmlg-ui-apply-fonts (&optional frame)
   "Apply optional configured fonts to FRAME."
   (with-selected-frame (or frame (selected-frame))
-    (when (display-graphic-p)
-      (setq gsmlg-ui-nerd-font-available
-            (and (find-font (font-spec :family gsmlg-nerd-font-family)) t))
-      (when (find-font (font-spec :family gsmlg-default-font-family))
-        (set-face-attribute
-         'default nil
-         :family gsmlg-default-font-family
-         :height gsmlg-default-font-height))
-      (when (find-font (font-spec :family gsmlg-cjk-font-family))
-        (dolist (charset '(kana han cjk-misc bopomofo))
-          (set-fontset-font t charset
-                            (font-spec :family gsmlg-cjk-font-family)))))))
+    (let ((available
+           (and (display-graphic-p)
+                (find-font (font-spec :family gsmlg-nerd-font-family)))))
+      (set-frame-parameter nil gsmlg-ui-nerd-font-parameter (and available t))
+      (setq gsmlg-ui-nerd-font-available (and available t))
+      (when (display-graphic-p)
+        (when (find-font (font-spec :family gsmlg-default-font-family))
+          (set-face-attribute
+           'default nil
+           :family gsmlg-default-font-family
+           :height gsmlg-default-font-height))
+        (when (find-font (font-spec :family gsmlg-cjk-font-family))
+          (dolist (charset '(kana han cjk-misc bopomofo))
+            (set-fontset-font t charset
+                              (font-spec :family gsmlg-cjk-font-family))))))))
 
 (defun gsmlg-ui-enable-theme ()
   "Enable Duskmoon Moonlight without prompting."
@@ -170,7 +196,7 @@ otherwise `gsmlg-ui-glyphs-ascii'.  Missing keys fall back to ASCII."
 
 (defun gsmlg-ui-icon (glyph)
   "Return Nerd Font GLYPH, or an empty string when unavailable."
-  (if gsmlg-ui-nerd-font-available
+  (if (gsmlg-ui-nerd-font-available-p)
       (propertize glyph 'face `(:family ,gsmlg-nerd-font-family))
     ""))
 
@@ -179,7 +205,7 @@ otherwise `gsmlg-ui-glyphs-ascii'.  Missing keys fall back to ASCII."
 Look up `gsmlg-ui-glyph-alist' (or the auto nerd/ascii default), then
 fall back to `gsmlg-ui-glyphs-ascii'."
   (let* ((alist (or gsmlg-ui-glyph-alist
-                    (if gsmlg-ui-nerd-font-available
+                    (if (gsmlg-ui-nerd-font-available-p)
                         gsmlg-ui-glyphs-nerd
                       gsmlg-ui-glyphs-ascii)))
          (char (or (alist-get name alist)
@@ -200,52 +226,91 @@ fall back to `gsmlg-ui-glyphs-ascii'."
    'gsmlg-directory directory
    'help-echo (format "Open %s" (abbreviate-file-name directory))))
 
+(defun gsmlg-ui--breadcrumb-cache-key ()
+  "Return the cache key for the current buffer breadcrumb."
+  (list buffer-file-name default-directory))
+
+(defun gsmlg-ui--compute-file-breadcrumb ()
+  "Return project context and a clickable breadcrumb for the current file."
+  (let* ((project (project-current nil (file-name-directory
+                                        buffer-file-name)))
+         (root (if project
+                 (project-root project)
+               (concat (file-remote-p buffer-file-name) "/")))
+         (relative (file-relative-name buffer-file-name root))
+         (parts (split-string relative "/" t))
+         (directory root)
+         (breadcrumb
+          (if project
+              (list
+               "["
+               (gsmlg-ui-icon " ")
+               (gsmlg-ui--header-path-button
+                (file-name-nondirectory (directory-file-name root))
+                root)
+               "] - [")
+            (list
+             "["
+             (gsmlg-ui-icon " ")
+             (gsmlg-ui--header-path-button
+              (abbreviate-file-name root) root)
+             " / "))))
+    (while (cdr parts)
+      (setq directory (expand-file-name (file-name-as-directory (car parts))
+                                        directory)
+            breadcrumb
+            (append breadcrumb
+                    (list (gsmlg-ui--header-path-button
+                           (car parts) directory)
+                          " / "))
+            parts (cdr parts)))
+    (append breadcrumb
+            (list (gsmlg-ui-icon " ") (car parts) "]"))))
+
 (defun gsmlg-ui-file-breadcrumb ()
   "Return project context and a clickable breadcrumb for the current file."
   (when buffer-file-name
-    (let* ((project (project-current nil (file-name-directory
-                                          buffer-file-name)))
-           (root (if project
-                     (project-root project)
-                   (concat (file-remote-p buffer-file-name) "/")))
-           (relative (file-relative-name buffer-file-name root))
-           (parts (split-string relative "/" t))
-           (directory root)
-            (breadcrumb
-            (if project
-                (list
-                 "["
-                 (gsmlg-ui-icon " ")
-                 (gsmlg-ui--header-path-button
-                  (file-name-nondirectory (directory-file-name root))
-                  root)
-                 "] - [")
-              (list
-               "["
-               (gsmlg-ui-icon " ")
-               (gsmlg-ui--header-path-button
-                (abbreviate-file-name root) root)
-               " / "))))
-      (while (cdr parts)
-        (setq directory (expand-file-name (file-name-as-directory (car parts))
-                                          directory)
-              breadcrumb
-              (append breadcrumb
-                      (list (gsmlg-ui--header-path-button
-                             (car parts) directory)
-                            " / "))
-              parts (cdr parts)))
-      (append breadcrumb
-              (list (gsmlg-ui-icon " ") (car parts) "]")))))
+    (let ((key (gsmlg-ui--breadcrumb-cache-key)))
+      (unless (equal key gsmlg-ui--breadcrumb-cache-key)
+        (setq gsmlg-ui--breadcrumb-cache-key key
+              gsmlg-ui--breadcrumb-cache (gsmlg-ui--compute-file-breadcrumb)))
+      gsmlg-ui--breadcrumb-cache)))
+
+(defun gsmlg-ui--buffer-identification-string ()
+  "Return the display string for a non-file buffer."
+  (unless buffer-file-name
+    (let ((from-mode-line
+           (ignore-errors
+             (let ((ident (format-mode-line mode-line-buffer-identification)))
+               (unless (string-blank-p ident)
+                 (string-trim ident))))))
+      (or from-mode-line
+          (unless (string-blank-p (buffer-name))
+            (buffer-name))))))
+
+(defun gsmlg-ui-buffer-identity ()
+  "Return header-line identification for non-file buffers."
+  (let ((ident (gsmlg-ui--buffer-identification-string)))
+    (when ident
+      (list (propertize ident 'face 'gsmlg-ui-major-mode)))))
 
 (defun gsmlg-ui-header-line ()
   "Return the file breadcrumb and active Org clock for the header line."
-  (let ((breadcrumb (gsmlg-ui-file-breadcrumb))
-        (clock (and (boundp 'org-mode-line-string)
-                    org-mode-line-string)))
-    (when (or breadcrumb clock)
+  (let* ((breadcrumb (or (gsmlg-ui-file-breadcrumb)
+                         (gsmlg-ui-buffer-identity)))
+         (clock (and (boundp 'org-mode-line-string)
+                     org-mode-line-string))
+         (clock-text (when clock (format "%s" clock))))
+    (when (or breadcrumb (not (string-blank-p clock-text)))
       (append '(" ") breadcrumb
-              (when clock `("    " ,clock " "))))))
+              (when (not (string-blank-p clock-text))
+                `("    " ,clock-text " "))))))
+
+(defun gsmlg-ui-segment-buffer-identity ()
+  "Return buffer identification for non-file buffers in the mode line."
+  (let ((ident (gsmlg-ui--buffer-identification-string)))
+    (when ident
+      (propertize ident 'face 'gsmlg-ui-major-mode))))
 
 (defun gsmlg-ui-segment-buffer-status ()
   "Return a glyph for modified, read-only, or narrowed file buffers."
@@ -299,31 +364,55 @@ fall back to `gsmlg-ui-glyphs-ascii'."
         (substring (vc-working-revision buffer-file-name backend) 0 7))
       "???"))
 
+(defun gsmlg-ui--vc-cache-key ()
+  "Return the cache key for the current buffer VC segment."
+  (list buffer-file-name
+        (and vc-mode (substring-no-properties vc-mode))))
+
+(defun gsmlg-ui--invalidate-vc-cache ()
+  "Drop the cached VC segment for the current buffer."
+  (setq gsmlg-ui--vc-cache nil
+        gsmlg-ui--vc-cache-key nil))
+
+(defun gsmlg-ui--install-buffer-line-hooks ()
+  "Install buffer-local hooks that refresh cached mode-line segments."
+  (add-hook 'after-save-hook #'gsmlg-ui--invalidate-vc-cache nil t))
+
+(defun gsmlg-ui--compute-vc-segment ()
+  "Return branch/revision text colored by live `vc-state'."
+  (let* ((backend (vc-backend buffer-file-name))
+         (state (and backend (vc-state buffer-file-name)))
+         (rev (and backend (gsmlg-ui--vc-revision vc-mode backend)))
+         (branch-icon (gsmlg-ui-icon " "))
+         (glyph-and-face
+          (cond
+           ((memq state '(edited added))
+            (cons (gsmlg-ui-glyph :vc-added) 'gsmlg-ui-status-info))
+           ((eq state 'needs-merge)
+            (cons (gsmlg-ui-glyph :vc-needs-merge)
+                  'gsmlg-ui-status-warning))
+           ((eq state 'needs-update)
+            (cons (gsmlg-ui-glyph :vc-needs-update)
+                  'gsmlg-ui-status-warning))
+           ((memq state '(removed conflict unregistered))
+            (cons (gsmlg-ui-glyph :vc-conflict) 'gsmlg-ui-status-error))
+           (t
+            (cons (gsmlg-ui-glyph :vc-good) 'gsmlg-ui-status-neutral)))))
+    (when rev
+      (concat branch-icon
+              (propertize (format "%s %s" (car glyph-and-face) rev)
+                          'face (cdr glyph-and-face))))))
+
 (defun gsmlg-ui-segment-vc ()
   "Return branch/revision text colored by live `vc-state'."
   (when (and vc-mode buffer-file-name)
-    (let* ((backend (vc-backend buffer-file-name))
-           (state (and backend (vc-state buffer-file-name)))
-           (rev (and backend (gsmlg-ui--vc-revision vc-mode backend)))
-           (branch-icon (gsmlg-ui-icon " "))
-           (glyph-and-face
-            (cond
-             ((memq state '(edited added))
-              (cons (gsmlg-ui-glyph :vc-added) 'gsmlg-ui-status-info))
-             ((eq state 'needs-merge)
-              (cons (gsmlg-ui-glyph :vc-needs-merge)
-                    'gsmlg-ui-status-warning))
-             ((eq state 'needs-update)
-              (cons (gsmlg-ui-glyph :vc-needs-update)
-                    'gsmlg-ui-status-warning))
-             ((memq state '(removed conflict unregistered))
-              (cons (gsmlg-ui-glyph :vc-conflict) 'gsmlg-ui-status-error))
-             (t
-              (cons (gsmlg-ui-glyph :vc-good) 'gsmlg-ui-status-neutral)))))
-      (when rev
-        (concat branch-icon
-                (propertize (format "%s %s" (car glyph-and-face) rev)
-                            'face (cdr glyph-and-face)))))))
+    (if (file-remote-p buffer-file-name)
+        (gsmlg-ui--compute-vc-segment)
+      (let ((key (gsmlg-ui--vc-cache-key)))
+        (unless (equal key gsmlg-ui--vc-cache-key)
+          (setq gsmlg-ui--vc-cache-key key
+                gsmlg-ui--vc-cache (gsmlg-ui--compute-vc-segment)))
+        gsmlg-ui--vc-cache))))
 
 (defun gsmlg-ui--major-mode-name ()
   "Return a plain major-mode display name."
@@ -349,21 +438,28 @@ fall back to `gsmlg-ui-glyphs-ascii'."
       (propertize (string-trim misc-info)
                   'face 'gsmlg-ui-unimportant))))
 
-(defun gsmlg-ui--flymake-count (type)
-  "Count current Flymake diagnostics matching severity TYPE."
-  (if (and (fboundp #'flymake-diagnostics)
-           (fboundp #'flymake-diagnostic-type))
-      (let ((target-severity
-             (gsmlg-compat-flymake-diagnostic-severity type)))
-        (seq-count
-         (lambda (diag)
-           (let ((diag-type (flymake-diagnostic-type diag)))
-             (if target-severity
-                 (eq (gsmlg-compat-flymake-diagnostic-severity diag-type)
-                     target-severity)
-               (eq diag-type type))))
-         (flymake-diagnostics)))
-    0))
+(defun gsmlg-ui--flymake-counts ()
+  "Return plist (:error N :warning N :note N) from one diagnostics scan."
+  (let ((counts (list :error 0 :warning 0 :note 0)))
+    (when (and (fboundp #'flymake-diagnostics)
+               (fboundp #'flymake-diagnostic-type))
+      (dolist (diag (flymake-diagnostics))
+        (let* ((diag-type (flymake-diagnostic-type diag))
+               (severity (gsmlg-compat-flymake-diagnostic-severity diag-type)))
+          (cond
+           ((eq severity (warning-numeric-level :error))
+            (plist-put counts :error (1+ (plist-get counts :error))))
+           ((eq severity (warning-numeric-level :warning))
+            (plist-put counts :warning (1+ (plist-get counts :warning))))
+           ((eq severity (warning-numeric-level :debug))
+            (plist-put counts :note (1+ (plist-get counts :note))))
+           ((memq diag-type '(flymake-error :error error))
+            (plist-put counts :error (1+ (plist-get counts :error))))
+           ((memq diag-type '(flymake-warning :warning warning))
+            (plist-put counts :warning (1+ (plist-get counts :warning))))
+           ((memq diag-type '(flymake-note :note :debug note))
+            (plist-put counts :note (1+ (plist-get counts :note))))))))
+    counts))
 
 (defun gsmlg-ui--format-flymake (status error warning note)
   "Format Flymake STATUS with ERROR, WARNING, and NOTE counts."
@@ -415,9 +511,10 @@ fall back to `gsmlg-ui-glyphs-ascii'."
                  (seq-difference (flymake-running-backends)
                                  (flymake-reporting-backends))))
            (status (if checking 'running 'finished))
-           (error (gsmlg-ui--flymake-count :error))
-           (warning (gsmlg-ui--flymake-count :warning))
-           (note (gsmlg-ui--flymake-count :note)))
+           (counts (gsmlg-ui--flymake-counts))
+           (error (plist-get counts :error))
+           (warning (plist-get counts :warning))
+           (note (plist-get counts :note)))
       (gsmlg-ui--format-flymake status error warning note))))
 
 (defun gsmlg-ui-segment-process ()
@@ -452,7 +549,8 @@ fall back to `gsmlg-ui-glyphs-ascii'."
 (defun gsmlg-ui-mode-line ()
   "Build a left/right-aligned mood-line-style mode line string."
   (let* ((left (gsmlg-ui--join-segments
-                (list (gsmlg-ui-segment-buffer-status)
+                (list (gsmlg-ui-segment-buffer-identity)
+                      (gsmlg-ui-segment-buffer-status)
                       (gsmlg-ui-segment-multiple-cursors)
                       (gsmlg-ui-segment-cursor-position)
                       (gsmlg-ui-segment-scroll))))
@@ -482,6 +580,7 @@ fall back to `gsmlg-ui-glyphs-ascii'."
 
 (add-hook 'after-make-frame-functions #'gsmlg-ui-apply-fonts)
 (add-hook 'emacs-startup-hook #'gsmlg-ui-apply-fonts 80)
+(add-hook 'find-file-hook #'gsmlg-ui--install-buffer-line-hooks)
 
 (use-package emacs-duskmoon-theme
   :ensure

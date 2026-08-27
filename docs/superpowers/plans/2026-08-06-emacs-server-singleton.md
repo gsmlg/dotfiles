@@ -262,25 +262,25 @@ CI 与 batch test 不连接用户真实 Server
 - Modify: `emacs.d/lisp/gsmlg-ui.el`
 - Test: `emacs.d/tests/ui-test.el`
 
-- [ ] **Step 1:** 无 `buffer-file-name` 时显示 `mode-line-buffer-identification`（或等价 segment）
-- [ ] **Step 2:** 文件 buffer 不在 header/mode-line 重复路径
+- [x] **Step 1:** 无 `buffer-file-name` 时显示 `mode-line-buffer-identification`（或等价 segment）
+- [x] **Step 2:** 文件 buffer 不在 header/mode-line 重复路径
 
 ### Task 12: Nerd Font 按 frame 保存
 
 **Files:**
 - Modify: `emacs.d/lisp/gsmlg-ui.el`
 
-- [ ] **Step 1:** `set-frame-parameter` 保存 `gsmlg-nerd-font-available`
-- [ ] **Step 2:** 渲染时检查当前 frame 的 graphic + parameter
+- [x] **Step 1:** `set-frame-parameter` 保存 `gsmlg-nerd-font-available`
+- [x] **Step 2:** 渲染时检查当前 frame 的 graphic + parameter
 
 ### Task 13: 缓存 breadcrumb / VC / Flymake
 
 **Files:**
 - Modify: `emacs.d/lisp/gsmlg-ui.el`, possibly `gsmlg-vcs.el`
 
-- [ ] **Step 1:** breadcrumb buffer-local cache，key 含 file/default-directory/project-root；相关事件失效
-- [ ] **Step 2:** VC buffer-local cache + 操作后/保存后刷新 + idle timer；TRAMP 更保守
-- [ ] **Step 3:** Flymake 一次 `flymake-diagnostics`，单次遍历统计 error/warning/note
+- [x] **Step 1:** breadcrumb buffer-local cache，key 含 file/default-directory/project-root；相关事件失效
+- [x] **Step 2:** VC buffer-local cache + 操作后/保存后刷新 + idle timer；TRAMP 更保守
+- [x] **Step 3:** Flymake 一次 `flymake-diagnostics`，单次遍历统计 error/warning/note
 
 ### 第三批验收
 
@@ -292,6 +292,8 @@ TRAMP buffer 的 redisplay 不反复触发 project/VC 重计算
 大量 Flymake diagnostics 时 mode-line 不重复扫描
 关闭和重新创建 frame 不影响 Server 全局 buffer 状态
 ```
+
+本地验证（2026-08-28）：`./run-emacs-tests.sh` 一方 252（250 expected + 2 skipped）/ Agent MCP 229；byte-compile/checkdoc 通过。
 
 ---
 

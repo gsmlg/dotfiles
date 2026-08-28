@@ -1,9 +1,12 @@
 ;;; gsmlg-language-registry.el --- Declarative language capability registry -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Single source of truth for modes, language-server candidates, project-local
-;; executables, tree-sitter grammars, formatters, and debug adapters.  Eglot,
-;; format, treesit, and debug modules derive their behavior from this table.
+;; Registry of major-mode → language-server mappings, optional project-local
+;; executables, and tree-sitter grammar associations.  Eglot and treesit
+;; modules consume this table.  Formatter and debug adapter dispatch remain
+;; owned by Apheleia and Dape; reserved `:formatter'/`:debug' keys document
+;; optional future hooks without claiming a single source of truth for every
+;; tooling concern.
 
 ;;; Code:
 

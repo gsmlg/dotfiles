@@ -3,8 +3,8 @@
 ;;; Commentary:
 ;; Register autoloads, file associations, and lightweight hooks for application
 ;; modules without synchronously requiring them on every startup.  Core
-;; modules remain required by `init.el'; Org, Elfeed, Agent Editor MCP, Dape,
-;; and language integrations activate on demand.
+;; modules remain required by `init.el'; Org, Elfeed, Dape, and language
+;; integrations activate on demand.  Agent Editor MCP is required by `init.el'.
 
 ;;; Code:
 
@@ -13,7 +13,6 @@
 (defconst gsmlg-apps-features
   '(gsmlg-org
     gsmlg-elfeed
-    gsmlg-agent
     gsmlg-debug
     gsmlg-lang-elisp
     gsmlg-lang-beam
@@ -42,12 +41,6 @@
 (defun gsmlg-apps--prepare-elisp ()
   "Load Emacs Lisp tooling when `emacs-lisp-mode' activates."
   (gsmlg-apps-require 'gsmlg-lang-elisp))
-
-(defun gsmlg-apps--prepare-agent ()
-  "Load Agent Editor MCP integration for interactive sessions."
-  (unless noninteractive
-    (gsmlg-apps-require 'gsmlg-agent)
-    (gsmlg-agent-reconcile)))
 
 (defun gsmlg-apps-register-language-autoloads ()
   "Autoload language dispatch commands without loading their modules."
@@ -112,16 +105,12 @@
 (autoload 'dape-breakpoint-toggle "gsmlg-debug" nil t)
 (autoload 'dape-repl "gsmlg-debug" nil t)
 (autoload 'elfeed "elfeed" nil t)
-(autoload 'gsmlg-agent-start "gsmlg-agent" nil t)
-(autoload 'gsmlg-agent-stop "gsmlg-agent" nil t)
-(autoload 'gsmlg-agent-reconcile "gsmlg-agent" nil t)
 
 (with-eval-after-load 'org
   (gsmlg-apps--prepare-org))
 (with-eval-after-load 'elfeed
   (gsmlg-apps--prepare-elfeed))
 (add-hook 'emacs-lisp-mode-hook #'gsmlg-apps--prepare-elisp)
-(add-hook 'after-init-hook #'gsmlg-apps--prepare-agent)
 
 (gsmlg-apps-register-language-autoloads)
 (gsmlg-apps-register-language-auto-modes)

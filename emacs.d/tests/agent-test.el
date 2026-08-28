@@ -213,6 +213,16 @@
   "Agent autostart policy is evaluated only after initialization."
   (should (memq #'gsmlg-agent-start-for-server-maybe after-init-hook)))
 
+(ert-deftest gsmlg-agent-is-core-loaded-at-startup ()
+  "Agent Editor is a core module and exposes management commands."
+  (should (featurep 'gsmlg-agent))
+  (should (fboundp #'gsmlg-agent-status))
+  (should (fboundp #'gsmlg-agent-restart))
+  (should (fboundp #'gsmlg-agent-show-connection))
+  (let ((status (gsmlg-agent-status)))
+    (should (assq 'state status))
+    (should (assq 'running status))))
+
 (ert-deftest gsmlg-agent-after-init-waits-for-emacs-server ()
   "Agent autostart waits until this Emacs process owns a server."
   (let ((process-environment (copy-sequence process-environment))

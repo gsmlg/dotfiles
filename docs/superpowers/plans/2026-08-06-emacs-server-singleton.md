@@ -305,25 +305,25 @@ TRAMP buffer 的 redisplay 不反复触发 project/VC 重计算
 - Modify: `emacs.d/init.el`, `emacs.d/lisp/gsmlg-agent.el`
 - Docs/tests as needed
 
-- [ ] **Step 1:** 常驻加载；Server 启动路径只 `start` 一次
-- [ ] **Step 2:** 保留 status/restart/stop/start/show-connection 管理命令
-- [ ] **Step 3:** 不做延迟 require / lightweight shim
+- [x] **Step 1:** 常驻加载；Server 启动路径只 `start` 一次
+- [x] **Step 2:** 保留 status/restart/stop/start/show-connection 管理命令
+- [x] **Step 3:** 不做延迟 require / lightweight shim
 
 ### Task 15: 删除 Org Mobile
 
 **Files:**
 - Modify: `emacs.d/lisp/gsmlg-org.el`, keybindings, README, `emacs.d/tests/org-test.el`
 
-- [ ] **Step 1:** 删除变量、默认 `/Volumes/...` 路径、`org-mobile-*` 设置、命令、keybindings、文档、测试、只为 Mobile 的初始化
-- [ ] **Step 2:** 普通 Org 工作流不依赖 Org Mobile
+- [x] **Step 1:** 删除变量、默认 `/Volumes/...` 路径、`org-mobile-*` 设置、命令、keybindings、文档、测试、只为 Mobile 的初始化
+- [x] **Step 2:** 普通 Org 工作流不依赖 Org Mobile
 
 ### Task 16: envrc + Eglot 闭环
 
 **Files:**
 - Modify: envrc/eglot integration modules（如 `gsmlg-eglot.el` / language tools）
 
-- [ ] **Step 1:** 增加 `gsmlg-envrc-reload-and-refresh-eglot`
-- [ ] **Step 2:** reload → 清 negative cache → 未管理则 `eglot-ensure`；已管理则 reconnect/提示
+- [x] **Step 1:** 增加 `gsmlg-envrc-reload-and-refresh-eglot`
+- [x] **Step 2:** reload → 清 negative cache → 未管理则 `eglot-ensure`；已管理则 reconnect/提示
 
 ### Task 17: Org Capture Frame 清理
 
@@ -331,15 +331,15 @@ TRAMP buffer 的 redisplay 不反复触发 project/VC 重计算
 - Modify: `emacs.d/lisp/gsmlg-org.el`
 - Test: `emacs.d/tests/org-test.el`
 
-- [ ] **Step 1:** 专用 frame parameter；finalize/abort 都删除
-- [ ] **Step 2:** 不用固定 top/left；由 workarea/WM 决定；不影响其他 client frame
+- [x] **Step 1:** 专用 frame parameter；finalize/abort 都删除
+- [x] **Step 2:** 不用固定 top/left；由 workarea/WM 决定；不影响其他 client frame
 
 ### Task 18: Language Registry 职责收敛
 
 **Files:**
 - Modify: `emacs.d/lisp/gsmlg-language-registry.el` + consumers/docs
 
-- [ ] **Step 1:** 要么成为 major/ts/lsp/formatter/dap/patterns/markers 统一源，要么缩小文档声明，删除不实的 “single source of truth” 表述
+- [x] **Step 1:** 要么成为 major/ts/lsp/formatter/dap/patterns/markers 统一源，要么缩小文档声明，删除不实的 “single source of truth” 表述
 
 ### 第四批验收
 
@@ -352,6 +352,8 @@ envrc reload 后 Eglot 可以重试或 reconnect
 Org capture finalize 和 abort 都不会遗留 frame
 Language Registry 的文档与真实职责一致
 ```
+
+本地验证（2026-08-29）：`./run-emacs-tests.sh` 一方 256（254 expected + 2 skipped）/ Agent MCP 229；byte-compile/checkdoc 通过。顺带修复 Snapshot Flymake message 前导空格。
 
 ---
 

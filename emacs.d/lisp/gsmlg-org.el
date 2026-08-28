@@ -77,14 +77,6 @@
   (when (featurep 'gsmlg-org)
     (gsmlg-org-apply-path-settings)))
 
-(defun gsmlg-org--set-optional-directory (symbol value)
-  "Set SYMBOL to optional normalized directory VALUE."
-  (set-default symbol
-               (and value
-                    (file-name-as-directory (expand-file-name value))))
-  (when (featurep 'gsmlg-org)
-    (gsmlg-org-apply-path-settings)))
-
 (defun gsmlg-org--set-optional-file (symbol value)
   "Set SYMBOL to optional normalized file VALUE."
   (set-default symbol (and value (expand-file-name value)))
@@ -98,13 +90,6 @@
                  (file :tag "Agenda file or file list")
                  (repeat :tag "Agenda files" file))
   :set #'gsmlg-org--set-file-source
-  :group 'gsmlg-org)
-
-(defcustom gsmlg-org-mobile-directory "/Volumes/org.gsmlg.org/"
-  "Optional directory used by Org Mobile.
-The directory need not be mounted while Emacs starts."
-  :type '(choice (const :tag "Disabled" nil) directory)
-  :set #'gsmlg-org--set-optional-directory
   :group 'gsmlg-org)
 
 (defcustom gsmlg-org-plantuml-jar-path nil
@@ -170,12 +155,8 @@ Enabled entries are loaded only when their ob-LANGUAGE library exists."
 
 (defun gsmlg-org-apply-path-settings ()
   "Apply customizable Org path settings."
-  (require 'org-mobile)
   (setopt org-directory gsmlg-org-directory
-          org-agenda-files gsmlg-org-agenda-files
-          org-mobile-directory gsmlg-org-mobile-directory
-          org-mobile-inbox-for-pull
-          (expand-file-name "from-mobile.org" gsmlg-org-directory))
+          org-agenda-files gsmlg-org-agenda-files)
   (gsmlg-org-apply-plantuml-settings)
   (with-eval-after-load 'ob-plantuml
     (gsmlg-org-apply-plantuml-settings))
@@ -217,15 +198,25 @@ Enabled entries are loaded only when their ob-LANGUAGE library exists."
           (org-agenda-redo)))
     (widen)))
 
+(defun gsmlg-org--delete-capture-frame ()
+  "Delete dedicated Org capture frames created by `gsmlg-org-capture-frame'.
+
+Runs after capture finalize and abort so neither path leaves a stray frame."
+  (dolist (frame (frame-list))
+    (when (and (frame-live-p frame)
+               (frame-parameter frame 'gsmlg-org-capture))
+      (delete-frame frame))))
+
 (defun gsmlg-org-capture-frame ()
   "Create a compact frame and start `org-capture'.
-This command retains the entrypoint used by the user's Alfred workflow."
+This command retains the entrypoint used by the user's Alfred workflow.
+Positioning is left to the window manager / workarea; finalize and abort both
+delete the dedicated frame."
   (interactive)
   (let ((frame (make-frame '((name . "remember")
                              (width . 80)
                              (height . 16)
-                             (top . 400)
-                             (left . 300)))))
+                             (gsmlg-org-capture . t)))))
     (select-frame-set-input-focus frame)
     (org-capture)))
 
@@ -281,6 +272,7 @@ This command retains the entrypoint used by the user's Alfred workflow."
   (add-hook 'org-clock-in-hook #'gsmlg-org-show-clock-in-header-line)
   (add-hook 'org-clock-out-hook #'gsmlg-org-hide-clock-from-header-line)
   (add-hook 'org-clock-cancel-hook #'gsmlg-org-hide-clock-from-header-line)
+  (add-hook 'org-capture-after-finalize-hook #'gsmlg-org--delete-capture-frame)
   (gsmlg-org-configure-macos-keys))
 
 (defun gsmlg-org-configure-agenda ()

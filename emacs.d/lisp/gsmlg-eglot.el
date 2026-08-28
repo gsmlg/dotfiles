@@ -15,6 +15,11 @@
 (require 'flymake)
 (require 'project)
 
+(declare-function eglot-current-server "eglot" ())
+(declare-function eglot-reconnect "eglot" (server &optional interactive))
+(declare-function eglot-shutdown "eglot" (server &optional sync preserve-buffers))
+(declare-function envrc-reload "envrc" ())
+
 (defcustom gsmlg-eglot-command-overrides nil
   "Alist mapping language symbols to explicit language-server command lists.
 
@@ -131,6 +136,30 @@ calls never prompt repeatedly for unavailable executables."
   "Clear a negative server lookup after activating a buffer environment."
   (when (memq major-mode gsmlg-eglot-supported-modes)
     (remhash (gsmlg-eglot--cache-key) gsmlg-eglot-unavailable-cache)))
+
+;;;###autoload
+(defun gsmlg-envrc-reload-and-refresh-eglot ()
+  "Reload envrc for this buffer, then ensure or reconnect Eglot.
+
+Clears the negative server cache so a newly available executable can be
+discovered.  When the buffer is already Eglot-managed, reconnect; otherwise
+attempt guarded startup."
+  (interactive)
+  (unless (fboundp #'envrc-reload)
+    (user-error "Envrc is unavailable"))
+  (envrc-reload)
+  (gsmlg-eglot-environment-changed)
+  (cond
+   ((eglot-managed-p)
+    (if (fboundp #'eglot-reconnect)
+        (eglot-reconnect (eglot-current-server))
+      (let ((server (eglot-current-server)))
+        (when server
+          (eglot-shutdown server))
+        (eglot-ensure)))
+    (message "Reloaded envrc and refreshed Eglot"))
+   (t
+    (gsmlg-eglot-ensure-maybe t))))
 
 ;;;###autoload
 (defun gsmlg-eglot-organize-imports ()

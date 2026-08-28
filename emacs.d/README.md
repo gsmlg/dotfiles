@@ -207,8 +207,11 @@ Emacs fallback for search when ripgrep is unavailable.
 project.el is the only project abstraction. Git repositories, nested
 repositories, and real Git worktrees retain their own `project-root`.
 `node_modules/.bin` is added only to a buffer-local `exec-path`, and envrc
-activates each project's environment before automatic Eglot discovery. envrc
-is enabled for SSH TRAMP buffers, so remote direnv environments remain remote.
+activates each project's environment before automatic Eglot discovery. After
+changing `.envrc`, run `M-x gsmlg-envrc-reload-and-refresh-eglot` to reload
+direnv, clear the negative server cache, and either reconnect or start Eglot.
+envrc is enabled for SSH TRAMP buffers, so remote direnv environments remain
+remote.
 
 Remote development follows compute-near-data:
 
@@ -287,9 +290,12 @@ emacsclient -s main -c
 
 Connection metadata is written to
 `${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/connection.json`.
-`M-x gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup
-catches MCP failures so they cannot prevent the editor from opening. See the
-bundled [Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
+Management commands: `gsmlg-agent-start`, `gsmlg-agent-stop`,
+`gsmlg-agent-restart`, `gsmlg-agent-status`, and
+`gsmlg-agent-show-connection`. `M-x gsmlg-agent-stop` stops only MCP and does
+not terminate Emacs. Startup catches MCP failures so they cannot prevent the
+editor from opening. See the bundled
+[Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
 project registration, direct-file, protocol, and editing model.
 
 ## Package updates

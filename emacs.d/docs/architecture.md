@@ -170,7 +170,7 @@ and commands are asserted by the keybinding module.
 | `gsmlg-keybindings` | prefix maps, compatibility wrappers, machine-readable key contract |
 | `gsmlg-project` | project.el, worktree roots, Consult search, envrc, project-local executables |
 | `gsmlg-vcs` | Magit (deferred package), diff-hl Transient, Git links/history/modes and line commit popup |
-| `gsmlg-language-registry` | declarative SSOT for modes, servers, treesit, format, and debug metadata |
+| `gsmlg-language-registry` | declarative major-mode → LSP / treesit metadata; formatters and debug adapters stay in Apheleia / Dape |
 | `gsmlg-language-tools` | executable discovery and project/remote command resolution |
 | `gsmlg-treesit` | grammar readiness, mode selection, reports, explicit install |
 | `gsmlg-eglot` | Eglot server programs, guarded startup, Flymake integration |

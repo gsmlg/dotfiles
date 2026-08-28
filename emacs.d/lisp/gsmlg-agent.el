@@ -292,6 +292,51 @@ clear a sticky `failed' state before reconciling."
     (user-error "Agent Editor MCP is unavailable; inspect startup messages"))
   (gsmlg-agent--transition-stop))
 
+;;;###autoload
+(defun gsmlg-agent-restart ()
+  "Restart the Agent Editor MCP listener."
+  (interactive)
+  (ignore-errors (gsmlg-agent-stop))
+  (gsmlg-agent-start))
+
+;;;###autoload
+(defun gsmlg-agent-status ()
+  "Report Agent Editor MCP lifecycle state and connection path."
+  (interactive)
+  (gsmlg-agent--ensure-package)
+  (let* ((connection
+          (and (boundp 'emacs-agent-editor--connection-file)
+               emacs-agent-editor--connection-file))
+         (message
+          (format "Agent Editor state=%s running=%s connection=%s%s"
+                  gsmlg-agent-state
+                  (if (gsmlg-agent--listener-running-p) "yes" "no")
+                  (or connection "missing")
+                  (if gsmlg-agent-last-error
+                      (format " error=%s" gsmlg-agent-last-error)
+                    ""))))
+    (when (called-interactively-p 'interactive)
+      (message "%s" message))
+    `((state . ,gsmlg-agent-state)
+      (running . ,(and (gsmlg-agent--listener-running-p) t))
+      (connection . ,connection)
+      (last_error . ,gsmlg-agent-last-error))))
+
+;;;###autoload
+(defun gsmlg-agent-show-connection ()
+  "Visit the Agent Editor MCP connection metadata file, if present."
+  (interactive)
+  (gsmlg-agent--ensure-package)
+  (gsmlg-agent--align-state-directory)
+  (let ((connection
+         (or (and (boundp 'emacs-agent-editor--connection-file)
+                  emacs-agent-editor--connection-file)
+             (expand-file-name "connection.json"
+                               emacs-agent-editor-state-directory))))
+    (unless (file-readable-p connection)
+      (user-error "Agent Editor connection file is missing: %s" connection))
+    (find-file connection)))
+
 (defun gsmlg-agent-autostart-maybe ()
   "Start Agent Editor MCP when explicit interactive autostart is enabled.
 

@@ -39,8 +39,11 @@
 (require 'gsmlg-format)
 (require 'gsmlg-lang-packages)
 (require 'gsmlg-app-packages)
+;; Agent Editor MCP is a core Server capability; load with the interactive
+;; server path rather than deferring until the first MCP request or frame.
+(require 'gsmlg-agent)
 
-;; Application modules (Org, Elfeed, Agent, Dape, language dispatch) register
+;; Application modules (Org, Elfeed, Dape, language dispatch) register
 ;; autoloads and hooks here instead of loading on every startup.
 (require 'gsmlg-apps)
 

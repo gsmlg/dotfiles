@@ -125,26 +125,49 @@
   (should (equal org-archive-location "%s_archive::* Archive")))
 
 (ert-deftest gsmlg-org-host-paths-are-configurable-and-optional ()
-  "Host-specific agenda, mobile, and PlantUML paths should be safe."
+  "Host-specific agenda and PlantUML paths should be safe."
   (let* ((directory (file-name-as-directory
                      (make-temp-file "gsmlg-org-paths-" t)))
          (agenda-source (expand-file-name ".agenda_files" directory))
-         (missing-mobile (expand-file-name "missing-mobile/" directory))
          (missing-jar (expand-file-name "missing-plantuml.jar" directory)))
     (unwind-protect
         (progn
+          (should-not (boundp 'gsmlg-org-mobile-directory))
           (setopt gsmlg-org-directory directory
                   gsmlg-org-agenda-files agenda-source
-                  gsmlg-org-mobile-directory missing-mobile
                   gsmlg-org-plantuml-jar-path missing-jar)
           (should (equal org-agenda-files agenda-source))
-          (should (equal org-mobile-directory
-                         (file-name-as-directory missing-mobile)))
-          (should (equal org-mobile-inbox-for-pull
-                         (expand-file-name "from-mobile.org" directory)))
           (should-not org-plantuml-jar-path)
           (should (eq org-plantuml-exec-mode 'plantuml)))
       (delete-directory directory t))))
+
+(ert-deftest gsmlg-org-capture-frame-marks-and-cleans-up ()
+  "Dedicated capture frames are tagged and removed after finalize."
+  (let (parameters deleted)
+    (cl-letf (((symbol-function #'make-frame)
+               (lambda (&optional params)
+                 (setq parameters params)
+                 (selected-frame)))
+              ((symbol-function #'select-frame-set-input-focus) #'ignore)
+              ((symbol-function #'org-capture) #'ignore)
+              ((symbol-function #'frame-list)
+               (lambda () (list (selected-frame))))
+              ((symbol-function #'frame-live-p) (lambda (_frame) t))
+              ((symbol-function #'frame-parameter)
+               (lambda (_frame param)
+                 (and (eq param 'gsmlg-org-capture)
+                      (alist-get 'gsmlg-org-capture parameters))))
+              ((symbol-function #'delete-frame)
+               (lambda (&optional frame _force)
+                 (setq deleted (or frame (selected-frame))))))
+      (gsmlg-org-capture-frame)
+      (should (eq (alist-get 'gsmlg-org-capture parameters) t))
+      (should-not (alist-get 'top parameters))
+      (should-not (alist-get 'left parameters))
+      (should (memq #'gsmlg-org--delete-capture-frame
+                    org-capture-after-finalize-hook))
+      (gsmlg-org--delete-capture-frame)
+      (should deleted))))
 
 (ert-deftest gsmlg-org-keys-speed-commands-and-aliases-are-preserved ()
   "Org keys, speed commands, and external compatibility names should survive."

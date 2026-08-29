@@ -16,6 +16,8 @@
     gsmlg-bootstrap
     gsmlg-package-lock
     gsmlg-core
+    gsmlg-compat
+    gsmlg-server
     gsmlg-ui
     gsmlg-completion
     gsmlg-editing
@@ -31,13 +33,13 @@
     gsmlg-app-packages
     gsmlg-apps
     gsmlg-tramp
-    gsmlg-session)
+    gsmlg-session
+    gsmlg-agent)
   "Features every warm core startup must provide.")
 
 (defconst gsmlg-test-application-features
   '(gsmlg-org
     gsmlg-elfeed
-    gsmlg-agent
     gsmlg-ai
     gsmlg-ai-completion
     gsmlg-debug

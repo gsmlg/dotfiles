@@ -16,6 +16,7 @@
 
 (require 'cl-lib)
 (require 'json)
+(require 'server)
 (require 'subr-x)
 (require 'emacs-agent-request)
 (require 'emacs-agent-session)
@@ -61,10 +62,14 @@ is a member of this list."
 
 (defcustom emacs-agent-editor-state-directory
   (expand-file-name
-   "emacs-agent-editor/"
+   "emacs/agent-editor/"
    (or (getenv "XDG_STATE_HOME")
        (expand-file-name ".local/state/" "~")))
-  "Directory used for private per-daemon runtime state."
+  "Directory used for the singleton Agent Editor connection metadata.
+
+The formal interactive Emacs server publishes exactly one
+`connection.json' in this directory.  Tests override the directory to an
+isolated temporary location."
   :type 'directory)
 
 (defcustom emacs-agent-editor-access-mode 'autonomous
@@ -121,11 +126,16 @@ when `emacs-agent-editor-token-authentication-enabled' is nil."
   "Public position contract retained for compatibility.")
 
 (defun emacs-agent-editor--daemon-name ()
-  "Return a filesystem-safe name for this Emacs instance."
+  "Return a filesystem-safe name for this Emacs instance.
+
+Prefer the live `server-name' when this process owns a server, otherwise the
+daemon name, otherwise `interactive'."
   (replace-regexp-in-string
    "[^[:alnum:]_.-]" "_"
-   (let ((name (daemonp)))
-     (if (stringp name) name "interactive"))))
+   (or (and server-mode server-name)
+       (let ((name (daemonp)))
+         (and (stringp name) name))
+       "interactive")))
 
 (defun emacs-agent-editor--random-token ()
   "Return a URL-safe bearer token using operating-system entropy."
@@ -137,10 +147,11 @@ when `emacs-agent-editor-token-authentication-enabled' is nil."
       (error-message-string error-data)))))
 
 (defun emacs-agent-editor--instance-state-directory ()
-  "Return the private state directory for the current Emacs instance."
-  (expand-file-name
-   (file-name-as-directory (emacs-agent-editor--daemon-name))
-   emacs-agent-editor-state-directory))
+  "Return the singleton state directory for the editor server.
+
+Project and daemon identities are not encoded in this path; agents discover
+registered projects through MCP `project_list'."
+  (file-name-as-directory emacs-agent-editor-state-directory))
 
 (defun emacs-agent-editor--write-connection-file (runtime port token)
   "Publish private connection metadata for RUNTIME, PORT, and TOKEN.
@@ -148,11 +159,13 @@ TOKEN is omitted from the metadata when authentication is disabled."
   (let* ((directory (emacs-agent-editor--instance-state-directory))
          (target (expand-file-name "connection.json" directory))
          (temporary nil)
+         (server-name (emacs-agent-editor--daemon-name))
          (metadata
           (append
            `((schema_version . 2)
              (instance_id . ,(emacs-agent-runtime-instance-id runtime))
-             (daemon . ,(emacs-agent-editor--daemon-name))
+             (server_name . ,server-name)
+             (daemon . ,server-name)
              (pid . ,(emacs-pid))
              (endpoint . ,(format "http://%s:%d%s"
                                   emacs-agent-editor-host
@@ -3222,85 +3235,92 @@ is the error raised while changing BUFFER's visited file name."
 ;;;###autoload
 (defun emacs-agent-editor-start (&optional port)
   "Start the project-optional Agent Editor MCP runtime.
-PORT overrides `emacs-agent-editor-port' when non-nil."
+PORT overrides `emacs-agent-editor-port' when non-nil.
+
+Repeated calls are idempotent: an already running runtime is returned without
+recreating the listener or registry."
   (interactive)
-  (when (emacs-agent-editor-running-p)
-    (user-error "Agent Editor MCP is already running"))
-  (unless (equal emacs-agent-editor-host "127.0.0.1")
-    (user-error "Agent Editor MCP only supports the IPv4 loopback listener"))
-  (when (and port (not (integerp port)))
-    (signal 'wrong-type-argument (list 'integerp port)))
-  (when (or (< (or port emacs-agent-editor-port) 0)
-            (> (or port emacs-agent-editor-port) 65535))
-    (user-error "Agent Editor MCP port must be between 0 and 65535"))
-  (let* ((token
-          (when emacs-agent-editor-token-authentication-enabled
-            (or emacs-agent-editor-bearer-token
-                (emacs-agent-editor--random-token))))
-         (state-directory (emacs-agent-editor--instance-state-directory))
-         (runtime
-          (emacs-agent-runtime-create
-           :access-mode emacs-agent-editor-access-mode
-           :save-policy emacs-agent-editor-save-policy
-           :writer-lease token
-           :state-directory state-directory
-           :filesystem-policy emacs-agent-policy-filesystem-scope
-           :allowed-roots emacs-agent-policy-allowed-roots
-           :denied-paths emacs-agent-policy-denied-paths))
-         server)
-    (condition-case error-data
-        (progn
-          (emacs-agent-runtime-bind runtime)
-          (emacs-agent-editor--register-tools)
-          (setq emacs-agent-edit-record-function
-                #'emacs-agent-editor--record-edit
-                emacs-agent-protocol-tool-observer
-                #'emacs-agent-editor--observe-tool
-                emacs-agent-editor--token token
-                emacs-agent-editor--runtime runtime)
-          (emacs-agent-journal-open runtime)
-          (setq server
-                (emacs-agent-http-start
-                 #'emacs-agent-protocol-handle-http-request
-                 :host emacs-agent-editor-host
-                 :port (or port emacs-agent-editor-port)
-                 :endpoint emacs-agent-editor-endpoint
-                 :token token
-                 :allowed-origins emacs-agent-editor-allowed-origins)
-                emacs-agent-editor--http-server server)
-          (emacs-agent-editor--write-connection-file
-           runtime (emacs-agent-http-server-port server) token)
-          (emacs-agent-runtime-record-activity
-           runtime
-           (list :tool "server_start" :status "completed"))
-          (when (called-interactively-p 'interactive)
-            (message "Agent Editor MCP started: %s"
-                     emacs-agent-editor--connection-file))
-          server)
-      (error
-       (when server
-         (ignore-errors (emacs-agent-http-stop server)))
-       (ignore-errors (emacs-agent-journal-close runtime))
-       (ignore-errors (emacs-agent-semantic-clear runtime))
-       (ignore-errors (emacs-agent-search-clear runtime))
-       (ignore-errors (emacs-agent-session-clear))
-       (ignore-errors (emacs-agent-tool-clear))
-       (ignore-errors (clrhash emacs-agent-editor--diff-cursors))
-       (ignore-errors (clrhash emacs-agent-search-cursors))
-       (ignore-errors (clrhash emacs-agent-diagnostics-cursors))
-       (ignore-errors (clrhash emacs-agent-document-cursors))
-       (ignore-errors (clrhash emacs-agent-changeset-cursors))
-       (ignore-errors (emacs-agent-runtime-clear runtime))
-       (ignore-errors (emacs-agent-editor--remove-connection-file))
-       (when (eq emacs-agent-current-runtime runtime)
-         (setq emacs-agent-current-runtime nil))
-       (setq emacs-agent-editor--http-server nil
-             emacs-agent-editor--runtime nil
-             emacs-agent-editor--connection-file nil
-             emacs-agent-editor--token nil
-             emacs-agent-edit-record-function nil
-             emacs-agent-protocol-tool-observer nil)
-       (signal (car error-data) (cdr error-data))))))
+  (if (emacs-agent-editor-running-p)
+      (progn
+        (when (called-interactively-p 'interactive)
+          (message "Agent Editor MCP already running: %s"
+                   emacs-agent-editor--connection-file))
+        emacs-agent-editor--http-server)
+    (unless (equal emacs-agent-editor-host "127.0.0.1")
+      (user-error "Agent Editor MCP only supports the IPv4 loopback listener"))
+    (when (and port (not (integerp port)))
+      (signal 'wrong-type-argument (list 'integerp port)))
+    (when (or (< (or port emacs-agent-editor-port) 0)
+              (> (or port emacs-agent-editor-port) 65535))
+      (user-error "Agent Editor MCP port must be between 0 and 65535"))
+    (let* ((token
+            (when emacs-agent-editor-token-authentication-enabled
+              (or emacs-agent-editor-bearer-token
+                  (emacs-agent-editor--random-token))))
+           (state-directory (emacs-agent-editor--instance-state-directory))
+           (runtime
+            (emacs-agent-runtime-create
+             :access-mode emacs-agent-editor-access-mode
+             :save-policy emacs-agent-editor-save-policy
+             :writer-lease token
+             :state-directory state-directory
+             :filesystem-policy emacs-agent-policy-filesystem-scope
+             :allowed-roots emacs-agent-policy-allowed-roots
+             :denied-paths emacs-agent-policy-denied-paths))
+           server)
+      (condition-case error-data
+          (progn
+            (emacs-agent-runtime-bind runtime)
+            (emacs-agent-editor--register-tools)
+            (setq emacs-agent-edit-record-function
+                  #'emacs-agent-editor--record-edit
+                  emacs-agent-protocol-tool-observer
+                  #'emacs-agent-editor--observe-tool
+                  emacs-agent-editor--token token
+                  emacs-agent-editor--runtime runtime)
+            (emacs-agent-journal-open runtime)
+            (setq server
+                  (emacs-agent-http-start
+                   #'emacs-agent-protocol-handle-http-request
+                   :host emacs-agent-editor-host
+                   :port (or port emacs-agent-editor-port)
+                   :endpoint emacs-agent-editor-endpoint
+                   :token token
+                   :allowed-origins emacs-agent-editor-allowed-origins)
+                  emacs-agent-editor--http-server server)
+            (emacs-agent-editor--write-connection-file
+             runtime (emacs-agent-http-server-port server) token)
+            (emacs-agent-runtime-record-activity
+             runtime
+             (list :tool "server_start" :status "completed"))
+            (when (called-interactively-p 'interactive)
+              (message "Agent Editor MCP started: %s"
+                       emacs-agent-editor--connection-file))
+            server)
+        (error
+         (when server
+           (ignore-errors (emacs-agent-http-stop server)))
+         (ignore-errors (emacs-agent-journal-close runtime))
+         (ignore-errors (emacs-agent-semantic-clear runtime))
+         (ignore-errors (emacs-agent-search-clear runtime))
+         (ignore-errors (emacs-agent-session-clear))
+         (ignore-errors (emacs-agent-tool-clear))
+         (ignore-errors (clrhash emacs-agent-editor--diff-cursors))
+         (ignore-errors (clrhash emacs-agent-search-cursors))
+         (ignore-errors (clrhash emacs-agent-diagnostics-cursors))
+         (ignore-errors (clrhash emacs-agent-document-cursors))
+         (ignore-errors (clrhash emacs-agent-changeset-cursors))
+         (ignore-errors (emacs-agent-runtime-clear runtime))
+         (ignore-errors (emacs-agent-editor--remove-connection-file))
+         (when (eq emacs-agent-current-runtime runtime)
+           (setq emacs-agent-current-runtime nil))
+         (setq emacs-agent-editor--http-server nil
+               emacs-agent-editor--runtime nil
+               emacs-agent-editor--connection-file nil
+               emacs-agent-editor--token nil
+               emacs-agent-edit-record-function nil
+               emacs-agent-protocol-tool-observer nil)
+         (signal (car error-data) (cdr error-data)))))))
 
 ;;;###autoload
 (defun emacs-agent-editor-stop ()

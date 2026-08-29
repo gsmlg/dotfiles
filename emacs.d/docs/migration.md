@@ -135,11 +135,10 @@ values are user options and may be set in the external local file:
 ```elisp
 (setopt gsmlg-org-directory "~/Documents/org/"
         gsmlg-org-agenda-files "~/Documents/org/.agenda_files"
-        gsmlg-org-mobile-directory "/Volumes/org.gsmlg.org/"
         gsmlg-org-plantuml-jar-path nil)
 ```
 
-An absent mobile volume is harmless. An unreadable PlantUML jar is ignored so
+Org Mobile is no longer configured. An unreadable PlantUML jar is ignored so
 that Org can use a `plantuml` executable supplied by the current environment.
 Org Babel loads an enabled language only when its `ob-LANGUAGE` library is
 available. External interpreters remain the responsibility of Nix, devenv,

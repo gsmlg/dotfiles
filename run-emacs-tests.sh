@@ -76,6 +76,7 @@ env \
   "XDG_RUNTIME_DIR=$xdg_runtime_dir" \
   "GSMLG_EMACS_OFFLINE=1" \
   "GSMLG_EMACS_LOCAL=" \
+  "GSMLG_EMACS_TESTING=1" \
   "EMACS_AGENT_AUTOSTART=" \
   "$emacs" -Q --batch \
   --eval "(setq user-emacs-directory

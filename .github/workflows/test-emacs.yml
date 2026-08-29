@@ -98,7 +98,7 @@ jobs:
             advisory: false
           - os: ubuntu-latest
             emacs-version: snapshot
-            advisory: true
+            advisory: false
 
     steps:
       - name: Check out dotfiles

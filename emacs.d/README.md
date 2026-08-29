@@ -83,7 +83,7 @@ owns external executables.
 | Elpaca and application data | `${XDG_DATA_HOME:-~/.local/share}/emacs/` |
 | Disposable caches and auto-saves | `${XDG_CACHE_HOME:-~/.cache}/emacs/` |
 | Mutable state and backups | `${XDG_STATE_HOME:-~/.local/state}/emacs/` |
-| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/` |
+| Agent Editor discovery state | `${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/` |
 
 Customizations, native compilation output, URL data, recentf, savehist,
 save-place, bookmarks, the project list, TRAMP persistence, desktop and
@@ -213,7 +213,9 @@ activates each project's environment before automatic Eglot discovery when
 `gsmlg-envrc-enable` is non-nil. That option defaults to off so Emacs does
 not run direnv or pop blocked-`.envrc` errors; set it in the external local
 file to opt in. When enabled, envrc also covers SSH TRAMP buffers so remote
-direnv environments remain remote.
+direnv environments remain remote. After changing `.envrc`, run
+`M-x gsmlg-envrc-reload-and-refresh-eglot` to reload direnv, clear the
+negative server cache, and either reconnect or start Eglot.
 
 Remote development follows compute-near-data:
 
@@ -229,16 +231,34 @@ remote desktop buffers are not restored by default.
 
 ## Server and daemon behavior
 
-A normal interactive GUI or terminal process starts an Emacs server by
-default. Start one explicitly if autostart has been disabled:
+Each OS user runs one formal interactive Emacs server named `main`. Prefer the
+OS user service templates under `services/` and the `bin/gsmlg-emacs` helper:
+
+```sh
+# macOS launchd (after substituting HOME into the plist template)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.gsmlg.emacs.plist
+
+# systemd user unit
+systemctl --user enable --now gsmlg-emacs.service
+
+# diagnose / open clients
+gsmlg-emacs status
+gsmlg-emacs gui
+gsmlg-emacs tty
+```
+
+Shell aliases in `oh-my-zsh/zshrc` point `EDITOR`, `VISUAL`, and `GIT_EDITOR` at
+`emacsclient -s main`. Use `emacs-solo` only for diagnosis.
+
+A normal interactive GUI or terminal process can still call:
 
 ```text
 M-x gsmlg-server-start
 ```
 
 Set `gsmlg-server-autostart` to `nil` in the local file to opt out for an
-interactive, non-daemon process. Named daemons already provide an emacsclient
-server. Batch mode never opens a server socket.
+interactive, non-daemon process. Batch mode and `GSMLG_EMACS_TESTING=1` never
+join the user singleton. Batch mode never opens a server socket.
 
 ### Socket location
 
@@ -263,25 +283,26 @@ changing this policy, restart Emacs (or run `M-x server-force-delete` then
 ### Connecting with emacsclient
 
 ```sh
-emacsclient -c                 # new graphical frame
-emacsclient -nw                # frame in the current terminal
-emacsclient -n FILE            # visit FILE without waiting
-emacsclient -s agent-editor -c # named daemon (see below)
+emacsclient -s main -c         # new graphical frame on the formal server
+emacsclient -s main -nw        # frame in the current terminal
+emacsclient -s main -n FILE    # visit FILE without waiting
 ```
 
 When several servers run, `-s NAME` selects the socket named `NAME` in the
 directory above. A bare name is enough; a full path is unnecessary for the
 default layout.
 
-### Named daemon example
+### Formal server example
 
 ```sh
-EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
-emacsclient -s agent-editor -c
+emacs --daemon=main
+emacsclient -s main -c
 ```
 
-Optional desktop persistence is controlled by `gsmlg-desktop-save-enabled`
-and is on by default.
+Desktop persistence is controlled by `gsmlg-desktop-save-enabled`. The single
+desktop file is `${XDG_STATE_HOME}/emacs/desktop/desktop.el`. Frames are not
+restored (`desktop-restore-frames` is nil); emacsclient creates frames for the
+current display.
 
 ## GSMLG AI Workbench
 
@@ -397,38 +418,41 @@ are in `local.el.example`. Keybinding details live in
 - `C-c A x` cancels in-flight ask/edit requests but leaves a ready proposal;
   discard it from the proposal buffer or with the discard command.
 - Batch mode does not autoload or start AI providers.
-
 ## Agent Editor MCP
 
-Agent Editor MCP autostart is off by default and always off in batch mode. No
-project or startup directory is required; run:
+Agent Editor MCP starts with the formal interactive Emacs server by default
+and is always off in batch mode. No project or startup directory is required;
+run:
 
 ```text
 M-x gsmlg-agent-start
 ```
 
 The listener is loopback-only. Port 9876 is the default; `EMACS_AGENT_PORT`
-overrides it. To opt into interactive autostart, set
-`gsmlg-agent-autostart` or `EMACS_AGENT_AUTOSTART=1`.
+overrides it. To opt out of interactive autostart, set
+`gsmlg-agent-autostart` to nil. `EMACS_AGENT_AUTOSTART=1` still enables
+autostart explicitly.
 
 The endpoint supports MCP versions `2026-07-28`, `2025-11-25`, and
 Codex-compatible `2025-06-18`.
 
-The recommended deployment is one dedicated named daemon, one MCP endpoint,
-and zero or more projects registered through MCP after startup. Direct
-absolute local files do not require project registration:
+The recommended deployment is one `main` Emacs server, one MCP endpoint, and
+zero or more projects registered through MCP after startup. Direct absolute
+local files do not require project registration:
 
 ```sh
-EMACS_AGENT_AUTOSTART=1 emacs --daemon=agent-editor
-
-emacsclient -s agent-editor -c
+emacs --daemon=main
+emacsclient -s main -c
 ```
 
 Connection metadata is written to
-`${XDG_STATE_HOME:-~/.local/state}/emacs-agent-editor/<daemon>/connection.json`.
-`M-x gsmlg-agent-stop` stops only MCP and does not terminate Emacs. Startup
-catches MCP failures so they cannot prevent the editor from opening. See the
-bundled [Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
+`${XDG_STATE_HOME:-~/.local/state}/emacs/agent-editor/connection.json`.
+Management commands: `gsmlg-agent-start`, `gsmlg-agent-stop`,
+`gsmlg-agent-restart`, `gsmlg-agent-status`, and
+`gsmlg-agent-show-connection`. `M-x gsmlg-agent-stop` stops only MCP and does
+not terminate Emacs. Startup catches MCP failures so they cannot prevent the
+editor from opening. See the bundled
+[Agent Editor MCP README](site-lisp/agent-editor-mcp/README.md) for its
 project registration, direct-file, protocol, and editing model.
 
 ## Package updates

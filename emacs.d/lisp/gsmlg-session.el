@@ -1,35 +1,26 @@
-;;; gsmlg-session.el --- Persistent state and explicit server control -*- lexical-binding: t; -*-
+;;; gsmlg-session.el --- Persistent state and global desktop session -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Keep session data outside the Git checkout and make server creation an
-;; explicit, batch-safe policy.
+;; Keep session data outside the Git checkout.  One formal Emacs server owns a
+;; single desktop file; emacsclient frames inherit that buffer set and do not
+;; restore historical GUI geometry from a headless daemon.
 
 ;;; Code:
 
 (require 'gsmlg-paths)
+(require 'gsmlg-server)
 
 (defvar eshell-directory-name)
 (defvar nsm-settings-file)
 
 (defcustom gsmlg-desktop-save-enabled t
-  "Whether interactive Emacs sessions should persist desktop state."
-  :type 'boolean
-  :group 'gsmlg)
-
-(defcustom gsmlg-server-autostart
-  t
-  "Whether a normal interactive GUI session should start an Emacs server.
-
-Daemon sessions already own a server.  Batch sessions always ignore this
-option."
+  "Whether the formal interactive Emacs server should persist desktop state."
   :type 'boolean
   :group 'gsmlg)
 
 (defun gsmlg-recentf-remote-p (file)
   "Return non-nil when FILE is remote and should be excluded from recentf."
   (file-remote-p file))
-
-(require 'server)
 
 (setq savehist-file
       (gsmlg-ensure-parent-directory (gsmlg-state-file "history/savehist"))
@@ -64,22 +55,12 @@ option."
       desktop-base-file-name "desktop.el"
       desktop-save t
       desktop-files-not-to-save "\\`/[^/:]+:"
-      desktop-restore-frames t
+      ;; Frames are created by emacsclient and the current display; do not
+      ;; restore stale monitor coordinates from a headless daemon session.
+      desktop-restore-frames nil
       recentf-auto-cleanup 'never
       recentf-exclude '(gsmlg-recentf-remote-p))
 
-;; Keep TCP auth files under XDG state. Leave `server-socket-dir` at the
-;; Emacs/emacsclient default (`$XDG_RUNTIME_DIR/emacs` or `/tmp/emacs$UID`)
-;; so plain `emacsclient` finds the socket without EMACS_SOCKET_NAME.
-(let ((server-directory
-       (gsmlg-ensure-directory (gsmlg-state-file "server/"))))
-  (set-file-modes server-directory #o700)
-  (setopt server-auth-dir server-directory))
-
-(when (and (stringp server-socket-dir)
-           (not (string-empty-p server-socket-dir)))
-  (let ((socket-directory (gsmlg-ensure-directory server-socket-dir)))
-    (set-file-modes socket-directory #o700)))
 
 (let ((auto-save-directory
        (gsmlg-ensure-directory (gsmlg-cache-file "auto-save/")))
@@ -96,7 +77,10 @@ option."
 (recentf-mode 1)
 
 (defun gsmlg-session-apply-desktop-policy ()
-  "Enable and restore desktop state after applying local overrides."
+  "Enable and restore the global desktop after applying local overrides.
+
+Desktop restore and save belong to the long-lived server process.  Closing an
+emacsclient frame does not kill that process, so it does not rewrite desktop."
   (when (and gsmlg-desktop-save-enabled
              (not noninteractive))
     (desktop-save-mode 1)
@@ -105,31 +89,6 @@ option."
     (desktop-read desktop-dirname)))
 
 (add-hook 'emacs-startup-hook #'gsmlg-session-apply-desktop-policy 85)
-
-(defun gsmlg-server-start ()
-  "Start an Emacs server explicitly when the current process can host one."
-  (interactive)
-  (when noninteractive
-    (user-error "An Emacs server cannot start in batch mode"))
-  (if (daemonp)
-      (message "This Emacs daemon already provides an emacsclient server")
-    (if (server-running-p)
-        (message "The Emacs server is already running")
-      (server-start)
-      (message "Emacs server started"))))
-
-(defun gsmlg-server-start-maybe ()
-  "Start a server only when the explicit autostart policy permits it."
-  (when (and gsmlg-server-autostart
-             (not noninteractive)
-             (not (daemonp)))
-    (condition-case error-data
-        (gsmlg-server-start)
-      (error
-       (message "GSMLG server autostart failed: %s"
-                (error-message-string error-data))))))
-
-(add-hook 'emacs-startup-hook #'gsmlg-server-start-maybe 95)
 
 (provide 'gsmlg-session)
 ;;; gsmlg-session.el ends here

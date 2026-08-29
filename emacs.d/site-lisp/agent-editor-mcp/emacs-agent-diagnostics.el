@@ -226,7 +226,8 @@ The return value is a cons of diagnostics and the pending state."
           "flymake"
           (emacs-agent-diagnostics--flymake-severity
            (flymake-diagnostic-type diagnostic))
-          (flymake-diagnostic-text diagnostic)
+          ;; Emacs 31+ may pad Flymake text; normalize for stable MCP output.
+          (string-trim (or (flymake-diagnostic-text diagnostic) ""))
           (and backend (format "%s" backend))
           (emacs-agent-diagnostics--range beg end))
          diagnostics)))

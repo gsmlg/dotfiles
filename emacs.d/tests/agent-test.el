@@ -98,7 +98,7 @@
               "/tmp/canonical-state/")))))
 
 (ert-deftest gsmlg-agent-start-removes-only-legacy-connection-file ()
-  "Successful startup removes only the former integration metadata file."
+  "Successful startup removes only obsolete per-daemon metadata files."
   (let* ((root (make-temp-file "gsmlg-agent-state-" t))
          (gsmlg-state-directory
           (file-name-as-directory (expand-file-name "emacs" root)))
@@ -109,16 +109,21 @@
           (expand-file-name "connection.json" legacy-directory))
          (legacy-sibling
           (expand-file-name "keep.json" legacy-directory))
-         (canonical-connection
+         (legacy-sibling-tree
           (expand-file-name
            "emacs-agent-editor/interactive/connection.json" root))
+         (canonical-connection
+          (expand-file-name "agent-editor/connection.json"
+                            gsmlg-state-directory))
          (emacs-agent-editor--connection-file nil))
     (unwind-protect
         (progn
           (make-directory legacy-directory t)
+          (make-directory (file-name-directory legacy-sibling-tree) t)
           (make-directory (file-name-directory canonical-connection) t)
           (write-region "{}" nil legacy-connection nil 'silent)
           (write-region "{}" nil legacy-sibling nil 'silent)
+          (write-region "{}" nil legacy-sibling-tree nil 'silent)
           (write-region "{}" nil canonical-connection nil 'silent)
           (cl-letf (((symbol-function #'emacs-agent-editor-start)
                      (lambda (_port)
@@ -127,6 +132,7 @@
                        'server)))
             (should (eq (gsmlg-agent-start) 'server)))
           (should-not (file-exists-p legacy-connection))
+          (should-not (file-exists-p legacy-sibling-tree))
           (should (file-exists-p legacy-sibling))
           (should (file-directory-p legacy-directory))
           (should (file-exists-p canonical-connection)))
@@ -159,7 +165,7 @@
           (file-name-as-directory (expand-file-name "emacs" root)))
          (active-connection
           (expand-file-name
-           "agent-editor/interactive/connection.json"
+           "agent-editor/connection.json"
            gsmlg-state-directory))
          (emacs-agent-editor--connection-file nil))
     (unwind-protect
@@ -206,6 +212,16 @@
 (ert-deftest gsmlg-agent-autostart-is-registered-after-init ()
   "Agent autostart policy is evaluated only after initialization."
   (should (memq #'gsmlg-agent-start-for-server-maybe after-init-hook)))
+
+(ert-deftest gsmlg-agent-is-core-loaded-at-startup ()
+  "Agent Editor is a core module and exposes management commands."
+  (should (featurep 'gsmlg-agent))
+  (should (fboundp #'gsmlg-agent-status))
+  (should (fboundp #'gsmlg-agent-restart))
+  (should (fboundp #'gsmlg-agent-show-connection))
+  (let ((status (gsmlg-agent-status)))
+    (should (assq 'state status))
+    (should (assq 'running status))))
 
 (ert-deftest gsmlg-agent-after-init-waits-for-emacs-server ()
   "Agent autostart waits until this Emacs process owns a server."

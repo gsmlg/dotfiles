@@ -102,5 +102,46 @@
         (gsmlg-project-enable-envrc-maybe)
         (should enabled)))))
 
+(ert-deftest gsmlg-project-envrc-guard-blocks-mode-when-disabled ()
+  "Buffer-local envrc-mode must not enable while `gsmlg-envrc-enable' is nil."
+  (let ((gsmlg-envrc-enable nil)
+        (envrc-mode nil)
+        called)
+    (cl-letf (((symbol-function #'envrc-mode)
+               (lambda (&optional _arg)
+                 (setq called t
+                       envrc-mode t))))
+      (should-not (gsmlg-envrc--guard-mode #'envrc-mode 1))
+      (should-not called)
+      (should-not envrc-mode)
+      (let ((gsmlg-envrc-enable t))
+        (gsmlg-envrc--guard-mode #'envrc-mode 1)
+        (should called)
+        (should envrc-mode)))))
+
+(ert-deftest gsmlg-project-envrc-suppresses-blocked-display ()
+  "Blocked direnv diagnostics must not call display-buffer."
+  (let ((buffer (get-buffer-create "*envrc*"))
+        (saved nil)
+        displayed)
+    (with-current-buffer buffer
+      (setq saved (buffer-string))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert "──── 2026-08-31 14:35:27 ──── /tmp/project/ ────\n\n"
+                "direnv: error /tmp/project/.envrc is blocked. "
+                "Run 'direnv allow' to approve its content\n"))
+      (cl-letf (((symbol-function #'display-buffer)
+                 (lambda (buffer-or-name &optional _action _frame)
+                   (setq displayed buffer-or-name)
+                   (get-buffer buffer-or-name))))
+        (should (eq buffer
+                    (gsmlg-envrc--display-buffer-maybe
+                     #'display-buffer buffer)))
+        (should-not displayed))
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (insert saved)))))
+
 (provide 'project-test)
 ;;; project-test.el ends here

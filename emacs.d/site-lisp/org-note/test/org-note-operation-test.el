@@ -20,23 +20,43 @@
   `(let (request)
      (cl-letf (((symbol-function 'org-note-client-request)
                 (lambda (method route query body)
-                  (setq request (list method route query body)))))
+                  (setq request (list method route query body))))
+               ((symbol-function 'org-note-client-request-raw)
+                (lambda (&rest args)
+                  (let* ((body-bytes (plist-get args :body))
+                         (body
+                          (and body-bytes
+                               (org-note-client--parse-json
+                                (decode-coding-string body-bytes 'utf-8)))))
+                    (setq request
+                          (list (plist-get args :method)
+                                (plist-get args :route)
+                                (plist-get args :query)
+                                body))))))
        ,@forms
        request)))
 
 (defun org-note-operation-test--should-equal-json-value (actual expected)
   "Assert ACTUAL has the same JSON value semantics as EXPECTED."
-  (if (hash-table-p expected)
-      (progn
-        (should (hash-table-p actual))
-        (should (= (hash-table-count actual) (hash-table-count expected)))
-        (maphash
-         (lambda (key expected-value)
-           (let ((missing (make-symbol "missing")))
-             (org-note-operation-test--should-equal-json-value
-              (gethash key actual missing) expected-value)))
-         expected))
-    (should (equal actual expected))))
+  (cond
+   ((hash-table-p expected)
+    (cond
+     ((hash-table-p actual)
+      (should (= (hash-table-count actual) (hash-table-count expected)))
+      (maphash
+       (lambda (key expected-value)
+         (let ((missing (make-symbol "missing")))
+           (org-note-operation-test--should-equal-json-value
+            (gethash key actual missing) expected-value)))
+       expected))
+     ;; JSON `{}` round-trips to nil/() when parsed as an alist.
+     ((and (= (hash-table-count expected) 0)
+           (or (null actual) (equal actual '())))
+      t)
+     (t
+      (should (hash-table-p actual)))))
+   (t
+    (should (equal actual expected)))))
 
 (defun org-note-operation-test--should-equal-json-object (actual expected)
   "Assert ACTUAL has exactly the key-value pairs in EXPECTED.
@@ -2034,5 +2054,32 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
       (should (equal (gethash "document-1" revisions) 3))
       (should (hash-table-p lease-body))
       (should (equal (gethash "fencing_token" lease-body) "fence-4")))))
+
+(ert-deftest org-note-operation-frozen-dispatch-reuses-bytes ()
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/")
+        bodies)
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest args)
+                 (push (plist-get args :body) bodies)
+                 '((ok . t)))))
+      (let* ((typed
+              (list :method "PUT"
+                    :route "/api/org/documents/document-1"
+                    :query nil
+                    :body (org-note-operation--mutation-body
+                           "workspace-1"
+                           `((path . "notes/today.org")
+                             (source . "* Today")
+                             (lease_proofs . ,(org-note-client-empty-object)))
+                           "operation-freeze")))
+             (env (org-note-operation--freeze-request typed))
+             (_ (org-note-operation--dispatch-frozen env))
+             (_ (org-note-operation--dispatch-frozen env)))
+        (should (= (length bodies) 2))
+        (should (equal (car bodies) (cadr bodies)))
+        (should (eq (car bodies) (cadr bodies)))
+        (should (stringp (car bodies)))
+        (should (equal (plist-get env :body) (car bodies)))))))
 
 ;;; org-note-operation-test.el ends here

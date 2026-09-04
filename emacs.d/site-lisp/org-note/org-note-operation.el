@@ -7,6 +7,7 @@
 
 (require 'cl-lib)
 (require 'org-note-client)
+(require 'org-note-validation)
 
 (defconst org-note-operation-queue-views
   '(ready assigned running blocked review failed expired_lease completed)
@@ -576,6 +577,52 @@ OPERATION-ID, when non-nil, is used as the operation identifier."
             (workspace_id . ,workspace-id))
           fields))
 
+(defun org-note-operation--freeze-request (typed-request)
+  "Freeze TYPED-REQUEST into a replayable wire envelope.
+
+TYPED-REQUEST is a plist with `:method', `:route', optional `:query', and
+`:body' (Lisp JSON value).  The body is encoded once.  The returned
+envelope holds method, canonical endpoint, absolute URL, route, query,
+headers, UTF-8 body bytes, body SHA-256, and memory-only redaction
+secrets derived from structural fencing-token fields.  Secrets must not
+be copied into durable markers or journals."
+  (let* ((method (plist-get typed-request :method))
+         (route (plist-get typed-request :route))
+         (query (plist-get typed-request :query))
+         (body (plist-get typed-request :body))
+         (context (org-note-validation-endpoint-bound-read-context
+                   org-note-endpoint))
+         (endpoint (alist-get 'endpoint context))
+         (url-builder (alist-get 'url-builder context))
+         (url (funcall url-builder route query))
+         (body-bytes (and body (org-note-client--request-data body)))
+         (headers (org-note-client--request-headers body-bytes))
+         (redaction-secrets
+          (and body (org-note-client--fencing-token-values body))))
+    (list :method method
+          :endpoint endpoint
+          :url url
+          :route route
+          :query query
+          :headers headers
+          :body body-bytes
+          :body-sha256 (and body-bytes (secure-hash 'sha256 body-bytes))
+          :redaction-secrets redaction-secrets)))
+
+(defun org-note-operation--dispatch-frozen (frozen-envelope)
+  "Dispatch FROZEN-ENVELOPE via raw transport without re-encoding the body.
+
+Uses the frozen absolute URL, headers, and body bytes.  Configuration
+changes after freezing do not rewrite the destination."
+  (org-note-client-request-raw
+   :method (plist-get frozen-envelope :method)
+   :url (plist-get frozen-envelope :url)
+   :route (plist-get frozen-envelope :route)
+   :query (plist-get frozen-envelope :query)
+   :headers (plist-get frozen-envelope :headers)
+   :body (plist-get frozen-envelope :body)
+   :redaction-secrets (plist-get frozen-envelope :redaction-secrets)))
+
 (cl-defun org-note-operation-list-workspaces
     (&key cursor limit include-archived)
   "List workspaces with optional CURSOR, LIMIT, and INCLUDE-ARCHIVED filter."
@@ -624,20 +671,22 @@ EXPECTED-REVISION controls optimistic concurrency for updates.  When it is
 nil, the field is omitted so the service can create the document.
 LEASE-PROOFS is required; a nil value is encoded as an empty JSON object.
 OPERATION-ID optionally supplies the mutation ID."
-  (org-note-client-request
-   "PUT"
-   (format "/api/org/documents/%s"
-           (org-note-operation--path-segment document-id))
-   nil
-   (org-note-operation--mutation-body
-    workspace-id
-    (append
-     `((path . ,path)
-       (source . ,source))
-     (and expected-revision
-          `((expected_revision . ,expected-revision)))
-     `((lease_proofs . ,(or lease-proofs (org-note-client-empty-object)))))
-    operation-id)))
+  (org-note-operation--dispatch-frozen
+   (org-note-operation--freeze-request
+    (list :method "PUT"
+          :route (format "/api/org/documents/%s"
+                         (org-note-operation--path-segment document-id))
+          :query nil
+          :body (org-note-operation--mutation-body
+                 workspace-id
+                 (append
+                  `((path . ,path)
+                    (source . ,source))
+                  (and expected-revision
+                       `((expected_revision . ,expected-revision)))
+                  `((lease_proofs
+                     . ,(or lease-proofs (org-note-client-empty-object)))))
+                 operation-id)))))
 
 (cl-defun org-note-operation-create-document
     (workspace-id document-id path source &key operation-id)

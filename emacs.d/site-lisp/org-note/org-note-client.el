@@ -264,19 +264,12 @@ FENCING-TOKENS are redacted from HTTP error data."
   "Return a safe condition payload for a transport failure."
   (list :status nil :code nil :message "Request failed" :details nil :retryable nil))
 
-(defun org-note-client-request (method route &optional query body)
-  "Synchronously request METHOD at ROUTE with optional QUERY and JSON BODY.
-
-Return a parsed JSON value for successful responses, nil for empty successful
-responses, or signal an Org Note condition for failures."
-  (let ((url-request-method method)
-        (url-request-extra-headers (org-note-client--request-headers body))
-        (url-request-data (and body (org-note-client--request-data body)))
-        (fencing-tokens (org-note-client--fencing-token-values body))
-        (buffer nil))
+(defun org-note-client--retrieve-synchronously (url fencing-tokens)
+  "Retrieve URL and return the parsed response using FENCING-TOKENS."
+  (let (buffer)
     (condition-case nil
         (setq buffer (url-retrieve-synchronously
-                      (org-note-client-url route query) t t org-note-request-timeout))
+                      url t t org-note-request-timeout))
       (error
        (signal 'org-note-transport-error (list (org-note-client--transport-error)))))
     (unless (buffer-live-p buffer)
@@ -286,6 +279,33 @@ responses, or signal an Org Note condition for failures."
           (org-note-client--response-result fencing-tokens))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
+
+(defun org-note-client-request (method route &optional query body)
+  "Synchronously request METHOD at ROUTE with optional QUERY and JSON BODY.
+
+Return a parsed JSON value for successful responses, nil for empty successful
+responses, or signal an Org Note condition for failures."
+  (let ((url-request-method method)
+        (url-request-extra-headers (org-note-client--request-headers body))
+        (url-request-data (and body (org-note-client--request-data body)))
+        (fencing-tokens (org-note-client--fencing-token-values body)))
+    (org-note-client--retrieve-synchronously
+     (org-note-client-url route query) fencing-tokens)))
+
+(cl-defun org-note-client-request-raw (&rest args &key method url headers body
+                                             redaction-secrets &allow-other-keys)
+  "Synchronously request METHOD at absolute URL with pre-encoded BODY bytes.
+
+ARGS is a plist.  HEADERS default to JSON accept/content-type when nil.
+REDACTION-SECRETS are redacted from HTTP error payloads.  Automatic
+redirect following is disabled so any 3xx ends after the original request."
+  (ignore args)
+  (let ((url-request-method method)
+        (url-request-extra-headers
+         (or headers (org-note-client--request-headers body)))
+        (url-request-data body)
+        (url-max-redirections 0))
+    (org-note-client--retrieve-synchronously url redaction-secrets)))
 
 (defun org-note-client-request-async (method route query body callback)
   "Asynchronously request METHOD at ROUTE and call CALLBACK once.

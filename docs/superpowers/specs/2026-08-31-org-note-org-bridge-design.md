@@ -1,8 +1,14 @@
 # Org Note as Org data source (bridge) design
 
-Status: Draft for review (revised after blocking review)
+Status: Approved for phased implementation; release gated
 Date: 2026-08-31
 Revised: 2026-09-01
+Approved: 2026-09-04
+
+Release gate: implementation may land in phases, but the bridge remains
+default-disabled and must not be presented as complete until every phase,
+cross-process safety mechanism, full-suite check, and operation-specific
+service idempotency integration gate in this design has passed.
 
 ## Problem
 
@@ -156,6 +162,11 @@ could skip bridge activation.
 | 79 | A candidate fetched before acquiring the publication lock can overwrite newer data | **Acquire before the first fetch.** Hold the reservation across paging, validation, rename, and local presentation finalization. |
 | 80 | Unsafe endpoint syntax could persist query credentials in feeds/markers | **Strict endpoint validator.** Permit only canonical HTTP(S) base URLs with no userinfo, query, fragment, or controls. |
 | 81 | Public release retry can fail fresh preflight before reaching its pending attempt | **Pending recovery wins.** Check the per-lease pending record first; only a brand-new release performs fresh preflight. |
+| 82 | Direct Agenda producers can bypass `org-agenda` cold-start advice | **Guard every public producer.** `org-agenda-list`, TODO/tag/search/stuck/occur/export producers, and redo entrypoints share the same outer activation owner. |
+| 83 | Restrictions or custom command local settings can replace `org-agenda-files` after entry advice | **Guard final source resolution.** While active, around advice on `org-agenda-files` returns exactly the selected feed regardless of dynamic bindings or `org-restrict`; non-feed restrictions are refused or ignored. |
+| 84 | A partially implemented phase can expose the bridge before later safety phases exist | **Default-disabled release gate.** Phase commits are development checkpoints only; normal startup cannot activate the bridge until every release gate passes. |
+| 85 | An unchanged refresh increments generation and invalidates other processes | **Deterministic no-op publication.** Canonically sort feed rows and retain the current generation when the complete validated candidate descriptor is identical. |
+| 86 | Archive ambiguity recovery assumes unproven same-id service deduplication | **Operation-specific integration gate.** Repeating an archive operation id must return the original result without another archive event before this path ships. |
 
 ## Architecture
 
@@ -473,17 +484,24 @@ implementation:
 ### Cold-start activation
 
 - `gsmlg-apps` eagerly loads the inert first-party bridge module and installs
-  all named command guards/advice. In particular, around advice on
-  `org-agenda` and `org-capture` owns cold-start activation. Installing any
-  advice must not load Org Note or perform network I/O.
+  all named command guards/advice. The bridge is default-disabled while phased
+  implementation is incomplete. When explicitly enabled, around advice on
+  `org-agenda`, every public Agenda producer, redo, and `org-capture` owns
+  cold-start activation. Installing any advice must not load Org Note or
+  perform network I/O.
 - On first invocation, each advice function:
   1. `(require 'org-note)`.
   2. Activates the bridge once under a reentrancy guard.
   3. Applies feed-only or non-file capture settings.
   4. Calls the original command.
 - Advice is required instead of rebinding only `C-c a` / `C-c c`, because it
-  must also cover `M-x`, Org speed command `q`, programmatic calls, and Alfred
-  `gsmlg-org-capture-frame`.
+  must also cover `M-x`, direct `org-agenda-list`/TODO/tag/search/stuck/occur/
+  export producers, redo, Org speed command `q`, programmatic calls, and Alfred
+  `gsmlg-org-capture-frame`. Nested producers reuse one dynamic activation and
+  refresh owner.
+- While the bridge is active, lower-level advice on `org-agenda-files` returns
+  exactly the selected feed. It ignores/rejects `org-restrict` and custom
+  command dynamic bindings that name any local or non-feed source.
 - The global keys remain bound to `org-agenda` and `org-capture`, so the exact
   keybinding contract does not change.
 - Tests must prove the first `C-c a`, `M-x org-agenda`, speed-command agenda,
@@ -586,7 +604,9 @@ local GTD files.
    property cardinality and decoded workspace/item/document identities, state,
    priority, ordered original tags, original title bytes, and scheduled versus
    deadline values. Reject unknown/duplicate generated properties or any
-   mismatch. Only then write a same-directory temporary file and prepare to
+   mismatch. Sort the merged rows deterministically by canonical endpoint,
+   workspace id, item id, and view role before serialization, so equivalent API
+   pages always produce identical bytes. Only then write a same-directory temporary file and prepare to
    replace the last-good snapshot. The selected feed/lock names are
    keyed by SHA-256 of the canonical endpoint identity plus normalized
    workspace-id list, so processes using different services or workspace
@@ -594,9 +614,12 @@ local GTD files.
 4. Store snapshot schema version, canonical endpoint identity, normalized
    workspace ids, and a canonical body checksum in its header. Under the
    endpoint/workspace-keyed publication reservation,
-   read the current descriptor and allocate generation exactly one greater than
-   its valid predecessor (or 1 when absent); never derive generation before
-   acquiring the reservation. The checksum covers all bytes after the metadata
+   read the current descriptor. If the complete validated candidate descriptor
+   and bytes equal the predecessor, perform a no-op publication: retain its
+   generation, do not rename/revert/rebuild, and release the reservation. Only
+   a changed candidate allocates generation exactly one greater than its valid
+   predecessor (or 1 when absent); never derive generation before acquiring the
+   reservation. The checksum covers all bytes after the metadata
    header under fixed UTF-8-unix encoding with one final newline; bridge
    provenance additionally records the SHA-256 of those complete encoded
    published bytes. Buffer digest checks encode with that same coding system and
@@ -654,6 +677,9 @@ local GTD files.
    interactive command before execution; a `post-command-hook` digest check
    fails closed if an allowed command unexpectedly changed the bytes.
 8. Set `org-agenda-files` to **only** the workspace-keyed selected feed file.
+   Guard the `org-agenda-files` resolver itself, so native current-file/subtree
+   restrictions and custom-command local settings cannot replace that final
+   source list after entrypoint advice.
 9. If workspace ids are unset or configuration is cancelled, use a separate
    endpoint-keyed empty feed file for that invocation; do not overwrite the
    last-good file.
@@ -1092,6 +1118,9 @@ local GTD files.
    a malformed or cyclic cursor chain, duplicate id, exceeded page/row/request/
    elapsed-time budget, missing id after the final page, or metadata mismatch
    remains ambiguous.
+   Shipping archive retry additionally requires a real service integration test
+   proving that a byte-identical repeated operation id returns the original
+   result and creates no second archive event.
 4. Mark archive committed only after that exhaustive list reconciliation. Then
    compare each origin's source/digest/tick with the post-confirmation frozen
    snapshot. If unchanged, privately authorize buffer kill and refresh every
@@ -1260,6 +1289,14 @@ Must include, with mocks and filesystem assertions where relevant:
   `org-agenda-do-context-action`, indirect-tree, open-link, and restriction-lock
   calls never dereference or display the feed and are covered under digest
   mismatch too.
+- Cold-start tests invoke every public Agenda producer directly, including
+  list/TODO/tag/search/stuck/occur/export and redo, and assert that none can read
+  local files. Tests also set current-file/subtree restrictions and custom
+  command `org-agenda-files` bindings, then assert final source resolution is
+  still exactly the selected feed. Nested producers fetch only once.
+- Permuted pages/views with identical typed rows serialize to identical bytes.
+  Publishing that identical candidate performs no rename, generation increment,
+  feed revert, Agenda rebuild, or cross-process staling.
 - Capture success uses one mutation and no local write. Confirmed commit plus
   later hook/finalize failure does not resend. Ambiguous retry reuses the exact
   payload/operation id, with an integration assertion that the service applies
@@ -1406,6 +1443,9 @@ Must include, with mocks and filesystem assertions where relevant:
   inhibited-hook divergence after commit preserves a save-blocked document and
   requires copy/export or explicit discard without reissuing archive. The
   verifier never calls direct document GET.
+  A service integration test repeats the exact archive operation id and wire
+  bytes, asserts the original result is returned, and proves only one archive
+  event is applied; this is a release gate, not a mocked unit assertion.
   A validated archive `409` performs no list request, durably records
   `definitive-noncommit-pending-cleanup`, restores the original editable
   buffer/list, and removes its guard/marker without live-process network retry.

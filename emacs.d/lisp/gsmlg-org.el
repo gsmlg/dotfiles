@@ -9,10 +9,7 @@
 (require 'gsmlg-paths)
 (require 'gsmlg-bootstrap)
 
-(defconst gsmlg-org-note-agenda-feed-tag "ORGNOTE"
-  "Tag marking generated Org Note feed headings in Org agenda scans.")
-
-(declare-function gsmlg-org-note-agenda-expanded-files "gsmlg-org-note-agenda" (source))
+(declare-function gsmlg-org-note-org-agenda-files "gsmlg-org-note-org" ())
 (declare-function org-agenda-skip-entry-if "org-agenda" (&rest conditions))
 (declare-function org-agenda-skip-subtree-if "org-agenda" (&rest conditions))
 (declare-function org-agenda-redo "org-agenda" ())
@@ -158,38 +155,34 @@ Enabled entries are loaded only when their ob-LANGUAGE library exists."
           org-plantuml-exec-mode (if jar 'jar 'plantuml))))
 
 (defun gsmlg-org-apply-path-settings ()
-  "Apply customizable Org path settings."
+  "Apply customizable Org path settings.
+
+When the Org Note bridge is active, `org-agenda-files' is feed-only."
   (setopt org-directory gsmlg-org-directory
           org-agenda-files
-          (if (fboundp #'gsmlg-org-note-agenda-expanded-files)
-              (gsmlg-org-note-agenda-expanded-files gsmlg-org-agenda-files)
+          (if (and (bound-and-true-p gsmlg-org-note-org--activated)
+                   (fboundp #'gsmlg-org-note-org-agenda-files))
+              (gsmlg-org-note-org-agenda-files)
             gsmlg-org-agenda-files))
   (gsmlg-org-apply-plantuml-settings)
   (with-eval-after-load 'ob-plantuml
     (gsmlg-org-apply-plantuml-settings))
   (gsmlg-org-refresh-capture-templates))
 
-(defun gsmlg-org-agenda-skip-org-note ()
-  "Skip generated Org Note feed entries in tag and todo agenda blocks."
-  (org-agenda-skip-entry-if 'tag gsmlg-org-note-agenda-feed-tag))
-
 (defun gsmlg-org-agenda-skip-nottodo-next ()
   "Skip agenda entries that are held, waiting, or not NEXT actions."
-  (or (gsmlg-org-agenda-skip-org-note)
-      (org-agenda-skip-subtree-if 'todo '("HOLD" "WAITING"))
+  (or (org-agenda-skip-subtree-if 'todo '("HOLD" "WAITING"))
       (org-agenda-skip-entry-if 'nottodo '("NEXT"))))
 
 (defun gsmlg-org-agenda-skip-nottodo-todo ()
   "Skip agenda entries that are projects or not standalone TODO tasks."
-  (or (gsmlg-org-agenda-skip-org-note)
-      (org-agenda-skip-subtree-if
+  (or (org-agenda-skip-subtree-if
        'todo '("PROJECT" "HOLD" "WAITING" "DELEGATED"))
       (org-agenda-skip-subtree-if 'nottodo '("TODO"))))
 
 (defun gsmlg-org-agenda-skip-nottodo-hold ()
   "Skip agenda entries that are waiting or not on HOLD."
-  (or (gsmlg-org-agenda-skip-org-note)
-      (org-agenda-skip-subtree-if 'todo '("WAITING"))
+  (or (org-agenda-skip-subtree-if 'todo '("WAITING"))
       (org-agenda-skip-entry-if 'nottodo '("HOLD"))))
 
 (defun gsmlg-org-hide-other ()
@@ -344,13 +337,11 @@ delete the dedicated frame."
                     ((org-agenda-overriding-header "Waiting")
                      (org-agenda-tags-todo-honor-ignore-options t)
                      (org-agenda-todo-ignore-scheduled 'future)
-                     (org-agenda-skip-function #'gsmlg-org-agenda-skip-org-note)
                      (org-agenda-sorting-strategy '(category-keep))))
          (tags-todo "/DELEGATED"
                     ((org-agenda-overriding-header "Delegated")
                      (org-agenda-tags-todo-honor-ignore-options t)
                      (org-agenda-todo-ignore-scheduled 'future)
-                     (org-agenda-skip-function #'gsmlg-org-agenda-skip-org-note)
                      (org-agenda-sorting-strategy '(category-keep))))
          (tags-todo "-INBOX"
                     ((org-agenda-overriding-header "On Hold")

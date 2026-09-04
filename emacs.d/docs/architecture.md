@@ -189,10 +189,12 @@ and commands are asserted by the keybinding module.
 | `gsmlg-apps` | autoloads, file associations, and hooks for deferred application modules |
 | `gsmlg-tramp` | compute-near-data process helpers and remote state policy |
 | `gsmlg-org` | agenda, capture, TODO, clock, Babel, Pomodoro and Org presentation |
+| `gsmlg-org-note-org` | Org Note Org bridge: cold-start advice, feed-only agenda ownership |
 | `gsmlg-elfeed` | tracked feed source and XDG-backed Elfeed database |
 | `gsmlg-agent` | Agent Editor MCP state machine, reconcile, and thin server sensors |
 | `org-note-client` | Agent Note REST transport, JSON decoding, and safe error reporting |
-| `org-note-operation` | API operations and in-memory lease and heartbeat ownership |
+| `org-note-validation` | endpoint/pager validation and frozen-wire envelope helpers |
+| `org-note-operation` | API operations, frozen dispatch, and in-memory lease and heartbeat ownership |
 | `org-note-document` | remote-backed Org document buffers, saves, and explicit conflict handling |
 | `org-note` | workspace, document, operational, context, and event user interfaces |
 | `gsmlg-ai` | AI Workbench facade, shared options, chat/rewrite entry points |
@@ -230,6 +232,17 @@ Requiring `org-note` is inert: it performs no network request, starts no timer,
 and installs no global binding. Requests begin only when an Org Note command
 is invoked; lease heartbeat timers begin only after an explicit successful
 claim or retry.
+
+`gsmlg-org-note-org` is the Org Note Org bridge. Apps load installs inert
+around-advice on Agenda producers / `org-capture` without requiring Org Note or
+opening the network. The bridge remains default-disabled until every phased
+release gate is complete. When explicitly enabled for development, the first
+command invocation activates it and owns a generated XDG-cache feed; a
+lower-level source resolver keeps `org-agenda-files` feed-only even under Org
+restrictions and custom command bindings.
+Endpoint/pager validation and frozen-wire request envelopes live in
+`org-note-validation` / `org-note-operation` inside the vendored package;
+`gsmlg-org-note-agenda` remains a thin compatibility require of the bridge.
 
 ## Agent Editor MCP lifecycle
 

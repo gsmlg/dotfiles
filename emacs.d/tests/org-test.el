@@ -90,7 +90,12 @@
           (let ((org-agenda-files (list org-file))
                 (org-agenda-buffer-name agenda-buffer-name)
                 (org-agenda-sticky nil))
-            (cl-letf (((symbol-function #'org-modern-mode) #'ignore))
+            ;; Bypass bridge advice so this smoke test can use a local
+            ;; org-file without interactive configure or feed ownership.
+            (cl-letf (((symbol-function #'org-modern-mode) #'ignore)
+                      ((symbol-function #'gsmlg-org-note-org--around-agenda)
+                       (lambda (orig &rest args)
+                         (apply orig args))))
               (save-window-excursion
                 (org-agenda nil "g")))
             (should (buffer-live-p (get-buffer agenda-buffer-name)))))
@@ -136,7 +141,15 @@
           (setopt gsmlg-org-directory directory
                   gsmlg-org-agenda-files agenda-source
                   gsmlg-org-plantuml-jar-path missing-jar)
-          (should (equal org-agenda-files agenda-source))
+          ;; Phase 1: when the Org Note bridge is active, agenda files
+          ;; are feed-only; otherwise they follow the host path setting.
+          (if (bound-and-true-p gsmlg-org-note-org--activated)
+              (progn
+                (should (fboundp #'gsmlg-org-note-org-agenda-files))
+                (should (equal org-agenda-files
+                               (gsmlg-org-note-org-agenda-files)))
+                (should-not (equal org-agenda-files agenda-source)))
+            (should (equal org-agenda-files agenda-source)))
           (should-not org-plantuml-jar-path)
           (should (eq org-plantuml-exec-mode 'plantuml)))
       (delete-directory directory t))))

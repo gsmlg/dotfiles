@@ -166,24 +166,19 @@
        gsmlg-ai-completion-diagnose))
   (autoload command "gsmlg-ai-completion" nil t))
 
-(defun gsmlg-apps--activate-org-note-agenda ()
-  "Load Org Note agenda integration once Org Note is available."
-  (when (featurep 'org-note)
-    (require 'gsmlg-org-note-agenda)
-    (gsmlg-org-note-agenda-activate)))
-
 (with-eval-after-load 'org
   (gsmlg-apps--prepare-org))
-(with-eval-after-load 'org-note
-  (gsmlg-apps--activate-org-note-agenda))
-(with-eval-after-load 'org-agenda
-  (gsmlg-apps--activate-org-note-agenda))
 (with-eval-after-load 'elfeed
   (gsmlg-apps--prepare-elfeed))
 (add-hook 'emacs-lisp-mode-hook #'gsmlg-apps--prepare-elisp)
 
 (gsmlg-apps-register-language-autoloads)
 (gsmlg-apps-register-language-auto-modes)
+
+;; Inert Org Note Org bridge: install cold-start advice without loading
+;; Org Note or performing network I/O at apps load.
+(require 'gsmlg-org-note-org)
+(gsmlg-org-note-org-install-guards)
 
 (provide 'gsmlg-apps)
 ;;; gsmlg-apps.el ends here

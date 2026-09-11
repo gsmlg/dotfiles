@@ -297,6 +297,7 @@ otherwise be blank."
                move-dup-move-lines-up))
 
   (use-package paredit
+    :ensure (:host github :repo "emacsmirror/paredit")
     :no-require t
     :commands paredit-mode
     :hook ((emacs-lisp-mode . paredit-mode)

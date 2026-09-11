@@ -520,8 +520,8 @@
                              t :depth treeless :ref
                              "752f5eb59fa1f670e6e7aee626758d1a1c66ebae"))
  (paredit :source "elpaca-menu-lock-file" :recipe
-          (:package "paredit" :fetcher git :url
-                    "https://paredit.org/paredit.git" :files
+          (:package "paredit" :fetcher github :repo
+                    "emacsmirror/paredit" :files
                     ("*.el" "*.el.in" "dir" "*.info" "*.texi" "*.texinfo"
                      "doc/dir" "doc/*.info" "doc/*.texi" "doc/*.texinfo"
                      "lisp/*.el" "docs/dir" "docs/*.info" "docs/*.texi"

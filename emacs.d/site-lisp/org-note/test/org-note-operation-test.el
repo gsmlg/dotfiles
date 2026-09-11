@@ -27,12 +27,23 @@
                          (body
                           (and body-bytes
                                (org-note-client--parse-json
-                                (decode-coding-string body-bytes 'utf-8)))))
+                                (decode-coding-string body-bytes 'utf-8))))
+                         (route (plist-get args :route)))
                     (setq request
                           (list (plist-get args :method)
-                                (plist-get args :route)
+                                route
                                 (plist-get args :query)
-                                body))))))
+                                body))
+                    (when (and (stringp route)
+                               (string-suffix-p "/transition" route)
+                               (listp body))
+                      (org-note-operation-test--transition-response
+                       (cdr (assq 'workspace_id body))
+                       "item-1"
+                       (cdr (assq 'document_id body))
+                       (cdr (assq 'operation_id body))
+                       nil
+                       (cdr (assq 'target_state body))))))))
        ,@forms
        request)))
 
@@ -128,8 +139,10 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
                     (status . "active"))))))))
 
 (defun org-note-operation-test--transition-response
-    (workspace-id item-id document-id operation-id lease)
-  "Return a valid transition response whose context contains LEASE."
+    (workspace-id item-id document-id operation-id lease &optional state)
+  "Return a valid transition response whose context contains LEASE.
+
+STATE defaults to \"ready\".  Document revision defaults to 5."
   `((schema_version . 1)
     (workspace_id . ,workspace-id)
     (operation_id . ,operation-id)
@@ -141,7 +154,8 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
             (document . ((id . ,document-id) (revision . 5)))
             (item . ((id . ,item-id)
                      (workspace_id . ,workspace-id)
-                     (document_id . ,document-id)))
+                     (document_id . ,document-id)
+                     (state . ,(or state "ready"))))
             (lease . ,lease)))))))
 
 (defun org-note-operation-test--active-context-lease
@@ -1529,7 +1543,8 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
 
 (ert-deftest org-note-operation-transition-removes-confirmed-closed-lease ()
   (org-note-operation-test--with-lease-state (100.0)
-    (let ((org-note-actor-id "emacs:test@example"))
+    (let ((org-note-actor-id "emacs:test@example")
+          (org-note-endpoint "https://example.test/"))
       (org-note-operation-register-claim
        "workspace-1" "item-1" "document-1" "execution"
        '((lease_id . "lease-1")
@@ -1544,8 +1559,9 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
                       (fencing_token . "fence-1")))
              (response
               (org-note-operation-test--transition-response
-               "workspace-1" "item-1" "document-1" "transition-1" nil)))
-        (cl-letf (((symbol-function 'org-note-client-request)
+               "workspace-1" "item-1" "document-1" "transition-1" nil
+               "blocked")))
+        (cl-letf (((symbol-function 'org-note-client-request-raw)
                    (lambda (&rest _arguments) response)))
           (should
            (eq response
@@ -1559,7 +1575,8 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
 
 (ert-deftest org-note-operation-transition-retains-confirmed-live-lease ()
   (org-note-operation-test--with-lease-state (100.0)
-    (let ((org-note-actor-id "emacs:test@example"))
+    (let ((org-note-actor-id "emacs:test@example")
+          (org-note-endpoint "https://example.test/"))
       (org-note-operation-register-claim
        "workspace-1" "item-1" "document-1" "execution"
        '((lease_id . "lease-1")
@@ -1578,8 +1595,8 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
              (response
               (org-note-operation-test--transition-response
                "workspace-1" "item-1" "document-1" "transition-1"
-               context-lease)))
-        (cl-letf (((symbol-function 'org-note-client-request)
+               context-lease "running")))
+        (cl-letf (((symbol-function 'org-note-client-request-raw)
                    (lambda (&rest _arguments) response)))
           (org-note-operation-transition
            "workspace-1" "item-1" "document-1" 3 "running"
@@ -1596,7 +1613,8 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
 
 (ert-deftest org-note-operation-transition-never-removes-replacement-lease ()
   (org-note-operation-test--with-lease-state (100.0)
-    (let ((org-note-actor-id "emacs:test@example"))
+    (let ((org-note-actor-id "emacs:test@example")
+          (org-note-endpoint "https://example.test/"))
       (org-note-operation-register-claim
        "workspace-1" "item-1" "document-1" "execution"
        '((lease_id . "lease-old")
@@ -1607,8 +1625,9 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
                       (fencing_token . "fence-old")))
              (response
               (org-note-operation-test--transition-response
-               "workspace-1" "item-1" "document-1" "transition-1" nil)))
-        (cl-letf (((symbol-function 'org-note-client-request)
+               "workspace-1" "item-1" "document-1" "transition-1" nil
+               "blocked")))
+        (cl-letf (((symbol-function 'org-note-client-request-raw)
                    (lambda (&rest _arguments)
                      (org-note-operation-register-claim
                       "workspace-1" "item-1" "document-1" "execution"
@@ -2012,11 +2031,25 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
   (let* ((expected-revisions
           (org-note-operation-test--revision-map "document-1" 3))
          (lease (org-note-operation-test--lease "lease-1" "fence-4"))
-         (requests nil))
+         (requests nil)
+         (org-note-endpoint "https://example.test/"))
     (cl-letf (((symbol-function 'url-retrieve-synchronously)
                (lambda (_url &rest _)
                  (push (list url-request-method url-request-data) requests)
-                 (org-note-operation-test--response-buffer 204 ""))))
+                 (let* ((body-text
+                         (and url-request-data
+                              (decode-coding-string url-request-data 'utf-8)))
+                        (transition-p
+                         (and body-text (string-match-p "target_state" body-text))))
+                   (if transition-p
+                       (org-note-operation-test--response-buffer
+                        200
+                        (json-serialize
+                         (org-note-operation-test--transition-response
+                          "workspace-1" "item-1" "document-1" "operation-2"
+                          nil "ready")
+                         :null-object nil))
+                     (org-note-operation-test--response-buffer 204 ""))))))
       (org-note-operation-heartbeat
        "workspace-1" "item-1" "lease-1" "task" "fence-4"
        :operation-id "operation-1")
@@ -2081,5 +2114,113 @@ LEASE-ID, FENCING-TOKEN, and EXPIRES-AT default to valid test values."
         (should (eq (car bodies) (cadr bodies)))
         (should (stringp (car bodies)))
         (should (equal (plist-get env :body) (car bodies)))))))
+
+(ert-deftest org-note-operation-frozen-transition-reuses-bytes ()
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/")
+        bodies)
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest args)
+                 (push (plist-get args :body) bodies)
+                 (org-note-operation-test--transition-response
+                  "workspace-1" "item-1" "document-1" "op-freeze"
+                  nil "DONE"))))
+      (let* ((typed
+              (org-note-operation--transition-typed-request
+               "workspace-1" "item-1" "document-1" 4 "DONE"
+               :operation-id "op-freeze"))
+             (env (org-note-operation--freeze-request typed))
+             (_ (org-note-operation--dispatch-frozen env))
+             (_ (org-note-operation--dispatch-frozen env)))
+        (should (= (length bodies) 2))
+        (should (eq (car bodies) (cadr bodies)))))))
+
+(ert-deftest org-note-operation-frozen-transition-dispatch-validates-response ()
+  "Direct frozen transition dispatch cannot bypass transition validation."
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/"))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest _args)
+                 (org-note-operation-test--transition-response
+                  "workspace-1" "item-1" "document-1" "wrong-operation"
+                  nil "DONE"))))
+      (let* ((typed
+              (org-note-operation--transition-typed-request
+               "workspace-1" "item-1" "document-1" 4 "DONE"
+               :operation-id "op-freeze"))
+             (env (org-note-operation--freeze-request typed)))
+        (should-error (org-note-operation--dispatch-frozen env)
+                      :type 'org-note-error)))))
+
+(ert-deftest org-note-operation-transition-validates-without-lease ()
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/")
+        (org-note-operation--leases (make-hash-table :test #'equal)))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest _args)
+                 (let ((response
+                        (copy-tree
+                         (org-note-operation-test--transition-response
+                          "workspace-1" "item-1" "document-1" "op-1" nil))))
+                   ;; Strengthen fixture: revision 5, state DONE
+                   (setf (alist-get 'revision
+                                    (alist-get 'document
+                                               (alist-get 'context
+                                                          (alist-get 'data response))))
+                         5)
+                   (setf (alist-get 'state
+                                    (alist-get 'item
+                                               (alist-get 'context
+                                                          (alist-get 'data response))))
+                         "DONE")
+                   response))))
+      (should
+       (org-note-operation-transition
+        "workspace-1" "item-1" "document-1" 4 "DONE"
+        :operation-id "op-1")))))
+
+(ert-deftest org-note-operation-transition-rejects-non-advancing-revision ()
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/"))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest _args)
+                 (let ((response
+                        (copy-tree
+                         (org-note-operation-test--transition-response
+                          "workspace-1" "item-1" "document-1" "op-1" nil))))
+                   (setf (alist-get 'revision
+                                    (alist-get 'document
+                                               (alist-get 'context
+                                                          (alist-get 'data response))))
+                         4)
+                   (setf (alist-get 'state
+                                    (alist-get 'item
+                                               (alist-get 'context
+                                                          (alist-get 'data response))))
+                         "DONE")
+                   response))))
+      (should-error
+       (org-note-operation-transition
+        "workspace-1" "item-1" "document-1" 4 "DONE"
+        :operation-id "op-1")
+       :type 'org-note-error))))
+
+(ert-deftest org-note-operation-transition-rejects-empty-event-ids ()
+  (let ((org-note-actor-id "emacs:test@example")
+        (org-note-endpoint "https://example.test/"))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest _args)
+                 (let ((response
+                        (copy-tree
+                         (org-note-operation-test--transition-response
+                          "workspace-1" "item-1" "document-1" "op-1" nil
+                          "DONE"))))
+                   (setf (alist-get 'event_ids response) (vector))
+                   response))))
+      (should-error
+       (org-note-operation-transition
+        "workspace-1" "item-1" "document-1" 4 "DONE"
+        :operation-id "op-1")
+       :type 'org-note-error))))
 
 ;;; org-note-operation-test.el ends here

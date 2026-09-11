@@ -49,8 +49,9 @@
   (and (consp value) (cl-every #'consp value)))
 
 (defun org-note-operation--string-vector-p (value)
-  "Return non-nil when VALUE is a vector of nonempty strings."
+  "Return non-nil when VALUE is a nonempty vector of nonempty strings."
   (and (vectorp value)
+       (> (length value) 0)
        (cl-every #'org-note-operation--nonempty-string-p
                  (append value nil))))
 
@@ -534,15 +535,44 @@ Cancel its pending heartbeat timer before removing it from the registry."
       (signal 'org-note-error '("Org Note transition response is invalid")))
     context))
 
+(defun org-note-operation--validate-transition-response
+    (response workspace-id item-id document-id expected-revision target-state
+              operation-id &optional expected-lease-id expected-kind)
+  "Validate RESPONSE for a transition and return its context.
+
+Always runs, including when no lease proof was supplied.  Requires document
+revision strictly greater than EXPECTED-REVISION and item state equal to
+TARGET-STATE."
+  (let ((context
+         (org-note-operation--validated-transition-context
+          response workspace-id item-id document-id operation-id
+          expected-lease-id expected-kind))
+        (document (org-note-operation--response-value
+                   (org-note-operation--response-value
+                    (org-note-operation--response-value response 'data)
+                    'context)
+                   'document))
+        (item (org-note-operation--response-value
+               (org-note-operation--response-value
+                (org-note-operation--response-value response 'data)
+                'context)
+               'item)))
+    (let ((revision (org-note-operation--response-value document 'revision))
+          (state (org-note-operation--response-value item 'state)))
+      (unless (and (integerp revision)
+                   (integerp expected-revision)
+                   (> revision expected-revision)
+                   (equal state target-state))
+        (signal 'org-note-error
+                '("Org Note transition response is invalid"))))
+    context))
+
 (defun org-note-operation--reconcile-transition-lease
-    (registered-lease response workspace-id item-id document-id operation-id)
-  "Reconcile REGISTERED-LEASE from an authoritative transition RESPONSE."
+    (registered-lease context workspace-id item-id)
+  "Reconcile REGISTERED-LEASE from an already-validated transition CONTEXT."
   (let* ((kind (org-note-operation-lease-kind registered-lease))
          (lease-id (org-note-operation-lease-lease-id registered-lease))
          (lease-key (org-note-operation--lease-key workspace-id item-id kind))
-         (context
-          (org-note-operation--validated-transition-context
-           response workspace-id item-id document-id operation-id lease-id kind))
          (context-lease (org-note-operation--response-value context 'lease)))
     (when (eq registered-lease
               (gethash lease-key org-note-operation--leases))
@@ -607,21 +637,27 @@ be copied into durable markers or journals."
           :headers headers
           :body body-bytes
           :body-sha256 (and body-bytes (secure-hash 'sha256 body-bytes))
-          :redaction-secrets redaction-secrets)))
+          :redaction-secrets redaction-secrets
+          :response-validator (plist-get typed-request :response-validator))))
 
 (defun org-note-operation--dispatch-frozen (frozen-envelope)
   "Dispatch FROZEN-ENVELOPE via raw transport without re-encoding the body.
 
 Uses the frozen absolute URL, headers, and body bytes.  Configuration
 changes after freezing do not rewrite the destination."
-  (org-note-client-request-raw
-   :method (plist-get frozen-envelope :method)
-   :url (plist-get frozen-envelope :url)
-   :route (plist-get frozen-envelope :route)
-   :query (plist-get frozen-envelope :query)
-   :headers (plist-get frozen-envelope :headers)
-   :body (plist-get frozen-envelope :body)
-   :redaction-secrets (plist-get frozen-envelope :redaction-secrets)))
+  (let ((response
+         (org-note-client-request-raw
+          :method (plist-get frozen-envelope :method)
+          :url (plist-get frozen-envelope :url)
+          :route (plist-get frozen-envelope :route)
+          :query (plist-get frozen-envelope :query)
+          :headers (plist-get frozen-envelope :headers)
+          :body (plist-get frozen-envelope :body)
+          :redaction-secrets (plist-get frozen-envelope :redaction-secrets))))
+    (let ((validator (plist-get frozen-envelope :response-validator)))
+      (when validator
+        (funcall validator response)))
+    response))
 
 (cl-defun org-note-operation-list-workspaces
     (&key cursor limit include-archived)
@@ -996,6 +1032,35 @@ optionally supplies the mutation ID."
         operation-id))
     (org-note-operation-forget-lease workspace-id item-id "execution")))
 
+(cl-defun org-note-operation--transition-typed-request
+    (workspace-id item-id document-id expected-revision target-state
+                  &key lease error metadata operation-id)
+  "Return a typed transition request plist ready for freeze."
+  (let ((request-operation-id
+         (or operation-id (org-note-client-new-operation-id))))
+    (list :method "POST"
+          :route (org-note-operation--item-route item-id "/transition")
+          :query nil
+          :body (org-note-operation--mutation-body
+                 workspace-id
+                 (append `((document_id . ,document-id)
+                           (expected_document_revision . ,expected-revision)
+                           (target_state . ,target-state))
+                         (and lease `((lease . ,lease)))
+                         (and error `((error . ,error)))
+                         `((metadata
+                            . ,(or metadata (org-note-client-empty-object)))))
+                 request-operation-id)
+          :response-validator
+          (lambda (response)
+            (org-note-operation--validate-transition-response
+             response workspace-id item-id document-id expected-revision
+             target-state request-operation-id
+             (and lease
+                  (org-note-operation--response-value lease 'lease_id))
+             (and lease
+                  (org-note-operation--response-value lease 'kind)))))))
+
 (cl-defun org-note-operation-transition
     (workspace-id item-id document-id expected-revision target-state
                   &key lease error metadata operation-id)
@@ -1010,23 +1075,24 @@ nil.  OPERATION-ID optionally supplies the mutation ID."
           (and lease
                (org-note-operation--registered-transition-lease
                 workspace-id item-id lease)))
-         (response
-          (org-note-client-request
-           "POST" (org-note-operation--item-route item-id "/transition") nil
-           (org-note-operation--mutation-body
-            workspace-id
-            (append `((document_id . ,document-id)
-                      (expected_document_revision . ,expected-revision)
-                      (target_state . ,target-state))
-                    (and lease `((lease . ,lease)))
-                    (and error `((error . ,error)))
-                    `((metadata
-                       . ,(or metadata (org-note-client-empty-object)))))
-            request-operation-id))))
+         (typed
+          (org-note-operation--transition-typed-request
+           workspace-id item-id document-id expected-revision target-state
+           :lease lease :error error :metadata metadata
+           :operation-id request-operation-id))
+         (frozen (org-note-operation--freeze-request typed))
+         (response (org-note-operation--dispatch-frozen frozen))
+         (context
+          (org-note-operation--validate-transition-response
+           response workspace-id item-id document-id expected-revision
+           target-state request-operation-id
+           (and registered-lease
+                (org-note-operation-lease-lease-id registered-lease))
+           (and registered-lease
+                (org-note-operation-lease-kind registered-lease)))))
     (when registered-lease
       (org-note-operation--reconcile-transition-lease
-       registered-lease response workspace-id item-id document-id
-       request-operation-id))
+       registered-lease context workspace-id item-id))
     response))
 
 (cl-defun org-note-operation-retry

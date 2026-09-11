@@ -234,12 +234,22 @@ is invoked; lease heartbeat timers begin only after an explicit successful
 claim or retry.
 
 `gsmlg-org-note-org` is the Org Note Org bridge. Apps load installs inert
-around-advice on Agenda producers / `org-capture` without requiring Org Note or
-opening the network. The bridge remains default-disabled until every phased
-release gate is complete. When explicitly enabled for development, the first
-command invocation activates it and owns a generated XDG-cache feed; a
-lower-level source resolver keeps `org-agenda-files` feed-only even under Org
-restrictions and custom command bindings.
+around-advice on Agenda producers, `org-capture`, and direct mutation commands
+without requiring Org Note or opening the network. The bridge remains default-disabled
+(`gsmlg-org-note-org-enable` nil) until every phased release gate is complete.
+When explicitly enabled for development, the first command invocation activates
+it and owns a generated XDG-cache feed; a lower-level source resolver keeps
+`org-agenda-files` feed-only even under Org restrictions and custom command
+bindings. Phase 2 adds atomic TODO/state configuration
+(`gsmlg-org-note-apply-state-configuration`), plain-local refuse for
+TODO/refile/archive/clock, identified frozen transitions with lease preflight,
+and id-less document keyword put with explicit non-transition messaging. An
+ambiguous Phase 2 mutation can be retried only in the owning process through
+its retained frozen envelope and operation id; confirmed validation clears the
+ambiguity before presentation recovery and never creates a fresh mutation.
+Capture/refile/clock/archive engines remain later phases (3–6); multi-process
+locks remain Phase 7. Refuse stubs document those deferrals without enabling
+product paths.
 Endpoint/pager validation and frozen-wire request envelopes live in
 `org-note-validation` / `org-note-operation` inside the vendored package;
 `gsmlg-org-note-agenda` remains a thin compatibility require of the bridge.

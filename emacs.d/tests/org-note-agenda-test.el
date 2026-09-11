@@ -14,6 +14,10 @@
 (declare-function gsmlg-org-note-org--item-headline "gsmlg-org-note-org" (item))
 (declare-function gsmlg-org-note-org--goto "gsmlg-org-note-org"
                   (orig-fun &optional highlight))
+(declare-function org-agenda-goto "org-agenda" (&optional highlight))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+
+(defvar org-note-agenda-workspace-ids)
 
 (unless (require 'gsmlg-paths nil t)
   (defvar gsmlg-cache-directory
@@ -32,7 +36,7 @@
   (require 'gsmlg-org-note-org))
 
 (defun org-note-agenda-test--item (id workspace-id &optional title)
-  "Return a minimal Org Note item alist."
+  "Return a minimal Org Note item with ID, WORKSPACE-ID, and optional TITLE."
   `((id . ,id)
     (workspace_id . ,workspace-id)
     (document_id . "document-a")
@@ -64,7 +68,7 @@
                 org-note-agenda-workspace-ids '("workspace-a")
                 gsmlg-org-note-org--last-workspace-ids nil)
           (fset 'org-note-operation-query-agenda
-                (lambda (&key workspace-ids view &rest _args)
+                (lambda (&key workspace-ids _view &rest _args)
                   (cl-incf query-count)
                   `((items . (((item . ,(org-note-agenda-test--item
                                           "item-a"

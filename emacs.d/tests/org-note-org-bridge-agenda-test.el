@@ -24,6 +24,11 @@
                   (workspace-ids view))
 (declare-function gsmlg-org-apply-path-settings "gsmlg-org" ())
 
+(defvar gsmlg-org-agenda-files)
+(defvar org-agenda-files)
+(defvar org-note-agenda-workspace-ids)
+(defvar org-note-endpoint)
+
 (unless (require 'gsmlg-paths nil t)
   (defvar gsmlg-cache-directory
     (file-name-as-directory
@@ -49,7 +54,6 @@
           (with-temp-file (expand-file-name "org-note.el" temp-dir)
             (insert ";;; org-note.el --- stub -*- lexical-binding: t; -*-\n"
                     "(defvar org-note-agenda-workspace-ids nil)\n"
-                    "(defvar org-note-endpoint nil)\n"
                     "(defun org-note-configure-agenda-workspaces ()\n"
                     "  \"Stub: leave agenda workspaces unset.\"\n"
                     "  (interactive)\n"
@@ -102,7 +106,10 @@
                     (when (and (eq feature 'org-note)
                                (not (featurep 'org-note)))
                       (cl-incf require-count))
-                    (apply orig-require feature args))))
+                    (apply orig-require feature args)))
+                 ((symbol-function
+                   'gsmlg-org-note-org--install-todo-keywords)
+                  #'ignore))
          (should (eq 'agenda-ok
                      (gsmlg-org-note-org--around-agenda
                       (lambda (&rest _args)
@@ -140,7 +147,10 @@
        (unwind-protect
            (progn
              (setq gsmlg-org-agenda-files local)
-             (gsmlg-org-note-org-activate)
+             (cl-letf (((symbol-function
+                         'gsmlg-org-note-org--install-todo-keywords)
+                        #'ignore))
+               (gsmlg-org-note-org-activate))
              (gsmlg-org-apply-path-settings)
              (should (equal org-agenda-files
                             (list (gsmlg-org-note-org-feed-file))))
@@ -241,7 +251,7 @@
                     "#+ORG_NOTE_WORKSPACE_IDS: workspace-a\n"
                     "* TODO Cached :ORGNOTE:\n"))
           (cl-letf (((symbol-function 'gsmlg-org-note-org--fetch-views)
-                     (lambda (&rest _) (error "network")))
+                     (lambda (&rest _) (error "Network")))
                     ((symbol-function 'yes-or-no-p)
                      (lambda (prompt) (setq asked prompt) nil)))
             (should-error (gsmlg-org-note-org-refresh-feed t))
@@ -279,13 +289,13 @@
                 org-note-agenda-workspace-ids '("workspace-a"))
           (with-temp-file feed-file (insert original))
           (cl-letf (((symbol-function 'gsmlg-org-note-org--fetch-views)
-                     (lambda (&rest _) (error "network")))
+                     (lambda (&rest _) (error "Network")))
                     ((symbol-function 'yes-or-no-p)
                      (lambda (prompt) (setq asked prompt) t))
                     ((symbol-function 'write-region)
                      (lambda (&rest _)
                        (cl-incf writes)
-                       (error "must not rewrite last-good"))))
+                       (error "Must not rewrite last-good"))))
             (should (equal (gsmlg-org-note-org-refresh-feed t) feed-file))
             (should asked)
             (should (= writes 0))

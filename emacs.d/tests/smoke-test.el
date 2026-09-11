@@ -90,6 +90,7 @@
 
 (ert-deftest gsmlg-smoke-effective-mutable-paths-follow-xdg-roots ()
   "Every configured mutable file should use its data, cache, or state root."
+  (require 'gsmlg-org)
   (dolist (path (list elpaca-directory
                       elpaca-builds-directory
                       elpaca-sources-directory))
@@ -126,6 +127,23 @@
           (file-name-as-directory
            (expand-file-name "agent-editor/"
                              gsmlg-state-directory)))))
+
+(ert-deftest gsmlg-smoke-org-persist-keeps-xdg-cache-after-late-load ()
+  "Loading Org persist after workflow setup must retain its configured cache."
+  (require 'gsmlg-org)
+  (let ((expected-directory
+         (file-name-as-directory
+          (expand-file-name "org-persist/" gsmlg-cache-directory))))
+    (unwind-protect
+        (progn
+          (when (featurep 'org-persist)
+            (unload-feature 'org-persist t))
+          (let ((user-init-file nil))
+            (gsmlg-org-configure-workflow)
+            (require 'org-persist))
+          (should (equal org-persist-directory expected-directory)))
+      (require 'org-persist)
+      (gsmlg-org-configure-workflow))))
 
 (ert-deftest gsmlg-smoke-empty-xdg-values-use-home-fallbacks ()
   "Empty XDG environment values should behave as unset values."

@@ -355,6 +355,7 @@ delete the dedicated frame."
   (require 'org-archive)
   (require 'org-clock)
   (require 'org-duration)
+  (require 'org-persist)
   (require 'org-protocol)
   (require 'org-refile)
   (let ((clock-directory

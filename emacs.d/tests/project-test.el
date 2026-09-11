@@ -120,7 +120,7 @@
         (should envrc-mode)))))
 
 (ert-deftest gsmlg-project-envrc-suppresses-blocked-display ()
-  "Blocked direnv diagnostics must not call display-buffer."
+  "Blocked direnv diagnostics must not call `display-buffer'."
   (let ((buffer (get-buffer-create "*envrc*"))
         (saved nil)
         displayed)

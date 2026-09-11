@@ -1102,12 +1102,12 @@
           "emacs_agent_code_actions"
           "emacs_agent_format_range"))))))
 
-(ert-deftest emacs-agent-semantic-runtime-capabilities-reject-etags-without-tags ()
-  "A README buffer must not advertise unusable fallback etags support.
+(ert-deftest emacs-agent-semantic-runtime-capabilities-keep-etags-present-without-tags ()
+  "A hooked but unusable etags backend remains present and unavailable.
 
-Emacs 30 always exposes `etags' from `etags--xref-backend'.  Emacs 31+ only
-returns `etags' when a tags table is configured, so `xref-find-backend' is nil
-without tags.  Either way, xref tools must remain unavailable."
+Emacs 31+ makes `etags--xref-backend' return nil without a TAGS table, but
+capability reporting still identifies the configured provider as present.
+Xref tools remain unavailable until the backend is ready."
   (let ((root (make-temp-file "emacs-agent-semantic-gfm-" t)))
     (unwind-protect
         (with-temp-buffer
@@ -1119,18 +1119,14 @@ without tags.  Either way, xref tools must remain unavailable."
           (setq-local default-tags-table-function nil)
           (setq-local xref-backend-functions
                       (list #'etags--xref-backend))
-          (let* ((etags-claims-backend (etags--xref-backend))
-                 (report
+          (let* ((report
                   (emacs-agent-semantic-runtime-capabilities
                    (current-buffer)))
                  (providers (alist-get 'providers report))
                  (xref (alist-get 'xref providers))
                  (availability (alist-get 'tool_availability report)))
-            (if etags-claims-backend
-                (progn
-                  (should (eq (alist-get 'backend_present xref) t))
-                  (should (equal (alist-get 'provider xref) "etags")))
-              (should (eq (alist-get 'backend_present xref) :false)))
+            (should (eq (alist-get 'backend_present xref) t))
+            (should (equal (alist-get 'provider xref) "etags"))
             (should (eq (alist-get 'noninteractive_ready xref) :false))
             (should (eq (alist-get 'available xref) :false))
             (dolist (tool '("emacs_agent_project_symbols"

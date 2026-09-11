@@ -108,6 +108,7 @@ use `envrc-show-log' to inspect them.  Batch sessions ignore this option."
 (defun gsmlg-envrc--guard-mode (orig-fun &optional arg)
   "Refuse to enable `envrc-mode' unless `gsmlg-envrc-enable' is non-nil.
 
+Otherwise call ORIG-FUN with ARG.
 Desktop restore can re-enable buffer-local `envrc-mode' even when
 `envrc-global-mode' is off.  Keep that path gated by the same opt-in."
   (if (and (gsmlg-envrc--enable-arg-p arg)
@@ -126,7 +127,9 @@ Desktop restore can re-enable buffer-local `envrc-mode' even when
          nil t)))))
 
 (defun gsmlg-envrc--display-buffer-maybe (orig-fun buffer-or-name &optional action frame)
-  "Skip popping `*envrc*' when direnv only reports a blocked `.envrc'."
+  "Skip popping `*envrc*' when direnv only reports a blocked `.envrc'.
+
+Otherwise call ORIG-FUN with BUFFER-OR-NAME, ACTION, and FRAME."
   (let ((buffer (get-buffer buffer-or-name)))
     (if (and buffer
              (equal (buffer-name buffer) "*envrc*")

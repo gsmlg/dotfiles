@@ -1,5 +1,7 @@
 ;;; org-note-org-bridge-phase7-test.el --- Phase 7 hardening tests -*- lexical-binding: t; -*-
 
+;;; Code:
+
 (require 'ert)
 (require 'cl-lib)
 (require 'gsmlg-org-note-org)
@@ -50,3 +52,4 @@
                     :type 'user-error))))
 
 (provide 'org-note-org-bridge-phase7-test)
+;;; org-note-org-bridge-phase7-test.el ends here

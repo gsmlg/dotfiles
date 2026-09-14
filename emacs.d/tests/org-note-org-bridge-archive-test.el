@@ -1,5 +1,7 @@
 ;;; org-note-org-bridge-archive-test.el --- Archive bridge tests -*- lexical-binding: t; -*-
 
+;;; Code:
+
 (require 'ert)
 (require 'gsmlg-org-note-org)
 

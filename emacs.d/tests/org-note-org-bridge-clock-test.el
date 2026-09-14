@@ -235,6 +235,7 @@
   "Bridge recovery reconciles a committed release without another POST."
   (let* ((org-note-endpoint "https://a.example")
          (gsmlg-org-note-org-enable t)
+         (gsmlg-org-note-org--activated t)
          (org-note-actor-id "actor")
          (org-note-operation--leases (make-hash-table :test #'equal))
          (org-note-operation--pending-releases (make-hash-table :test #'equal))

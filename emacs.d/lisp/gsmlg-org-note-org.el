@@ -1101,6 +1101,160 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--archive-ambiguities (make-hash-table :test #'equal)
   "Frozen whole-document archive attempts awaiting explicit replay.")
 
+;; Non-Capture mutations persist only nonsecret identity and lifecycle metadata.
+(defconst gsmlg-org-note-org--noncapture-marker-schema-version 1)
+(defvar gsmlg-org-note-org--noncapture-recovery-required nil)
+
+(defun gsmlg-org-note-org--noncapture-marker-directory (&optional create)
+  "Return the private non-Capture marker directory, optionally creating it."
+  (let ((dir (file-name-as-directory
+              (expand-file-name "noncapture/"
+                                (gsmlg-state-file "org-note/mutation-recovery/")))))
+    (when create
+      (make-directory dir t)
+      (set-file-modes dir #o700))
+    dir))
+
+(defun gsmlg-org-note-org--noncapture-marker-file (operation-id &optional create)
+  "Return marker path for OPERATION-ID after strict validation."
+  (unless (and (stringp operation-id)
+               (string-match-p "\\`[A-Za-z0-9][A-Za-z0-9_-]*\\'" operation-id))
+    (user-error "Invalid Org Note mutation operation id"))
+  (expand-file-name (concat operation-id ".json")
+                    (gsmlg-org-note-org--noncapture-marker-directory create)))
+
+(defconst gsmlg-org-note-org--noncapture-marker-fields
+  '(schema_version operation_kind purpose state operation_id endpoint
+    workspace_id document_id item_id path expected_revision committed_revision
+    target_state source_digest proposed_digest created_at updated_at))
+
+(defun gsmlg-org-note-org--noncapture-marker-json (value)
+  "Return canonical JSON for marker VALUE."
+  (json-serialize value :null-object nil :false-object :false))
+
+(defun gsmlg-org-note-org--noncapture-marker-write (record)
+  "Atomically write nonsecret mutation marker RECORD."
+  (let ((keys record))
+    (while keys
+      (let ((key (car keys)))
+        (unless (memq key (mapcar (lambda (f) (intern (concat ":" (replace-regexp-in-string "_" "-" (symbol-name f)))))
+                                  gsmlg-org-note-org--noncapture-marker-fields))
+          (user-error "Org Note mutation marker contains forbidden metadata")))
+      (setq keys (cddr keys))))
+  (let* ((op (plist-get record :operation-id))
+         (body (list (cons 'schema_version
+                           gsmlg-org-note-org--noncapture-marker-schema-version))))
+    (dolist (field gsmlg-org-note-org--noncapture-marker-fields)
+      (unless (eq field 'schema_version)
+        (let ((value (plist-get record
+                               (intern (concat ":" (replace-regexp-in-string
+                                                      "_" "-" (symbol-name field)))))))
+          (when value (push (cons field value) body)))))
+    (setq body (nreverse body))
+    (unless (and (member (alist-get 'operation_kind body)
+                         '("transition" "document-put" "archive"))
+                 (member (alist-get 'state body)
+                         '("prepared" "dispatched" "ambiguous"
+                           "committed" "definitive-noncommit-pending-cleanup"
+                           "committed-pending-refresh" "post-commit-conflict"
+                           "cleanup-pending")))
+      (user-error "Org Note mutation marker metadata is invalid"))
+    (let* ((payload (gsmlg-org-note-org--noncapture-marker-json body))
+           (record-json (gsmlg-org-note-org--noncapture-marker-json
+                         `((schema_version . ,gsmlg-org-note-org--noncapture-marker-schema-version)
+                           (checksum . ,(secure-hash 'sha256 payload))
+                           (body . ,body))))
+           (file (gsmlg-org-note-org--noncapture-marker-file op t))
+           (tmp (make-temp-file (expand-file-name ".mutation-" (file-name-directory file)))))
+      (unwind-protect
+          (progn
+            (with-temp-file tmp
+              (insert record-json)
+              (set-buffer-file-coding-system 'utf-8-unix)
+              (let ((write-region-inhibit-fsync nil))
+                (write-region (point-min) (point-max) tmp nil 'silent)))
+            (set-file-modes tmp #o600)
+            (rename-file tmp file t))
+        (when (file-exists-p tmp) (delete-file tmp)))
+      file)))
+
+(defun gsmlg-org-note-org--noncapture-marker-delete (operation-id)
+  "Delete marker OPERATION-ID after successful local completion."
+  (let ((file (gsmlg-org-note-org--noncapture-marker-file operation-id)))
+    (when (file-exists-p file) (delete-file file))))
+
+(defun gsmlg-org-note-org--noncapture-marker-read (file)
+  "Read and validate FILE, returning its marker body or quarantining it."
+  (let ((record nil))
+    (condition-case nil
+        (setq record (json-parse-string
+                      (with-temp-buffer
+                        (insert-file-contents-literally file)
+                        (buffer-string)) :object-type 'alist))
+      (error nil))
+    (let* ((body (and record (alist-get 'body record)))
+           (valid (and record (file-regular-p file)
+                       (zerop (logand (file-modes file) #o077))
+                       (= (alist-get 'schema_version record)
+                          gsmlg-org-note-org--noncapture-marker-schema-version)
+                       (equal (alist-get 'checksum record)
+                              (secure-hash 'sha256
+                                           (gsmlg-org-note-org--noncapture-marker-json body)))
+                       (equal (alist-get 'operation_id body)
+                              (file-name-base file)))))
+      (if valid body
+        (progn
+          (rename-file file (concat file ".quarantine") t)
+          (user-error "Org Note mutation marker is unsafe"))))))
+
+(defun gsmlg-org-note-org-check-noncapture-recovery ()
+  "Scan local non-Capture markers without network access and block mutations."
+  (setq gsmlg-org-note-org--noncapture-recovery-required nil)
+  (let ((dir (gsmlg-org-note-org--noncapture-marker-directory)))
+    (when (file-directory-p dir)
+      (dolist (file (directory-files dir t "\\`[^.]\\+\\.json\\'"))
+        (condition-case err
+            (push (gsmlg-org-note-org--noncapture-marker-read file)
+                  gsmlg-org-note-org--noncapture-recovery-required)
+          (error
+           (setq gsmlg-org-note-org--noncapture-recovery-required
+                 (list :blocked (error-message-string err)))))
+        ))
+      (when (and (file-directory-p dir)
+                 (directory-files dir t "\\.quarantine\\'" t))
+        (setq gsmlg-org-note-org--noncapture-recovery-required
+              (list :blocked "Org Note mutation recovery quarantine requires inspection"))))
+  gsmlg-org-note-org--noncapture-recovery-required)
+
+(defun gsmlg-org-note-org--noncapture-blocked-p (endpoint resource)
+  "Signal when unresolved marker for ENDPOINT and RESOURCE blocks mutation."
+  (dolist (marker gsmlg-org-note-org--noncapture-recovery-required)
+    (when (and (listp marker)
+               (equal endpoint (alist-get 'endpoint marker))
+               (or (equal resource (alist-get 'document_id marker))
+                   (equal resource (alist-get 'item_id marker))))
+      (user-error "Org Note mutation recovery required for %s"
+                  (alist-get 'operation_id marker)))))
+
+(defun gsmlg-org-note-org-ack-noncapture-mutation (operation-id)
+  "Acknowledge and remove a reconciled non-Capture marker OPERATION-ID."
+  (interactive "sOperation ID: ")
+  (let ((marker (gsmlg-org-note-org--noncapture-marker-file operation-id)))
+    (unless (file-exists-p marker) (user-error "No Org Note mutation marker"))
+    (delete-file marker)
+    (gsmlg-org-note-org-check-noncapture-recovery)))
+
+(defun gsmlg-org-note-org-cancel-noncapture-mutation (operation-id)
+  "Cancel a prepared, known-unsent non-Capture marker OPERATION-ID."
+  (interactive "sOperation ID: ")
+  (let ((file (gsmlg-org-note-org--noncapture-marker-file operation-id)))
+    (unless (file-exists-p file) (user-error "No Org Note mutation marker"))
+    (let ((body (gsmlg-org-note-org--noncapture-marker-read file)))
+      (unless (equal (alist-get 'state body) "prepared")
+        (user-error "Only prepared Org Note mutations may be cancelled"))
+      (delete-file file)
+      (gsmlg-org-note-org-check-noncapture-recovery))))
+
 (defconst gsmlg-org-note-org--archive-page-limit 100
   "Maximum rows requested per archive reconciliation page.")
 
@@ -1217,21 +1371,49 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
          (dispatched nil))
     (when (gethash document-id gsmlg-org-note-org--archive-ambiguities)
       (user-error "Org Note archive for %s is ambiguous; resolve before retrying" document-id))
+    (gsmlg-org-note-org--noncapture-blocked-p (plist-get frozen :endpoint) document-id)
+    (gsmlg-org-note-org--noncapture-marker-write
+     (list :operation-kind "archive" :purpose "archive"
+           :state "prepared" :operation-id operation-id
+           :endpoint (plist-get frozen :endpoint)
+           :workspace-id workspace-id :document-id document-id :path path
+           :expected-revision expected :created-at (float-time)))
     (condition-case err
         (progn
           (setq dispatched t)
+          (gsmlg-org-note-org--noncapture-marker-write
+           (list :operation-kind "archive" :purpose "archive"
+                 :state "dispatched" :operation-id operation-id
+                 :endpoint (plist-get frozen :endpoint)
+                 :workspace-id workspace-id :document-id document-id :path path
+                 :expected-revision expected :created-at (float-time)))
           (gsmlg-org-note-org--finish-archive-attempt
-           record (org-note-operation--dispatch-frozen frozen)))
+           record (org-note-operation--dispatch-frozen frozen))
+          (gsmlg-org-note-org--noncapture-marker-delete operation-id))
       ((quit error)
        (let* ((data (cdr err))
               (props (and (listp (car data)) (car data)))
               (status (plist-get props :status)))
          (if (and (eq (car err) 'org-note-http-error) (= status 409))
              (progn
+               (gsmlg-org-note-org--noncapture-marker-write
+                (list :operation-kind "archive" :purpose "archive"
+                      :state "definitive-noncommit-pending-cleanup"
+                      :operation-id operation-id :endpoint (plist-get frozen :endpoint)
+                      :workspace-id workspace-id :document-id document-id :path path
+                      :expected-revision expected :created-at (float-time)))
                (message "Org Note archive conflict; no archive was committed")
+               (gsmlg-org-note-org--noncapture-marker-delete operation-id)
                (signal (car err) (cdr err)))
            (when dispatched
              (puthash document-id record gsmlg-org-note-org--archive-ambiguities))
+           (when dispatched
+             (gsmlg-org-note-org--noncapture-marker-write
+              (list :operation-kind "archive" :purpose "archive"
+                    :state "ambiguous" :operation-id operation-id
+                    :endpoint (plist-get frozen :endpoint)
+                    :workspace-id workspace-id :document-id document-id :path path
+                    :expected-revision expected :created-at (float-time))))
            (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--clock-claim-response-validator
@@ -1381,6 +1563,7 @@ Does not truncate a valid last-good snapshot."
         (progn
           (require 'org-note)
           (require 'org)
+          (gsmlg-org-note-org-check-noncapture-recovery)
           (gsmlg-org-note-org--install-todo-keywords)
           (gsmlg-org-note-org--install-feed-hooks)
           (gsmlg-org-note-org--install-mutation-hooks)
@@ -1595,15 +1778,55 @@ errors mark the item ambiguous fail-closed and re-signal."
            response)
       (puthash (cons workspace-id item-id) frozen
                gsmlg-org-note-org--frozen-transitions)
+      (gsmlg-org-note-org--noncapture-blocked-p
+       (plist-get frozen :endpoint) item-id)
+      (gsmlg-org-note-org--noncapture-marker-write
+       (list :operation-kind "transition" :purpose "todo"
+             :state "prepared" :operation-id operation-id
+             :endpoint (plist-get frozen :endpoint)
+             :workspace-id workspace-id :item-id item-id
+             :document-id (plist-get record :document-id)
+             :expected-revision (plist-get record :expected-revision)
+             :target-state target-state :created-at (float-time)))
       (condition-case err
           (progn
+            (gsmlg-org-note-org--noncapture-marker-write
+             (list :operation-kind "transition" :purpose "todo"
+                   :state "dispatched" :operation-id operation-id
+                   :endpoint (plist-get frozen :endpoint)
+                   :workspace-id workspace-id :item-id item-id
+                   :document-id (plist-get record :document-id)
+                   :expected-revision (plist-get record :expected-revision)
+                   :target-state target-state :created-at (float-time)))
             (setq response (org-note-operation--dispatch-frozen frozen))
             (setq committed-p t)
-            (gsmlg-org-note-org--finish-transition-attempt record response))
+            (let ((result (gsmlg-org-note-org--finish-transition-attempt record response)))
+              (if (plist-get result :message)
+                  (gsmlg-org-note-org--noncapture-marker-write
+                   (list :operation-kind "transition" :purpose "todo"
+                         :state "committed-pending-refresh" :operation-id operation-id
+                         :endpoint (plist-get frozen :endpoint)
+                         :workspace-id workspace-id :item-id item-id
+                         :document-id (plist-get record :document-id)
+                         :expected-revision (plist-get record :expected-revision)
+                         :committed-revision
+                         (plist-get (plist-get result :response) :revision)
+                         :target-state target-state :created-at (float-time)))
+                (gsmlg-org-note-org--noncapture-marker-delete operation-id))
+              result))
         ((quit error)
          (unless committed-p
            (puthash (cons workspace-id item-id) record
                     gsmlg-org-note-org--transition-ambiguities))
+         (unless committed-p
+           (gsmlg-org-note-org--noncapture-marker-write
+            (list :operation-kind "transition" :purpose "todo"
+                  :state "ambiguous" :operation-id operation-id
+                  :endpoint (plist-get frozen :endpoint)
+                  :workspace-id workspace-id :item-id item-id
+                  :document-id (plist-get record :document-id)
+                  :expected-revision (plist-get record :expected-revision)
+                  :target-state target-state :created-at (float-time))))
          (signal (car err) (cdr err)))))))
 
 (defun gsmlg-org-note-org--agenda-bulk-or-region-todo-p ()
@@ -1790,14 +2013,35 @@ errors mark the item ambiguous fail-closed and re-signal."
          response)
     (when (equal proposed origin-source)
       (user-error "Already %s" (or (org-get-todo-state) "")))
+    (gsmlg-org-note-org--noncapture-blocked-p
+     (plist-get frozen :endpoint) document-id)
+    (gsmlg-org-note-org--noncapture-marker-write
+     (list :operation-kind "document-put" :purpose "todo"
+           :state "prepared" :operation-id operation-id
+           :endpoint (plist-get frozen :endpoint)
+           :workspace-id workspace-id :document-id document-id
+           :path document-path :expected-revision expected-revision
+           :source-digest (secure-hash 'sha256 origin-source)
+           :proposed-digest (secure-hash 'sha256 proposed)
+           :created-at (float-time)))
     (condition-case err
         (progn
           (setq dispatched-p t)
+          (gsmlg-org-note-org--noncapture-marker-write
+           (list :operation-kind "document-put" :purpose "todo"
+                 :state "dispatched" :operation-id operation-id
+                 :endpoint (plist-get frozen :endpoint)
+                 :workspace-id workspace-id :document-id document-id
+                 :path document-path :expected-revision expected-revision
+                 :source-digest (secure-hash 'sha256 origin-source)
+                 :proposed-digest (secure-hash 'sha256 proposed)
+                 :created-at (float-time)))
           (setq response (org-note-operation--dispatch-frozen frozen))
           (prog1
               (gsmlg-org-note-org--finish-document-todo-attempt
                document-id record response)
-            (setq committed-p t)))
+            (setq committed-p t)
+            (gsmlg-org-note-org--noncapture-marker-delete operation-id)))
       ((quit error)
        (cond
         (committed-p
@@ -1807,7 +2051,16 @@ errors mark the item ambiguous fail-closed and re-signal."
          ;; Post-dispatch non-validated outcome is ambiguous; never pretend
          ;; the mutation did not happen by restoring prior revision/base.
          (puthash document-id record
-                  gsmlg-org-note-org--document-ambiguities))
+                  gsmlg-org-note-org--document-ambiguities)
+         (gsmlg-org-note-org--noncapture-marker-write
+          (list :operation-kind "document-put" :purpose "todo"
+                :state "ambiguous" :operation-id operation-id
+                :endpoint (plist-get frozen :endpoint)
+                :workspace-id workspace-id :document-id document-id
+                :path document-path :expected-revision expected-revision
+                :source-digest (secure-hash 'sha256 origin-source)
+                :proposed-digest (secure-hash 'sha256 proposed)
+                :created-at (float-time))))
         ;; Pre-dispatch: leave buffer metadata unchanged.
         )
        (signal (car err) (cdr err))))))
@@ -2983,6 +3236,7 @@ Pre-rename failures offer a matching last-good snapshot via
       (funcall orig-fun highlight))))
 
 (gsmlg-org-note-org-check-capture-recovery)
+(gsmlg-org-note-org-check-noncapture-recovery)
 
 (add-hook 'kill-emacs-hook
           #'gsmlg-org-note-org--release-transient-reservations-on-exit)

@@ -37,7 +37,8 @@
 (declare-function org-note-operation--dispatch-frozen "org-note-operation"
                   (frozen-envelope))
 (declare-function org-note-operation--build-frozen-claim "org-note-operation"
-                  (workspace-id item-id document-id expected-revision kind operation-id))
+                  (workspace-id item-id document-id expected-revision kind operation-id
+                                &rest keyword-arguments))
 (declare-function org-note-operation--dispatch-frozen-claim "org-note-operation"
                   (frozen workspace-id item-id document-id kind))
 (declare-function org-note-operation--build-frozen-release "org-note-operation"

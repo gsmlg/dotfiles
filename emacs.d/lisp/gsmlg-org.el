@@ -10,6 +10,9 @@
 (require 'gsmlg-bootstrap)
 
 (declare-function gsmlg-org-note-org-agenda-files "gsmlg-org-note-org" ())
+(declare-function gsmlg-org-note-org-capture-before-finalize "gsmlg-org-note-org" ())
+(declare-function gsmlg-org-note-org-capture-prepare-finalize "gsmlg-org-note-org" ())
+(declare-function gsmlg-org-note-org-capture-target "gsmlg-org-note-org" ())
 (declare-function org-agenda-skip-entry-if "org-agenda" (&rest conditions))
 (declare-function org-agenda-skip-subtree-if "org-agenda" (&rest conditions))
 (declare-function org-agenda-redo "org-agenda" ())
@@ -132,19 +135,41 @@ Enabled entries are loaded only when their ob-LANGUAGE library exists."
 
 (defun gsmlg-org-refresh-capture-templates ()
   "Rebuild capture templates from `gsmlg-org-directory'."
-  (setopt org-capture-templates
-          `(("t" "todo" entry
-             (file ,(expand-file-name "todo.org" gsmlg-org-directory))
-             "* NEXT %?\n%U\n"
-             :clock-resume t)
-            ("n" "note" entry
-             (file ,(expand-file-name "note.org" gsmlg-org-directory))
-             "* %? :NOTE:\n%U\n%a\n"
-             :clock-resume t)
-            ("b" "bookmark" entry
-             (file ,(expand-file-name "bookmark.org" gsmlg-org-directory))
-             "* %? \n%U\n"
-             :clock-resume t))))
+  (let ((bridge-active
+         (and (boundp 'gsmlg-org-note-org--activated)
+              gsmlg-org-note-org--activated)))
+    (setopt org-capture-templates
+            (if bridge-active
+                '(("t" "todo" entry
+                   (function gsmlg-org-note-org-capture-target)
+                   "* NEXT %?\n%U\n"
+                   :no-save t
+                   :prepare-finalize gsmlg-org-note-org-capture-prepare-finalize
+                   :before-finalize gsmlg-org-note-org-capture-before-finalize)
+                  ("n" "note" entry
+                   (function gsmlg-org-note-org-capture-target)
+                   "* %? :NOTE:\n%U\n%a\n"
+                   :no-save t
+                   :prepare-finalize gsmlg-org-note-org-capture-prepare-finalize
+                   :before-finalize gsmlg-org-note-org-capture-before-finalize)
+                  ("b" "bookmark" entry
+                   (function gsmlg-org-note-org-capture-target)
+                   "* %? \n%U\n"
+                   :no-save t
+                   :prepare-finalize gsmlg-org-note-org-capture-prepare-finalize
+                   :before-finalize gsmlg-org-note-org-capture-before-finalize))
+              `(("t" "todo" entry
+                 (file ,(expand-file-name "todo.org" gsmlg-org-directory))
+                 "* NEXT %?\n%U\n"
+                 :clock-resume t)
+                ("n" "note" entry
+                 (file ,(expand-file-name "note.org" gsmlg-org-directory))
+                 "* %? :NOTE:\n%U\n"
+                 :clock-resume t)
+                ("b" "bookmark" entry
+                 (file ,(expand-file-name "bookmark.org" gsmlg-org-directory))
+                 "* %? \n%U\n"
+                 :clock-resume t))))))
 
 (defun gsmlg-org-apply-plantuml-settings ()
   "Select a readable PlantUML jar or the environment executable."

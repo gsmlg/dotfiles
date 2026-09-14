@@ -59,6 +59,36 @@
                                                       directory)))))))
       (delete-directory directory t))))
 
+(ert-deftest gsmlg-org-note-bridge-capture-templates-use-non-file-targets ()
+  "Activated bridge Capture templates must stage without a local file."
+  (let ((gsmlg-org-note-org--activated t))
+    (gsmlg-org-refresh-capture-templates)
+    (unwind-protect
+        (dolist (entry org-capture-templates)
+          (should (equal (nth 3 entry)
+                         '(function gsmlg-org-note-org-capture-target)))
+          (should (eq (plist-get (nthcdr 5 entry) :no-save) t))
+          (should (eq (plist-get (nthcdr 5 entry) :prepare-finalize)
+                      #'gsmlg-org-note-org-capture-prepare-finalize))
+          (should (eq (plist-get (nthcdr 5 entry) :before-finalize)
+                      #'gsmlg-org-note-org-capture-before-finalize)))
+      (let ((gsmlg-org-note-org--activated nil))
+        (gsmlg-org-refresh-capture-templates)))))
+
+(ert-deftest gsmlg-org-note-capture-target-prepares-a-non-file-buffer ()
+  "The bridge target must not attach a local file to the staging buffer."
+  (with-temp-buffer
+    (let (staging)
+      (unwind-protect
+          (progn
+            (gsmlg-org-note-org-capture-target)
+            (setq staging (current-buffer))
+            (should (derived-mode-p 'org-mode))
+            (should-not buffer-file-name)
+            (should-not buffer-offer-save))
+        (when (buffer-live-p staging)
+          (kill-buffer staging))))))
+
 (ert-deftest gsmlg-org-agenda-preserves-gtd-workflow ()
   "The custom agenda should retain every legacy GTD section."
   (let* ((command (assoc "g" org-agenda-custom-commands))

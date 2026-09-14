@@ -12,11 +12,16 @@
 
 (require 'cl-lib)
 (require 'gsmlg-paths)
+(require 'json)
 
 (declare-function org-note-operation-query-agenda "org-note-operation"
                   (&rest keyword-arguments))
 (declare-function org-note-operation-get-item-context "org-note-operation"
                   (workspace-id item-id))
+(declare-function org-note-operation-get-document "org-note-operation"
+                  (workspace-id document-id))
+(declare-function org-note-operation-list-documents "org-note-operation"
+                  (workspace-id &rest keyword-arguments))
 (declare-function org-note-operation-find-lease "org-note-operation"
                   (workspace-id item-id kind))
 (declare-function org-note-operation-lease-lease-id "org-note-operation" (lease))
@@ -31,6 +36,8 @@
                   (typed-request))
 (declare-function org-note-operation--dispatch-frozen "org-note-operation"
                   (frozen-envelope))
+(declare-function org-note-validation-canonical-endpoint "org-note-validation"
+                  (url-or-string))
 (declare-function org-note-operation--validate-transition-response
                   "org-note-operation"
                   (response workspace-id item-id document-id expected-revision
@@ -44,13 +51,20 @@
                   (registered-lease context workspace-id item-id))
 (declare-function org-note-operation-lease-proofs "org-note-operation"
                   (document-id))
+(declare-function org-note-operation-claim "org-note-operation"
+                  (workspace-id item-id document-id expected-revision kind &rest args))
+(declare-function org-note-operation-release "org-note-operation"
+                  (workspace-id item-id document-id expected-revision lease-id kind
+                                fencing-token &rest args))
 (declare-function org-note-operation--path-segment "org-note-operation"
                   (identifier))
 (declare-function org-note-operation--mutation-body "org-note-operation"
                   (workspace-id fields &optional operation-id))
 (declare-function org-note-client-new-operation-id "org-note-client" ())
 (declare-function org-note-client-empty-object "org-note-client" ())
+(declare-function org-id-uuid "org-id" ())
 (declare-function org-note-item-context "org-note" (workspace-id item-id))
+(declare-function org-clock-goto "org-clock" (&rest args))
 (declare-function org-note-configure-agenda-workspaces "org-note" ())
 (declare-function org-note-validation-page-cursor "org-note-validation"
                   (cursor))
@@ -63,6 +77,9 @@
 (declare-function org-get-at-bol "org" (prop))
 (declare-function org-get-todo-state "org" ())
 (declare-function org-set-regexps-and-options "org" (&optional tags-only))
+(declare-function org-back-to-heading "org" (&optional invisible-ok))
+(declare-function org-end-of-subtree "org" (&optional invisible-ok subtree-end))
+(declare-function org-get-heading "org" (&optional no-tags no-todo no-priority no-comment))
 (declare-function org-todo "org" (&optional arg))
 (defvar org-agenda-files)
 (defvar org-done-keywords)
@@ -91,6 +108,490 @@ integration gate in the approved design is complete.  Developers may enable
 it explicitly while implementing and testing a phase."
   :type 'boolean
   :group 'gsmlg-org-note-org)
+
+(defcustom gsmlg-org-note-capture-workspace-id nil
+  "Workspace id used by bridge Capture for an existing document."
+  :type '(choice (const :tag "Not configured" nil) string)
+  :group 'gsmlg-org-note-org)
+
+(defcustom gsmlg-org-note-capture-endpoint "https://agent-note.gsmlg.net"
+  "Canonical endpoint identity for the configured Capture target.
+
+When non-nil, it must match `org-note-endpoint' before Capture can mutate."
+  :type 'string
+  :group 'gsmlg-org-note-org)
+
+(defcustom gsmlg-org-note-capture-document-id nil
+  "Stable document id used by bridge Capture for an existing document."
+  :type '(choice (const :tag "Not configured" nil) string)
+  :group 'gsmlg-org-note-org)
+
+(defcustom gsmlg-org-note-capture-document-path nil
+  "Expected remote path for the configured bridge Capture document."
+  :type '(choice (const :tag "Not configured" nil) string)
+  :group 'gsmlg-org-note-org)
+
+(defvar-local gsmlg-org-note-org--capture-attempt nil
+  "Current in-process Org Note Capture attempt for this staging buffer.")
+
+(defvar gsmlg-org-note-org--capture-reservation nil
+  "Process-local Capture reservation owner record, or nil.")
+
+(defun gsmlg-org-note-org--capture-reservation-directory ()
+  "Return the private Capture reservation directory."
+  (gsmlg-state-file "org-note/capture.lock/"))
+
+(defun gsmlg-org-note-org--capture-reservation-acquire ()
+  "Acquire the atomic Capture reservation, refusing an existing owner."
+  (unless gsmlg-org-note-org--capture-reservation
+    (let ((directory (directory-file-name
+                      (gsmlg-org-note-org--capture-reservation-directory))))
+      (when (file-directory-p directory)
+        (let* ((owner-file (expand-file-name "owner.json" directory))
+               (owner (condition-case nil
+                          (json-parse-string
+                           (with-temp-buffer
+                             (insert-file-contents-literally owner-file)
+                             (buffer-string))
+                           :object-type 'alist)
+                        (error nil))))
+          (if (and owner (integerp (alist-get 'pid owner))
+                   (process-attributes (alist-get 'pid owner)))
+              (user-error "Another Org Note Capture is already in progress")
+            (user-error "Org Note Capture reservation is busy"))))
+      (make-directory directory t)
+      (set-file-modes directory #o700)
+      (let ((owner `((hostname . ,(system-name))
+                     (pid . ,(emacs-pid))
+                     (started_at . ,(emacs-uptime))
+                     (nonce . ,(org-note-client-new-operation-id)))))
+        (let ((file (expand-file-name "owner.json" directory)))
+          (with-temp-file file
+            (insert (json-serialize owner)))
+          (set-file-modes file #o600)
+          (setq gsmlg-org-note-org--capture-reservation
+                (list :directory directory :owner owner)))))))
+
+(defun gsmlg-org-note-org--capture-reservation-release ()
+  "Release this process's Capture reservation using its nonce."
+  (let* ((reservation gsmlg-org-note-org--capture-reservation)
+         (directory (plist-get reservation :directory))
+         (owner-file (and directory (expand-file-name "owner.json" directory))))
+    (when (and reservation (file-readable-p owner-file))
+      (let* ((raw (with-temp-buffer
+                    (insert-file-contents-literally owner-file)
+                    (buffer-string)))
+             (owner (condition-case nil
+                        (json-parse-string raw :object-type 'alist)
+                      (error nil))))
+        (when (equal (alist-get 'nonce owner)
+                     (alist-get 'nonce (plist-get reservation :owner)))
+          (delete-file owner-file)
+          (delete-directory directory))))
+    (setq gsmlg-org-note-org--capture-reservation nil)))
+
+;;;###autoload
+(defun gsmlg-org-note-org-recover-capture-reservation ()
+  "Explicitly recover a reservation whose recorded PID is no longer live."
+  (interactive)
+  (let* ((directory (directory-file-name
+                     (gsmlg-org-note-org--capture-reservation-directory)))
+         (owner-file (expand-file-name "owner.json" directory))
+         (owner (and (file-regular-p owner-file)
+                     (condition-case nil
+                         (json-parse-string
+                          (with-temp-buffer
+                            (insert-file-contents-literally owner-file)
+                            (buffer-string))
+                          :object-type 'alist)
+                       (error nil))))
+         (pid (and owner (alist-get 'pid owner)))
+         (nonce (and owner (alist-get 'nonce owner))))
+    (unless (and owner (integerp pid) (stringp nonce))
+      (user-error "Org Note Capture reservation owner is unreadable"))
+    (when (process-attributes pid)
+      (user-error "Org Note Capture reservation owner is still live"))
+    (unless (yes-or-no-p "Recover this stale Org Note Capture reservation? ")
+      (user-error "Org Note Capture reservation recovery cancelled"))
+    (let ((stale (format "%s.stale-%s" directory nonce)))
+      (rename-file directory stale)
+      (gsmlg-org-note-org--capture-reservation-acquire)
+      (message "Recovered stale Org Note Capture reservation"))))
+
+(defun gsmlg-org-note-org--capture-staging-kill ()
+  "Release an uncommitted Capture reservation when staging is killed."
+  (when (and (boundp 'gsmlg-org-note-org--capture-attempt)
+             (not (memq (plist-get gsmlg-org-note-org--capture-attempt :state)
+                        '(ambiguous committed-pending-journal committed
+                          committed-local-divergence))))
+    (gsmlg-org-note-org--capture-reservation-release)))
+
+(defconst gsmlg-org-note-org--capture-journal-schema-version 1
+  "Current schema version for Org Note Capture recovery journals.")
+
+(defconst gsmlg-org-note-org--capture-journal-max-source-bytes (* 8 1024 1024)
+  "Maximum opaque Capture source size accepted by the journal.")
+
+(defconst gsmlg-org-note-org--capture-journal-max-wire-bytes (* 16 1024 1024)
+  "Maximum frozen Capture wire body size accepted by the journal.")
+
+(defconst gsmlg-org-note-org--capture-journal-max-record-bytes (* 32 1024 1024)
+  "Maximum serialized Capture journal size accepted on read.")
+
+(defvar gsmlg-org-note-org--capture-recovery-required nil
+  "Validated recovered Capture records, or a fail-closed blocked marker.")
+
+(defun gsmlg-org-note-org--capture-journal-directory ()
+  "Return the private Org Note mutation recovery directory."
+  (gsmlg-state-file "org-note/mutation-recovery/"))
+
+(defun gsmlg-org-note-org--capture-journal-safe-directory (&optional create)
+  "Return the verified private recovery directory.
+
+When CREATE is non-nil, create it before verification."
+  (let ((directory (directory-file-name
+                    (gsmlg-org-note-org--capture-journal-directory))))
+    (when (and create (not (file-exists-p directory)))
+      (make-directory directory t)
+      (set-file-modes directory #o700))
+    (when (or (file-exists-p directory) (file-symlink-p directory))
+      (let ((attributes (file-attributes directory 'integer)))
+        (unless (and attributes
+                     (eq (file-attribute-type attributes) t)
+                     (not (file-symlink-p directory))
+                     (= (file-attribute-user-id attributes) (user-uid))
+                     (= (logand (file-modes directory) #o777) #o700))
+          (user-error "Org Note Capture recovery directory is unsafe"))))
+    (when (or create (file-exists-p directory))
+      directory)))
+
+(defun gsmlg-org-note-org--capture-journal-file (operation-id)
+  "Return the recovery journal path for OPERATION-ID."
+  (unless (and (stringp operation-id)
+               (<= 1 (length operation-id) 128)
+               (string-match-p "\\`[[:alnum:]_.-]+\\'" operation-id))
+    (user-error "Org Note Capture operation id is invalid"))
+  (expand-file-name (concat operation-id ".json")
+                    (gsmlg-org-note-org--capture-journal-safe-directory t)))
+
+(defun gsmlg-org-note-org--capture-journal-json (value)
+  "Return canonical UTF-8 JSON bytes for VALUE."
+  (encode-coding-string
+   (json-serialize value :null-object :null :false-object :false)
+   'utf-8))
+
+(defun gsmlg-org-note-org--capture-journal-empty-object ()
+  "Return the canonical empty object used for Capture lease proofs."
+  (make-hash-table :test #'equal))
+
+(defun gsmlg-org-note-org--capture-journal-headers (headers)
+  "Convert frozen request HEADERS to the journal array representation."
+  (unless (and (listp headers)
+               (cl-every (lambda (entry)
+                           (and (consp entry)
+                                (stringp (car entry))
+                                (stringp (cdr entry))))
+                         headers))
+    (user-error "Org Note Capture frozen headers are invalid"))
+  (vconcat (mapcar (lambda (entry) (vector (car entry) (cdr entry))) headers)))
+
+(defun gsmlg-org-note-org--capture-journal-validate-wire
+    (body-bytes operation-id workspace-id path expected-revision)
+  "Validate frozen Capture BODY-BYTES against its journal identity.
+
+OPERATION-ID, WORKSPACE-ID, PATH, and EXPECTED-REVISION are the fields that
+must match the typed PUT body."
+  (let* ((wire-object
+          (condition-case nil
+              (json-parse-string
+               (decode-coding-string body-bytes 'utf-8)
+               :object-type 'alist :array-type 'array
+               :null-object :null :false-object :false)
+            (error nil)))
+         (wire-keys (and (listp wire-object) (mapcar #'car wire-object))))
+    (unless (and (or (equal wire-keys
+                            '(schema_version actor_id operation_id workspace_id
+                              path source expected_revision lease_proofs))
+                     (equal wire-keys
+                            '(schema_version actor_id operation_id workspace_id
+                              path source lease_proofs)))
+                 (= (alist-get 'schema_version wire-object) 1)
+                 (stringp (alist-get 'actor_id wire-object))
+                 (equal (alist-get 'operation_id wire-object) operation-id)
+                 (equal (alist-get 'workspace_id wire-object) workspace-id)
+                 (equal (alist-get 'path wire-object) path)
+                 (stringp (alist-get 'source wire-object))
+                 (if expected-revision
+                     (= (alist-get 'expected_revision wire-object)
+                        expected-revision)
+                   (not (assq 'expected_revision wire-object)))
+                 (assq 'lease_proofs wire-object)
+                 (null (cdr (assq 'lease_proofs wire-object))))
+      (user-error "Org Note Capture wire body schema is unsafe"))))
+
+(defun gsmlg-org-note-org--capture-journal-body (attempt)
+  "Return the exact canonical journal body for Capture ATTEMPT."
+  (require 'org-note-validation)
+  (let* ((frozen (plist-get attempt :frozen))
+         (source (plist-get attempt :source))
+         (body-bytes (plist-get frozen :body))
+         (endpoint (plist-get frozen :endpoint))
+         (now (floor (* 1000 (float-time))))
+         (state (plist-get attempt :state)))
+    (unless (memq state '(prepared dispatched committed))
+      (user-error "Org Note Capture journal state is invalid"))
+    (unless (and (stringp source)
+                 (<= (string-bytes source)
+                     gsmlg-org-note-org--capture-journal-max-source-bytes)
+                 (stringp body-bytes)
+                 (<= (string-bytes body-bytes)
+                     gsmlg-org-note-org--capture-journal-max-wire-bytes)
+                 (null (plist-get frozen :redaction-secrets))
+                 (equal (secure-hash 'sha256 body-bytes)
+                        (plist-get frozen :body-sha256))
+                 (equal endpoint
+                        (org-note-validation-canonical-endpoint endpoint)))
+      (user-error "Org Note Capture journal payload is unsafe"))
+    (gsmlg-org-note-org--capture-journal-validate-wire
+     body-bytes
+     (plist-get attempt :operation-id)
+     (plist-get attempt :workspace-id)
+     (plist-get attempt :path)
+     (plist-get attempt :expected-revision))
+    `((operation_kind . "capture")
+      (state . ,(symbol-name state))
+      (operation_id . ,(plist-get attempt :operation-id))
+      (endpoint . ,endpoint)
+      (workspace_id . ,(plist-get attempt :workspace-id))
+      (document_id . ,(plist-get attempt :document-id))
+      (path . ,(plist-get attempt :path))
+      ,@(and (plist-get attempt :expected-revision)
+             `((expected_revision . ,(plist-get attempt :expected-revision))))
+      (created_at . ,(or (plist-get attempt :created-at) now))
+      (updated_at . ,now)
+      (source_digest . ,(plist-get attempt :digest))
+      (source . ,source)
+      (lease_proofs . ,(gsmlg-org-note-org--capture-journal-empty-object))
+      (wire_method . ,(plist-get frozen :method))
+      (wire_url . ,(plist-get frozen :url))
+      (wire_route . ,(plist-get frozen :route))
+      (wire_query . ,(or (plist-get frozen :query) :null))
+      (wire_headers . ,(gsmlg-org-note-org--capture-journal-headers
+                        (plist-get frozen :headers)))
+      (wire_body_base64 . ,(base64-encode-string body-bytes t))
+      (wire_body_sha256 . ,(plist-get frozen :body-sha256)))))
+
+(defun gsmlg-org-note-org--capture-journal-write (attempt)
+  "Atomically persist Capture ATTEMPT and return its journal path."
+  (let* ((body (gsmlg-org-note-org--capture-journal-body attempt))
+         (body-bytes (gsmlg-org-note-org--capture-journal-json body))
+         (record `((schema_version
+                    . ,gsmlg-org-note-org--capture-journal-schema-version)
+                   (checksum . ,(secure-hash 'sha256 body-bytes))
+                   (body . ,body)))
+         (bytes (gsmlg-org-note-org--capture-journal-json record))
+         (file (gsmlg-org-note-org--capture-journal-file
+                (plist-get attempt :operation-id)))
+         (temporary (make-temp-file
+                     (expand-file-name ".capture-journal-"
+                                       (file-name-directory file)))))
+    (when (> (string-bytes bytes)
+             gsmlg-org-note-org--capture-journal-max-record-bytes)
+      (delete-file temporary)
+      (user-error "Org Note Capture journal exceeds its size limit"))
+    (unwind-protect
+        (progn
+          (set-file-modes temporary #o600)
+          (let ((coding-system-for-write 'no-conversion)
+                (write-region-inhibit-fsync nil))
+            (write-region bytes nil temporary nil 'silent)
+            (rename-file temporary file t))
+          file)
+      (when (file-exists-p temporary)
+        (delete-file temporary)))))
+
+(defun gsmlg-org-note-org--capture-journal-quarantine (file)
+  "Quarantine unsafe recovery FILE without following it."
+  (let ((quarantine
+         (format "%s.quarantine.%d.%06x"
+                 file (floor (* 1000 (float-time))) (random #x1000000))))
+    (when (or (file-exists-p file) (file-symlink-p file))
+      (rename-file file quarantine nil))
+    quarantine))
+
+(defun gsmlg-org-note-org--capture-journal-normalize-body (body)
+  "Validate parsed Capture journal BODY and return its canonical form."
+  (require 'org-note-validation)
+  (let ((keys (and (listp body) (mapcar #'car body))))
+    (unless (equal keys
+                   '(operation_kind state operation_id endpoint workspace_id
+                     document_id path expected_revision created_at updated_at
+                     source_digest source lease_proofs wire_method wire_url
+                     wire_route wire_query wire_headers wire_body_base64
+                     wire_body_sha256))
+      (user-error "Org Note Capture journal schema is invalid")))
+  (let* ((state-name (alist-get 'state body))
+         (state (and (stringp state-name) (intern-soft state-name)))
+         (operation-id (alist-get 'operation_id body))
+         (endpoint (alist-get 'endpoint body))
+         (source (alist-get 'source body))
+         (digest (alist-get 'source_digest body))
+         (wire-body-base64 (alist-get 'wire_body_base64 body))
+         (wire-body (and (stringp wire-body-base64)
+                         (condition-case nil
+                             (base64-decode-string wire-body-base64)
+                           (error nil))))
+         (headers (alist-get 'wire_headers body)))
+    (unless (and (equal (alist-get 'operation_kind body) "capture")
+                 (memq state '(prepared dispatched committed staged))
+                 (stringp operation-id) (<= 1 (length operation-id) 128)
+                 (string-match-p "\\`[[:alnum:]_.-]+\\'" operation-id)
+                 (stringp endpoint)
+                 (equal endpoint
+                        (org-note-validation-canonical-endpoint endpoint))
+                 (cl-every (lambda (key)
+                             (let ((value (alist-get key body)))
+                               (and (stringp value)
+                                    (<= 1 (length value) 4096))))
+                           '(workspace_id document_id path wire_url wire_route))
+                 (or (null (alist-get 'expected_revision body))
+                     (and (integerp (alist-get 'expected_revision body))
+                          (>= (alist-get 'expected_revision body) 0)))
+                 (cl-every (lambda (key)
+                             (let ((value (alist-get key body)))
+                               (and (integerp value) (>= value 0))))
+                           '(created_at updated_at))
+                 (stringp source)
+                 (<= (string-bytes source)
+                     gsmlg-org-note-org--capture-journal-max-source-bytes)
+                 (stringp digest)
+                 (string-match-p "\\`[[:xdigit:]]\\{64\\}\\'" digest)
+                 (equal digest (secure-hash 'sha256 source))
+                 (assq 'lease_proofs body)
+                 (null (cdr (assq 'lease_proofs body)))
+                 (equal (alist-get 'wire_method body) "PUT")
+                 (eq (alist-get 'wire_query body) :null)
+                 (vectorp headers)
+                 (cl-every (lambda (entry)
+                             (and (vectorp entry) (= (length entry) 2)
+                                  (stringp (aref entry 0))
+                                  (stringp (aref entry 1))))
+                           headers)
+                 (equal headers
+                        [["Accept" "application/json"]
+                         ["Content-Type"
+                          "application/json; charset=utf-8"]])
+                 wire-body
+                 (<= (string-bytes wire-body)
+                     gsmlg-org-note-org--capture-journal-max-wire-bytes)
+                 (equal wire-body-base64 (base64-encode-string wire-body t))
+                 (equal (secure-hash 'sha256 wire-body)
+                        (alist-get 'wire_body_sha256 body)))
+      (user-error "Org Note Capture journal values are invalid"))
+    (gsmlg-org-note-org--capture-journal-validate-wire
+     wire-body operation-id
+     (alist-get 'workspace_id body)
+     (alist-get 'path body)
+     (alist-get 'expected_revision body))
+    (let* ((empty (gsmlg-org-note-org--capture-journal-empty-object))
+           (canonical (copy-tree body)))
+      (setcdr (assq 'lease_proofs canonical) empty)
+      canonical)))
+
+(defun gsmlg-org-note-org--capture-journal-read (file)
+  "Read and validate Capture recovery FILE, or quarantine and refuse it."
+  (let ((directory (gsmlg-org-note-org--capture-journal-safe-directory)))
+    (unless (and directory
+                 (equal (file-name-directory (expand-file-name file))
+                        (file-name-as-directory directory)))
+      (user-error "Org Note Capture journal path is outside recovery storage"))
+    (condition-case err
+        (let ((attributes (file-attributes file 'integer)))
+          (unless (and attributes
+                       (null (file-attribute-type attributes))
+                       (not (file-symlink-p file))
+                       (= (file-attribute-user-id attributes) (user-uid))
+                       (= (logand (file-modes file) #o777) #o600)
+                       (<= (file-attribute-size attributes)
+                           gsmlg-org-note-org--capture-journal-max-record-bytes))
+            (user-error "Org Note Capture journal file is unsafe"))
+          (let* ((raw (with-temp-buffer
+                        (set-buffer-multibyte nil)
+                        (insert-file-contents-literally file)
+                        (buffer-string)))
+                 (record (json-parse-string
+                          (decode-coding-string raw 'utf-8)
+                          :object-type 'alist :array-type 'array
+                          :null-object :null :false-object :false)))
+            (unless (and (equal (mapcar #'car record)
+                                '(schema_version checksum body))
+                         (= (alist-get 'schema_version record)
+                            gsmlg-org-note-org--capture-journal-schema-version)
+                         (stringp (alist-get 'checksum record)))
+              (user-error "Org Note Capture journal framing is invalid"))
+            (let* ((body (gsmlg-org-note-org--capture-journal-normalize-body
+                          (alist-get 'body record)))
+                   (body-bytes (gsmlg-org-note-org--capture-journal-json body))
+                   (canonical
+                    (gsmlg-org-note-org--capture-journal-json
+                     `((schema_version
+                        . ,gsmlg-org-note-org--capture-journal-schema-version)
+                       (checksum . ,(alist-get 'checksum record))
+                       (body . ,body)))))
+              (unless (and (equal (alist-get 'checksum record)
+                                  (secure-hash 'sha256 body-bytes))
+                           (equal raw canonical)
+                           (equal (file-name-nondirectory file)
+                                  (concat (alist-get 'operation_id body)
+                                          ".json")))
+                (user-error "Org Note Capture journal checksum is invalid"))
+              (let* ((headers (alist-get 'wire_headers body))
+                     (frozen-body
+                      (base64-decode-string
+                       (alist-get 'wire_body_base64 body)))
+                     (state (intern (alist-get 'state body))))
+                (list
+                 :state (if (eq state 'staged) 'ambiguous state)
+                 :operation-id (alist-get 'operation_id body)
+                 :workspace-id (alist-get 'workspace_id body)
+                 :document-id (alist-get 'document_id body)
+                 :path (alist-get 'path body)
+                 :expected-revision (alist-get 'expected_revision body)
+                 :created-at (alist-get 'created_at body)
+                 :source (alist-get 'source body)
+                 :digest (alist-get 'source_digest body)
+                 :frozen
+                 (list :method (alist-get 'wire_method body)
+                       :endpoint (alist-get 'endpoint body)
+                       :url (alist-get 'wire_url body)
+                       :route (alist-get 'wire_route body)
+                       :query nil
+                       :headers
+                       (mapcar (lambda (entry)
+                                 (cons (aref entry 0) (aref entry 1)))
+                               headers)
+                       :body frozen-body
+                       :body-sha256 (alist-get 'wire_body_sha256 body)
+                       :redaction-secrets nil))))))
+      (error
+       (gsmlg-org-note-org--capture-journal-quarantine file)
+       (user-error "Org Note Capture journal is unsafe: %s"
+                   (error-message-string err))))))
+
+(defun gsmlg-org-note-org-check-capture-recovery ()
+  "Perform a local-only startup check for Capture recovery records."
+  (interactive)
+  (setq gsmlg-org-note-org--capture-recovery-required nil)
+  (condition-case err
+      (let ((directory (gsmlg-org-note-org--capture-journal-safe-directory)))
+        (when directory
+          (dolist (file (directory-files directory t "\\`[^.].*\\.json\\'"))
+            (push (gsmlg-org-note-org--capture-journal-read file)
+                  gsmlg-org-note-org--capture-recovery-required))))
+    (error
+     (setq gsmlg-org-note-org--capture-recovery-required
+           (list :blocked (error-message-string err)))))
+  gsmlg-org-note-org--capture-recovery-required)
 
 (defun gsmlg-org-note-org--state-string-valid-p (value)
   "Return non-nil when VALUE is a valid Org Note TODO state string."
@@ -541,6 +1042,21 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--document-ambiguities (make-hash-table :test #'equal)
   "In-memory fail-closed document PUT ambiguity records keyed by document-id.")
 
+(defvar gsmlg-org-note-org--clock-presentation nil
+  "Active bridge clock presentation and registered lease metadata.")
+
+(defun gsmlg-org-note-org--clock-reconcile ()
+  "Return the active clock presentation when its lease remains registered."
+  (let ((clock gsmlg-org-note-org--clock-presentation))
+    (when clock
+      (unless (org-note-operation-find-lease
+               (plist-get clock :workspace-id)
+               (plist-get clock :item-id)
+               (plist-get clock :kind))
+        (setq gsmlg-org-note-org--clock-presentation nil)
+        (user-error "Org Note clock lease is no longer active")))
+    gsmlg-org-note-org--clock-presentation))
+
 (defvar gsmlg-org-note-org--agenda-command-active nil
   "Non-nil while the outermost guarded Agenda producer is running.")
 
@@ -655,6 +1171,7 @@ Returns a plist with `:workspace-id' `:item-id' `:document-id' `:revision'
 `:state' `:lease-proof'.  Signals `user-error' fail-closed on ambiguity,
 unsaved document edits, or invalid/mismatched context."
   (require 'org-note-operation)
+  (require 'org-id)
   (when (gethash (cons workspace-id item-id)
                  gsmlg-org-note-org--transition-ambiguities)
     (user-error
@@ -1099,45 +1616,161 @@ errors mark the item ambiguous fail-closed and re-signal."
       t)))
 
 (defun gsmlg-org-note-org--around-refile (orig &rest args)
-  "Call ORIG with ARGS or refuse refile until Phase 4."
+  "Call ORIG with ARGS or perform a same-document Org Note refile."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "refile")
-    (user-error
-     "Org Note same-document refile is not available until Phase 4")))
+    (unless (and (fboundp 'org-note-document-mode)
+                 (derived-mode-p 'org-note-document-mode))
+      (user-error "Org Note refile requires an open Org Note document"))
+    (when (buffer-modified-p)
+      (user-error "Save or discard edits before Org Note refile"))
+    (unless (and (stringp org-note-document-id)
+                 (stringp org-note-document-workspace-id)
+                 (stringp org-note-document-path)
+                 (integerp org-note-document-revision))
+      (user-error "Org Note document metadata is incomplete"))
+    (let* ((source-pos (save-excursion (org-back-to-heading t) (point)))
+           (source-end (save-excursion (goto-char source-pos) (org-end-of-subtree t t)))
+           (choices nil))
+      (save-excursion
+        (goto-char (point-min))
+        (while (re-search-forward org-heading-regexp nil t)
+          (let ((pos (line-beginning-position))
+                (title (org-get-heading t t t t)))
+            (unless (and (>= pos source-pos) (< pos source-end))
+              (push (cons title pos) choices)))))
+      (unless choices
+        (user-error "No valid same-document Org Note refile target"))
+      (let* ((selected (completing-read "Refile under: " (nreverse choices) nil t))
+             (target-pos (cdr (assoc selected choices))))
+        (unless target-pos
+          (user-error "Org Note refile target is invalid"))
+        (let* ((source (buffer-substring-no-properties (point-min) (point-max)))
+               (moved (buffer-substring-no-properties source-pos source-end))
+               (without (concat (substring source 0 source-pos)
+                                (substring source source-end)))
+               (insert-pos (save-excursion
+                             (goto-char target-pos)
+                             (org-end-of-subtree t t)
+                             (point)))
+               (new-source (concat (substring without 0
+                                               (min insert-pos (length without)))
+                                   moved
+                                   (substring without
+                                              (min insert-pos (length without)))))
+               (operation-id (org-note-client-new-operation-id))
+               (typed (list :method "PUT"
+                            :route (format "/api/org/documents/%s"
+                                           (org-note-operation--path-segment
+                                            org-note-document-id))
+                            :query nil
+                            :body (org-note-operation--mutation-body
+                                   org-note-document-workspace-id
+                                   `((path . ,org-note-document-path)
+                                     (source . ,new-source)
+                                     (expected_revision . ,org-note-document-revision)
+                                     (lease_proofs . ,(or
+                                                      (org-note-operation-lease-proofs
+                                                       org-note-document-id)
+                                                      (org-note-client-empty-object))))
+                                   operation-id)))
+               (frozen (org-note-operation--freeze-request typed))
+               (response (org-note-operation--dispatch-frozen frozen))
+               (revision (gsmlg-org-note-org--put-response-revision
+                          response org-note-document-id)))
+          (unless (> revision org-note-document-revision)
+            (user-error "Org Note refile PUT did not advance revision"))
+          (erase-buffer)
+          (insert new-source)
+          (set-buffer-modified-p nil)
+          (setq-local org-note-document-revision revision)
+          (message "Org Note refile committed"))))))
 
 (defun gsmlg-org-note-org--around-clock-in (orig &rest args)
-  "Call ORIG with ARGS or refuse clock-in until Phase 5."
+  "Call ORIG with ARGS or claim the current identified Org Note item."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "clock")
-    (user-error "Org Note clock claim is not available until Phase 5")))
+    (when gsmlg-org-note-org--clock-presentation
+      (user-error "An Org Note clock is already active"))
+    (let* ((ids (gsmlg-org-note-org--origin-item-ids)))
+      (unless ids
+        (user-error "Org Note clock-in requires item ids"))
+      (let* ((origin (gsmlg-org-note-org--preflight-identified-item
+                      (car ids) (cdr ids)))
+             (operation-id (org-note-client-new-operation-id))
+             (response (org-note-operation-claim
+                        (car ids) (cdr ids)
+                        (plist-get origin :document-id)
+                        (plist-get origin :revision)
+                        "execution" :operation-id operation-id))
+             (lease (org-note-operation-find-lease
+                     (car ids) (cdr ids) "execution")))
+        (unless lease
+          (user-error "Org Note clock claim did not register a lease"))
+        (setq gsmlg-org-note-org--clock-presentation
+              (list :workspace-id (car ids) :item-id (cdr ids)
+                    :document-id (plist-get origin :document-id)
+                    :kind "execution" :operation-id operation-id
+                    :started-at (float-time) :response response))
+        (message "Org Note clock started")))))
 
 (defun gsmlg-org-note-org--around-clock-out (orig &rest args)
-  "Call ORIG with ARGS or refuse clock-out until Phase 5."
+  "Call ORIG with ARGS or release the stored bridge clock lease."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "clock")
-    (user-error "Org Note clock release is not available until Phase 5")))
+    (let* ((clock (gsmlg-org-note-org--clock-reconcile))
+           (lease (and clock
+                       (org-note-operation-find-lease
+                        (plist-get clock :workspace-id)
+                        (plist-get clock :item-id)
+                        (plist-get clock :kind)))))
+      (unless (and clock lease)
+        (user-error "No active Org Note clock"))
+      (org-note-operation-release
+       (plist-get clock :workspace-id) (plist-get clock :item-id)
+       (plist-get clock :document-id)
+       (plist-get (gsmlg-org-note-org--preflight-identified-item
+                   (plist-get clock :workspace-id)
+                   (plist-get clock :item-id)) :revision)
+       (org-note-operation-lease-lease-id lease)
+       (plist-get clock :kind)
+       (org-note-operation-lease-fencing-token lease)
+       :operation-id (org-note-client-new-operation-id))
+      (setq gsmlg-org-note-org--clock-presentation nil)
+      (message "Org Note clock stopped"))))
 
 (defun gsmlg-org-note-org--around-clock-cancel (orig &rest args)
-  "Call ORIG with ARGS or refuse clock-cancel until Phase 5."
+  "Call ORIG with ARGS or release the stored bridge clock lease."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "clock")
-    (user-error "Org Note clock cancel is not available until Phase 5")))
+    (apply #'gsmlg-org-note-org--around-clock-out
+           (lambda (&rest _ignored) nil) args)))
+
+(defun gsmlg-org-note-org--around-clock-goto (orig &rest args)
+  "Call ORIG with ARGS or open the active bridge clock item context."
+  (if (not gsmlg-org-note-org-enable)
+      (apply orig args)
+    (let ((clock (gsmlg-org-note-org--clock-reconcile)))
+      (unless clock
+        (user-error "No active Org Note clock"))
+      (org-note-item-context (plist-get clock :workspace-id)
+                             (plist-get clock :item-id)))))
 
 (defun gsmlg-org-note-org--around-archive-subtree (orig &rest args)
   "Call ORIG with ARGS or refuse archive operations until Phase 6.
@@ -1160,12 +1793,14 @@ Shared around advice for org-archive entrypoints."
     (autoload 'org-clock-in "org-clock" nil t)
     (autoload 'org-clock-out "org-clock" nil t)
     (autoload 'org-clock-cancel "org-clock" nil t)
+    (autoload 'org-clock-goto "org-clock" nil t)
     (advice-add #'org-todo :around #'gsmlg-org-note-org--around-todo)
     (advice-add #'org-agenda-todo :around #'gsmlg-org-note-org--around-agenda-todo)
     (advice-add #'org-refile :around #'gsmlg-org-note-org--around-refile)
     (advice-add #'org-clock-in :around #'gsmlg-org-note-org--around-clock-in)
     (advice-add #'org-clock-out :around #'gsmlg-org-note-org--around-clock-out)
     (advice-add #'org-clock-cancel :around #'gsmlg-org-note-org--around-clock-cancel)
+    (advice-add #'org-clock-goto :around #'gsmlg-org-note-org--around-clock-goto)
     (dolist (entry '((org-archive-subtree . "org-archive")
                      (org-toggle-archive-tag . "org-archive")
                      (org-archive-to-archive-sibling . "org-archive")
@@ -1205,12 +1840,338 @@ bindings that dynamically replace `org-agenda-files' after entrypoint advice."
 (defun gsmlg-org-note-org--around-capture (orig &rest args)
   "Activate the bridge then call ORIG with ARGS.
 
-Phase 3 owns real capture staging; this stub only cold-starts."
+Capture templates are switched to bridge-owned staging by activation."
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (require 'org-note)
     (gsmlg-org-note-org-activate)
     (apply orig args)))
+
+(defun gsmlg-org-note-org-capture-target ()
+  "Prepare the current Org Capture buffer as a non-file bridge staging area.
+
+The remote mutation is deliberately performed by the finalize path, not by
+this target function.  Keeping the target non-file prevents Org Capture from
+writing under `gsmlg-org-directory'."
+  (interactive)
+  (when gsmlg-org-note-org--capture-recovery-required
+    (user-error "Resolve the existing Org Note Capture recovery record first"))
+  (require 'org-note-client)
+  (gsmlg-org-note-org--capture-reservation-acquire)
+  (require 'org)
+  (let ((staging (generate-new-buffer " *Org Note Capture Target*")))
+    (set-buffer staging)
+    (setq-local buffer-file-name nil
+                buffer-offer-save nil
+                gsmlg-org-note-org--capture-attempt nil)
+    (add-hook 'kill-buffer-hook #'gsmlg-org-note-org--capture-staging-kill nil t)
+    (org-mode)
+    (goto-char (point-max))))
+
+(defun gsmlg-org-note-org-capture-prepare-finalize ()
+  "Validate bridge Capture staging before native finalize processing.
+
+Remote dispatch belongs to `gsmlg-org-note-org-capture-before-finalize'; this
+early hook must remain free of network I/O."
+  (when (and gsmlg-org-note-org-enable
+             (derived-mode-p 'org-mode))
+    (unless (string= (or buffer-file-name "") "")
+      (user-error "Org Note Capture staging must not have a file target"))))
+
+(defun gsmlg-org-note-org--capture-document (workspace-id document-id
+                                                          expected-path)
+  "Fetch and validate the existing Capture target.
+
+WORKSPACE-ID, DOCUMENT-ID, and EXPECTED-PATH must all match the returned
+active document.  Return a plist containing its path, source, and revision."
+  (let* ((document (org-note-operation-get-document workspace-id document-id))
+         (id (alist-get 'id document))
+         (document-workspace-id (alist-get 'workspace_id document))
+         (path (alist-get 'path document))
+         (source (alist-get 'source document))
+         (revision (alist-get 'revision document))
+         (archived-entry (assq 'archived_at document))
+         (archived-at (cdr archived-entry)))
+    (unless (and (equal id document-id)
+                 (equal document-workspace-id workspace-id)
+                 (equal path expected-path)
+                 (stringp source)
+                 (integerp revision) (>= revision 0)
+                 archived-entry
+                 (or (null archived-at)
+                     (and (integerp archived-at) (>= archived-at 0))))
+      (user-error "Org Note Capture target metadata is invalid"))
+    (when (and (integerp archived-at) (> archived-at 0))
+      (user-error "Org Note Capture target is archived"))
+    (list :path path :source source :revision revision)))
+
+(defun gsmlg-org-note-org--capture-list-documents (workspace-id)
+  "Return bounded document rows for WORKSPACE-ID, including archived rows."
+  (require 'org-note-validation)
+  (org-note-validation-bounded-pager-fold
+   (org-note-validation-bounded-pager-state :limit 100)
+   (lambda (cursor)
+     (let* ((response (org-note-operation-list-documents
+                       workspace-id :cursor cursor :limit 100
+                       :include-archived t))
+            (data (or (alist-get 'data response) response))
+            (rows (or (alist-get 'documents data)
+                      (alist-get 'items data)
+                      (alist-get 'rows data) '()))
+            (next (or (alist-get 'next_cursor data)
+                      (alist-get 'next_cursor response))))
+       (list :rows (if (vectorp rows) (append rows nil) rows)
+             :next-cursor next)))))
+
+(defun gsmlg-org-note-org--capture-resolve-target ()
+  "Resolve configured Capture target, returning a target plist.
+
+When no document id is configured, prompt to select an existing document or
+create a new one.  The create branch allocates its id exactly once and marks
+the returned target as pending-create."
+  (require 'org-note-client)
+  (require 'org-note-operation)
+  (require 'org-note-validation)
+  (let* ((endpoint (org-note-validation-canonical-endpoint
+                    (or (and (boundp 'org-note-endpoint) org-note-endpoint)
+                        "https://agent-note.gsmlg.net")))
+         (configured-endpoint gsmlg-org-note-capture-endpoint)
+         (workspace-id gsmlg-org-note-capture-workspace-id)
+         (document-id gsmlg-org-note-capture-document-id)
+         (path gsmlg-org-note-capture-document-path))
+    (when (and configured-endpoint
+               (not (equal endpoint
+                           (org-note-validation-canonical-endpoint
+                            configured-endpoint))))
+      (user-error "Org Note Capture endpoint changed; reconfigure target"))
+    (unless (and (stringp workspace-id) (not (string-empty-p workspace-id)))
+      (user-error "Org Note Capture workspace is not configured"))
+    (if (and (stringp document-id) (not (string-empty-p document-id)))
+        (list :endpoint endpoint :workspace-id workspace-id
+              :document-id document-id :path path :pending-create nil)
+      (let* ((rows (gsmlg-org-note-org--capture-list-documents workspace-id))
+             (choices (cons (cons "[Create new document]" :create)
+                            (mapcar (lambda (row)
+                                      (cons (format "%s%s"
+                                                    (or (alist-get 'path row) "")
+                                                    (if (and (alist-get 'archived_at row)
+                                                             (> (alist-get 'archived_at row) 0))
+                                                        " [archived]" ""))
+                                            row)) rows)))
+             (selected (completing-read "Capture target: " choices nil t)))
+        (if (eq (cdr (assoc selected choices)) :create)
+            (let ((new-path (read-string "New document path: "
+                                         (or path "inbox.org"))))
+              (unless (and (stringp new-path)
+                           (string-match-p "\\`[^/].*\\.org\\'" new-path))
+                (user-error "Invalid Org Note Capture document path: %s" new-path))
+              (list :endpoint endpoint :workspace-id workspace-id
+                    :document-id (org-id-uuid) :path new-path
+                    :pending-create t))
+          (let ((row (cdr (assoc selected choices))))
+            (unless (and (listp row) (stringp (alist-get 'id row))
+                         (stringp (alist-get 'path row)))
+              (user-error "Org Note Capture target selection is invalid"))
+            (list :endpoint endpoint :workspace-id workspace-id
+                  :document-id (alist-get 'id row)
+                  :path (alist-get 'path row) :pending-create nil)))))))
+
+(defun gsmlg-org-note-org--finish-capture-attempt (attempt response)
+  "Finish existing-document Capture ATTEMPT using RESPONSE.
+
+The response must advance the frozen expected revision.  After commit, any
+change to the staging source or modification tick is retained read-only."
+  (let* ((document-id (plist-get attempt :document-id))
+         (expected-revision (plist-get attempt :expected-revision))
+         (new-revision
+          (gsmlg-org-note-org--put-response-revision response document-id)))
+    (unless (if expected-revision (> new-revision expected-revision)
+              (>= new-revision 0))
+      (user-error (if expected-revision
+                      "Org Note Capture PUT did not advance revision"
+                    "Org Note Capture CREATE response revision is invalid")))
+    (when (plist-get attempt :pending-create)
+      (setopt gsmlg-org-note-capture-endpoint
+              (plist-get (plist-get attempt :frozen) :endpoint)
+              gsmlg-org-note-capture-workspace-id
+              (plist-get attempt :workspace-id)
+              gsmlg-org-note-capture-document-id
+              (plist-get attempt :document-id)
+              gsmlg-org-note-capture-document-path
+              (plist-get attempt :path)))
+    (setq gsmlg-org-note-org--capture-attempt
+          (plist-put attempt :state 'committed-pending-journal)
+          buffer-read-only t)
+    (condition-case err
+        (gsmlg-org-note-org--capture-journal-write
+         (plist-put (copy-sequence attempt) :state 'committed))
+      ((quit error)
+       (signal (car err) (cdr err))))
+    (gsmlg-org-note-org--complete-capture-after-journal response)))
+
+(defun gsmlg-org-note-org--complete-capture-after-journal (&optional response)
+  "Complete local Capture state after its committed journal is durable.
+
+Return RESPONSE for the mutation completion path."
+  (let ((attempt gsmlg-org-note-org--capture-attempt))
+    (setq gsmlg-org-note-org--capture-attempt
+          (plist-put attempt :state 'committed))
+    (if (and (equal (buffer-substring-no-properties (point-min) (point-max))
+                    (plist-get attempt :source))
+             (equal (secure-hash
+                     'sha256
+                     (buffer-substring-no-properties (point-min) (point-max)))
+                    (plist-get attempt :digest))
+             (= (buffer-chars-modified-tick) (plist-get attempt :tick)))
+        (setq buffer-read-only nil)
+      (setq gsmlg-org-note-org--capture-attempt
+            (plist-put gsmlg-org-note-org--capture-attempt
+                       :state 'committed-local-divergence)
+            buffer-read-only t)
+      (user-error
+       "Org Note Capture committed, but the staging buffer changed locally"))
+    (message "Org Note Capture committed to %s" (plist-get attempt :path))
+    (gsmlg-org-note-org--capture-reservation-release)
+    response))
+
+(defun gsmlg-org-note-org-retry-capture-journal ()
+  "Retry only local durability for a remotely committed Capture attempt."
+  (interactive)
+  (let ((attempt gsmlg-org-note-org--capture-attempt))
+    (unless (eq (plist-get attempt :state) 'committed-pending-journal)
+      (user-error "No committed Org Note Capture journal needs retry"))
+    (gsmlg-org-note-org--capture-journal-write
+     (plist-put (copy-sequence attempt) :state 'committed))
+    (gsmlg-org-note-org--complete-capture-after-journal)))
+
+(defun gsmlg-org-note-org-retry-ambiguous-capture ()
+  "Retry this buffer's ambiguous Capture with its exact frozen request."
+  (interactive)
+  (require 'org-note-operation)
+  (let ((attempt gsmlg-org-note-org--capture-attempt))
+    (unless (and (eq (plist-get attempt :state) 'ambiguous)
+                 (plist-get attempt :frozen))
+      (user-error "No replayable ambiguous Org Note Capture attempt"))
+    (condition-case err
+        (gsmlg-org-note-org--finish-capture-attempt
+         attempt
+         (org-note-operation--dispatch-frozen (plist-get attempt :frozen)))
+      ((quit error)
+       (unless (memq (plist-get gsmlg-org-note-org--capture-attempt :state)
+                     '(committed-pending-journal committed
+                       committed-local-divergence))
+         (setq gsmlg-org-note-org--capture-attempt
+               (plist-put attempt :state 'ambiguous)))
+       (setq buffer-read-only t)
+       (signal (car err) (cdr err))))))
+
+(defun gsmlg-org-note-org-capture-before-finalize ()
+  "Commit the current bridge Capture attempt to the configured document.
+
+This first Capture slice supports an existing, unclaimed document.  Creation,
+journaling, and replay recovery are layered on in later slices."
+  (require 'org-note-operation)
+  (pcase (plist-get gsmlg-org-note-org--capture-attempt :state)
+    ('committed
+     nil)
+    ('committed-local-divergence
+     (user-error "Resolve divergent committed Org Note Capture text first"))
+    ('committed-pending-journal
+     (user-error "Retry the committed Org Note Capture journal locally"))
+    ('ambiguous
+     (user-error "Retry the ambiguous Org Note Capture attempt explicitly"))
+    (_
+     (let* ((target (gsmlg-org-note-org--capture-resolve-target))
+            (workspace-id (plist-get target :workspace-id))
+            (document-id (plist-get target :document-id))
+            (path (plist-get target :path))
+            (pending-create (plist-get target :pending-create))
+            (document (and (not pending-create)
+                           (gsmlg-org-note-org--capture-document
+                            workspace-id document-id path)))
+            (remote-source (if document (plist-get document :source) ""))
+            (revision (and document (plist-get document :revision)))
+            (proofs (and document
+                         (org-note-operation-lease-proofs document-id))))
+         (when (and pending-create
+                    (or (null path) (string-empty-p path)))
+           (user-error "Org Note Capture document path is not configured"))
+         (when (and document
+                    (not (and (hash-table-p proofs) (= (hash-table-count proofs) 0))))
+           (user-error
+            "Org Note Capture refuses a document with an active lease"))
+         (let* ((capture-source
+                 (buffer-substring-no-properties (point-min) (point-max)))
+                (capture-tick (buffer-chars-modified-tick))
+                (combined
+                 (if pending-create
+                     capture-source
+                   (concat remote-source
+                           (unless (string-suffix-p "\n" remote-source) "\n")
+                           capture-source)))
+                (operation-id (org-note-client-new-operation-id))
+                (typed
+                 (list
+                  :method "PUT"
+                  :route
+                  (format "/api/org/documents/%s"
+                          (org-note-operation--path-segment document-id))
+                  :query nil
+                  :body
+                   (org-note-operation--mutation-body
+                    workspace-id
+                    (append `((path . ,path)
+                              (source . ,combined))
+                            (and revision `((expected_revision . ,revision)))
+                            `((lease_proofs . ,(org-note-client-empty-object))))
+                   operation-id)
+                  :response-validator
+                  (lambda (response)
+                    (let ((new-revision
+                           (gsmlg-org-note-org--put-response-revision
+                            response document-id)))
+                      (unless (if revision (> new-revision revision)
+                                (>= new-revision 0))
+                      (user-error
+                       (if revision
+                           "Org Note Capture PUT did not advance revision"
+                         "Org Note Capture CREATE response revision is invalid")))))))
+                (frozen (org-note-operation--freeze-request typed))
+                (attempt
+                 (list :state 'prepared :operation-id operation-id
+                       :frozen frozen :workspace-id workspace-id
+                       :document-id document-id :path path
+                       :expected-revision revision :source capture-source
+                       :pending-create pending-create
+                       :digest (secure-hash 'sha256 capture-source)
+                       :tick capture-tick
+                       :created-at (floor (* 1000 (float-time))))))
+           (setq gsmlg-org-note-org--capture-attempt attempt)
+           (gsmlg-org-note-org--capture-journal-write attempt)
+           (setq attempt (plist-put attempt :state 'dispatched)
+                 gsmlg-org-note-org--capture-attempt attempt)
+           (gsmlg-org-note-org--capture-journal-write attempt)
+             (condition-case err
+                (gsmlg-org-note-org--finish-capture-attempt
+                attempt (org-note-operation--dispatch-frozen frozen))
+             ((quit error)
+              (let* ((data (cdr err))
+                     (properties (and (listp (car data)) (car data)))
+                     (status (plist-get properties :status)))
+                (if (and (eq (car err) 'org-note-http-error)
+                         (= status 409))
+                    (progn
+                      (setq gsmlg-org-note-org--capture-attempt nil
+                            buffer-read-only nil)
+                      (gsmlg-org-note-org--capture-reservation-release))
+                  (unless
+                      (memq (plist-get gsmlg-org-note-org--capture-attempt :state)
+                            '(committed-pending-journal committed
+                              committed-local-divergence))
+                    (setq gsmlg-org-note-org--capture-attempt
+                          (plist-put attempt :state 'ambiguous)))
+                  (setq buffer-read-only t)))
+              (signal (car err) (cdr err)))))))))
 
 (defun gsmlg-org-note-org--symbol-alist-p (value)
   "Return non-nil when VALUE is a nonempty alist."
@@ -1247,7 +2208,7 @@ Phase 3 owns real capture staging; this stub only cold-starts."
       (cons workspace id))))
 
 (defun gsmlg-org-note-org--item-less-p (left right)
-  "Return non-nil when LEFT sorts before RIGHT by canonical identity."
+  "Return non-nil when LEFT sort precedes RIGHT by canonical identity."
   (let ((left-key (gsmlg-org-note-org--item-key left))
         (right-key (gsmlg-org-note-org--item-key right)))
     (or (string< (car left-key) (car right-key))
@@ -1547,6 +2508,8 @@ Pre-rename failures offer a matching last-good snapshot via
     (if (and workspace item)
         (org-note-item-context workspace item)
       (funcall orig-fun highlight))))
+
+(gsmlg-org-note-org-check-capture-recovery)
 
 (provide 'gsmlg-org-note-org)
 ;;; gsmlg-org-note-org.el ends here

@@ -2695,11 +2695,11 @@ Publication locking is performed by the refresh entrypoint before fetch."
                               (substring digest 0 32)))))
 
 (defun gsmlg-org-note-org--publication-acquire (workspace-ids)
-  "Acquire the publication reservation before any remote fetch."
+  "Acquire the WORKSPACE-IDS publication reservation before any remote fetch."
   (let ((directory (directory-file-name
                     (gsmlg-org-note-org--publication-reservation-directory
                      workspace-ids))))
-    (condition-case err
+    (condition-case nil
         (progn
           (make-directory directory t)
           (set-file-modes directory #o700)

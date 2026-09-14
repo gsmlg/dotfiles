@@ -1232,7 +1232,7 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
                (signal (car err) (cdr err)))
            (when dispatched
              (puthash document-id record gsmlg-org-note-org--archive-ambiguities))
-           (signal (car err) (cdr err))))))))
+           (signal (car err) (cdr err)))))))
 
 (defun gsmlg-org-note-org--clock-claim-response-validator
     (response workspace-id item-id document-id expected-revision kind operation-id)
@@ -2028,7 +2028,7 @@ errors mark the item ambiguous fail-closed and re-signal."
                     (= (or (plist-get (cadr err) :status) 0) 409))
                (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
              (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
-           (signal (car err) (cdr err))))))))
+           (signal (car err) (cdr err)))))))))
 
 (defun gsmlg-org-note-org--around-clock-out (orig &rest args)
   "Call ORIG with ARGS or release the stored bridge clock lease."
@@ -2686,6 +2686,28 @@ Publication locking is performed by the refresh entrypoint before fetch."
 
 (defvar gsmlg-org-note-org--publication-reservation nil)
 
+(defun gsmlg-org-note-org--publication-owner (directory)
+  "Read and decode the publication owner in DIRECTORY, or return nil."
+  (let ((file (expand-file-name "owner.json" directory)))
+    (when (file-regular-p file)
+      (condition-case nil
+          (json-parse-string
+           (with-temp-buffer
+             (insert-file-contents-literally file)
+             (buffer-string))
+           :object-type 'alist)
+        (error nil)))))
+
+(defun gsmlg-org-note-org--reservation-owner-live-p (owner)
+  "Return non-nil when OWNER identifies the still-running same process."
+  (let ((pid (alist-get 'pid owner))
+        (start-token (alist-get 'start_token owner)))
+    (and (integerp pid)
+         (process-attributes pid)
+         (or (null start-token)
+             (equal start-token
+                    (gsmlg-org-note-org--process-start-token pid))))))
+
 (defun gsmlg-org-note-org--publication-reservation-directory (workspace-ids)
   "Return endpoint/workspace keyed publication lock for WORKSPACE-IDS."
   (let* ((key (concat (gsmlg-org-note-org--endpoint-identity) "\0"
@@ -2699,21 +2721,43 @@ Publication locking is performed by the refresh entrypoint before fetch."
   (let ((directory (directory-file-name
                     (gsmlg-org-note-org--publication-reservation-directory
                      workspace-ids))))
-    (condition-case nil
+    (gsmlg-ensure-parent-directory directory)
+    (condition-case err
         (progn
-          (make-directory directory t)
+          ;; `make-directory' without PARENTS is the reservation's atomic
+          ;; compare-and-create operation.  Never create the lock recursively.
+          (make-directory directory)
           (set-file-modes directory #o700)
-          (let ((owner `((pid . ,(emacs-pid))
+          (let ((owner `((hostname . ,(system-name))
+                         (pid . ,(emacs-pid))
+                         (started_at . ,(float-time))
                          (start_token . ,(gsmlg-org-note-org--process-start-token
                                           (emacs-pid)))
-                         (nonce . ,(org-note-client-new-operation-id)))))
-            (with-temp-file (expand-file-name "owner.json" directory)
-              (insert (json-serialize owner)))
-            (set-file-modes (expand-file-name "owner.json" directory) #o600)
+                         (nonce . ,(org-note-client-new-operation-id))
+                         (created_at . ,(float-time)))))
+            (let ((owner-file (expand-file-name "owner.json" directory)))
+              (with-temp-file owner-file
+                (insert (json-serialize owner)))
+              (set-file-modes owner-file #o600))
             (setq gsmlg-org-note-org--publication-reservation
                   (list :directory directory :owner owner))))
       (file-already-exists
-       (user-error "Another Org Note agenda publication is already in progress")))))
+       (let* ((owner-file (expand-file-name "owner.json" directory))
+              (owner (gsmlg-org-note-org--publication-owner directory)))
+         (cond
+          ((gsmlg-org-note-org--reservation-owner-live-p owner)
+           (user-error "Another Org Note agenda publication is already in progress"))
+          ((and (not (file-exists-p owner-file))
+                (file-directory-p directory)
+                (< (- (float-time)
+                      (float-time (file-attribute-modification-time
+                                   (file-attributes directory))))
+                   gsmlg-org-note-org-reservation-ownerless-grace))
+           (user-error "Org Note agenda publication owner is being published"))
+          ;; A dead or malformed owner remains busy until explicit recovery;
+          ;; this prevents a racing process from deleting another process's lock.
+          (t
+           (signal (car err) (cdr err)))))))))
 
 (defun gsmlg-org-note-org--publication-release ()
   "Release publication reservation when still owned by this process."
@@ -2730,9 +2774,31 @@ Publication locking is performed by the refresh entrypoint before fetch."
                      (error nil))))
         (when (equal (alist-get 'nonce owner)
                      (alist-get 'nonce (plist-get reservation :owner)))
-          (delete-file owner-file)
-          (delete-directory directory))))
-    (setq gsmlg-org-note-org--publication-reservation nil)))
+          (condition-case nil
+              (progn
+                (delete-file owner-file)
+                (delete-directory directory)
+                (setq gsmlg-org-note-org--publication-reservation nil))
+            (error nil)))))))
+
+;;;###autoload
+(defun gsmlg-org-note-org-recover-publication-reservation (workspace-ids)
+  "Explicitly recover a dead publication reservation for WORKSPACE-IDS."
+  (interactive (list (gsmlg-org-note-org--ensure-workspaces)))
+  (let* ((directory (directory-file-name
+                     (gsmlg-org-note-org--publication-reservation-directory
+                      workspace-ids)))
+         (owner (gsmlg-org-note-org--publication-owner directory))
+         (pid (and owner (alist-get 'pid owner)))
+         (nonce (and owner (alist-get 'nonce owner))))
+    (unless (and owner (integerp pid) (stringp nonce))
+      (user-error "Org Note agenda publication owner is unreadable"))
+    (when (gsmlg-org-note-org--reservation-owner-live-p owner)
+      (user-error "Org Note agenda publication owner is still live"))
+    (unless (yes-or-no-p "Recover this stale Org Note agenda publication reservation? ")
+      (user-error "Org Note agenda publication recovery cancelled"))
+    (rename-file directory (format "%s.stale-%s" directory nonce))
+    (message "Recovered stale Org Note agenda publication reservation")))
 
 (defun gsmlg-org-note-org--empty-feed-contents (&optional workspace-ids)
   "Return the contents of an empty Org Note agenda feed.

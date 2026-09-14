@@ -67,10 +67,14 @@
                   (identifier))
 (declare-function org-note-operation--mutation-body "org-note-operation"
                   (workspace-id fields &optional operation-id))
+(declare-function org-note-client-request "org-note-client" (&rest args))
 (declare-function org-note-client-new-operation-id "org-note-client" ())
 (declare-function org-note-client-empty-object "org-note-client" ())
 (declare-function org-id-uuid "org-id" ())
 (declare-function org-note-item-context "org-note" (workspace-id item-id))
+(declare-function org-note-document--require-metadata "org-note" ())
+(declare-function org-note-document--kill-buffer-safely "org-note" ())
+(declare-function org-note--document-buffer-name "org-note" (workspace-id))
 (declare-function org-clock-goto "org-clock" (&rest args))
 (declare-function org-note-configure-agenda-workspaces "org-note" ())
 (declare-function org-note-validation-page-cursor "org-note-validation"
@@ -1055,9 +1059,147 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--clock-ambiguities (make-hash-table :test #'equal)
   "Frozen claim or release attempts awaiting same-operation-id recovery.")
 
+(defvar gsmlg-org-note-org--archive-ambiguities (make-hash-table :test #'equal)
+  "Frozen whole-document archive attempts awaiting explicit replay.")
+
+(defconst gsmlg-org-note-org--archive-page-limit 100
+  "Maximum rows requested per archive reconciliation page.")
+
+(defun gsmlg-org-note-org--archive-list-documents (workspace-id)
+  "Exhaustively list archived documents in WORKSPACE-ID with bounded paging."
+  (require 'org-note-validation)
+  (org-note-validation-bounded-pager-fold
+   (org-note-validation-bounded-pager-state :limit gsmlg-org-note-org--archive-page-limit)
+   (lambda (cursor)
+     (let* ((response (org-note-operation-list-documents
+                       workspace-id :cursor cursor
+                       :limit gsmlg-org-note-org--archive-page-limit
+                       :include-archived t))
+            (data (or (alist-get 'data response) response))
+            (rows (or (alist-get 'documents data)
+                      (alist-get 'items data)
+                      (alist-get 'rows data)))
+            (next (or (alist-get 'next_cursor data)
+                      (alist-get 'next_cursor response))))
+       (when (vectorp rows)
+         (setq rows (append rows nil)))
+       (unless (listp rows)
+         (user-error "Org Note archive reconciliation returned malformed rows"))
+       (list :rows rows :next-cursor next)))))
+
+(defun gsmlg-org-note-org--archive-row (rows document-id path)
+  "Find the unique archived DOCUMENT-ID at PATH in ROWS."
+  (let ((matches (cl-remove-if-not
+                  (lambda (row)
+                    (and (equal (alist-get 'id row) document-id)
+                         (equal (alist-get 'path row) path)))
+                  rows)))
+    (unless (= (length matches) 1)
+      (user-error "Org Note archive reconciliation did not find a unique document"))
+    (let* ((row (car matches))
+           (archived-at (alist-get 'archived_at row))
+           (revision (alist-get 'revision row)))
+      (unless (and (integerp archived-at) (> archived-at 0)
+                   (integerp revision))
+        (user-error "Org Note archive reconciliation returned invalid metadata"))
+      row)))
+
+(defun gsmlg-org-note-org--archive-response-revision (response _document-id)
+  "Return the archived document revision from POST RESPONSE when present."
+  (or (alist-get 'revision response)
+      (alist-get 'document_revision response)))
+
+(defun gsmlg-org-note-org--finish-archive-attempt (record response)
+  "Validate archived RESPONSE and clean up the document described by RECORD."
+  (let* ((workspace-id (plist-get record :workspace-id))
+         (document-id (plist-get record :document-id))
+         (path (plist-get record :path))
+         (expected (plist-get record :expected-revision))
+         (post-revision (gsmlg-org-note-org--archive-response-revision
+                         response document-id))
+         (rows (gsmlg-org-note-org--archive-list-documents workspace-id))
+         (row (gsmlg-org-note-org--archive-row rows document-id path))
+         (revision (alist-get 'revision row)))
+    (unless (and (or (null post-revision)
+                     (and (integerp post-revision) (> post-revision expected)))
+                 (> revision expected))
+      (user-error "Org Note archive revision did not advance"))
+    (remhash document-id gsmlg-org-note-org--archive-ambiguities)
+    (let ((buffer (plist-get record :buffer))
+          (list-buffer (plist-get record :list-buffer)))
+      (condition-case err
+          (progn
+            (when (buffer-live-p list-buffer)
+              (with-current-buffer list-buffer
+                (when (fboundp 'org-note--refresh-document-list-buffer)
+                  (org-note--refresh-document-list-buffer list-buffer))))
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (org-note-document--kill-buffer-safely)))
+            response)
+        ((quit error)
+         (message "Org Note archive committed; cleanup pending (%s)"
+                  (error-message-string err))
+         response)))))
+
+(defun gsmlg-org-note-org-retry-ambiguous-archive (document-id)
+  "Replay frozen whole-document archive for DOCUMENT-ID."
+  (interactive "sDocument ID: ")
+  (let ((record (gethash document-id gsmlg-org-note-org--archive-ambiguities)))
+    (unless record
+      (user-error "No replayable Org Note archive for %s" document-id))
+    (gsmlg-org-note-org--finish-archive-attempt
+     record (org-note-operation--dispatch-frozen (plist-get record :frozen)))))
+
+(defun gsmlg-org-note-org--archive-document ()
+  "Archive the current Org Note document through one frozen operation."
+  (require 'org-note-operation)
+  (org-note-document--require-metadata)
+  (when (buffer-modified-p)
+    (user-error "Save or discard Org Note document edits before archive"))
+  (let* ((workspace-id org-note-document-workspace-id)
+         (document-id org-note-document-id)
+         (path org-note-document-path)
+         (expected org-note-document-revision)
+         (operation-id (org-note-client-new-operation-id))
+         (typed (list :method "POST"
+                      :route (format "/api/org/documents/%s/archive"
+                                     (org-note-operation--path-segment document-id))
+                      :query nil
+                      :body (org-note-operation--mutation-body
+                             workspace-id `((expected_revision . ,expected)) operation-id)))
+         (frozen (org-note-operation--freeze-request typed))
+         (record (list :operation-id operation-id :frozen frozen
+                       :workspace-id workspace-id :document-id document-id
+                       :path path :expected-revision expected
+                       :buffer (current-buffer)
+                       :list-buffer (get-buffer
+                                     (org-note--document-buffer-name workspace-id))))
+         (dispatched nil))
+    (when (gethash document-id gsmlg-org-note-org--archive-ambiguities)
+      (user-error "Org Note archive for %s is ambiguous; resolve before retrying" document-id))
+    (condition-case err
+        (progn
+          (setq dispatched t)
+          (gsmlg-org-note-org--finish-archive-attempt
+           record (org-note-operation--dispatch-frozen frozen)))
+      ((quit error)
+       (let* ((data (cdr err))
+              (props (and (listp (car data)) (car data)))
+              (status (plist-get props :status)))
+         (if (and (eq (car err) 'org-note-http-error) (= status 409))
+             (progn
+               (message "Org Note archive conflict; no archive was committed")
+               (signal (car err) (cdr err)))
+           (when dispatched
+             (puthash document-id record gsmlg-org-note-org--archive-ambiguities))
+           (signal (car err) (cdr err))))))))
+
 (defun gsmlg-org-note-org--clock-claim-response-validator
     (response workspace-id item-id document-id expected-revision kind operation-id)
-  "Validate claim RESPONSE and require its document revision to be current."
+  "Validate RESPONSE for the claim identified by WORKSPACE-ID, ITEM-ID, DOCUMENT-ID, EXPECTED-REVISION, KIND, and OPERATION-ID.
+
+Require its document revision to be at least EXPECTED-REVISION."
   (org-note-operation--validate-claim-response
    response workspace-id item-id document-id kind operation-id)
   (let* ((context (gsmlg-org-note-org--context-field
@@ -1070,7 +1212,7 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 
 (defun gsmlg-org-note-org--clock-register-presentation
     (record response lease)
-  "Register LEASE and presentation from successful frozen claim RECORD."
+  "Register LEASE and presentation from successful claim RESPONSE and RECORD."
   (setq gsmlg-org-note-org--clock-presentation
         (list :workspace-id (plist-get record :workspace-id)
               :item-id (plist-get record :item-id)
@@ -1930,15 +2072,28 @@ errors mark the item ambiguous fail-closed and re-signal."
                              (plist-get clock :item-id)))))
 
 (defun gsmlg-org-note-org--around-archive-subtree (orig &rest args)
-  "Call ORIG with ARGS or refuse archive operations until Phase 6.
-Shared around advice for org-archive entrypoints."
+  "Call ORIG with ARGS or bridge an Org Note archive operation."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "archive")
-    (user-error "Org Note archive is not available until Phase 6")))
+    (cond
+     ((and (fboundp 'org-note-document-mode)
+           (derived-mode-p 'org-note-document-mode)
+           (eq (car-safe args) nil))
+      (gsmlg-org-note-org--archive-document))
+     ((gsmlg-org-note-org--agenda-bulk-or-region-todo-p)
+      (user-error "Org Note archive refuses marked or bulk Agenda entries"))
+     ((gsmlg-org-note-org--origin-item-ids)
+      (gsmlg-org-note-org--attempt-identified-transition
+       gsmlg-org-note-archive-target
+       (let ((ids (gsmlg-org-note-org--origin-item-ids)))
+         (list :workspace-id (car ids) :item-id (cdr ids))))
+      t)
+     (t
+      (user-error "Org Note archive requires an identified item or document buffer")))))
 
 (defun gsmlg-org-note-org--install-mutation-hooks ()
   "Install TODO/refile/archive/clock advice once."
@@ -1951,6 +2106,7 @@ Shared around advice for org-archive entrypoints."
     (autoload 'org-clock-out "org-clock" nil t)
     (autoload 'org-clock-cancel "org-clock" nil t)
     (autoload 'org-clock-goto "org-clock" nil t)
+    (autoload 'org-note-document-archive "org-note" nil t)
     (advice-add #'org-todo :around #'gsmlg-org-note-org--around-todo)
     (advice-add #'org-agenda-todo :around #'gsmlg-org-note-org--around-agenda-todo)
     (advice-add #'org-refile :around #'gsmlg-org-note-org--around-refile)
@@ -1958,6 +2114,8 @@ Shared around advice for org-archive entrypoints."
     (advice-add #'org-clock-out :around #'gsmlg-org-note-org--around-clock-out)
     (advice-add #'org-clock-cancel :around #'gsmlg-org-note-org--around-clock-cancel)
     (advice-add #'org-clock-goto :around #'gsmlg-org-note-org--around-clock-goto)
+    (advice-add #'org-note-document-archive :around
+                #'gsmlg-org-note-org--around-archive-subtree)
     (dolist (entry '((org-archive-subtree . "org-archive")
                      (org-toggle-archive-tag . "org-archive")
                      (org-archive-to-archive-sibling . "org-archive")

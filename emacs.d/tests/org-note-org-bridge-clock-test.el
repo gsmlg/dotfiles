@@ -7,7 +7,7 @@
 (require 'org-note-operation)
 
 (defun gsmlg-org-note-clock-test--claim-response (revision)
-  "Return a structurally valid claim response at REVISION." 
+  "Return a structurally valid claim response at REVISION."
   `((schema_version . 1) (actor_id . "actor") (workspace_id . "ws")
     (operation_id . "op") (lease_id . "lease")
     (fencing_token . "token") (expires_at . 4102444800)

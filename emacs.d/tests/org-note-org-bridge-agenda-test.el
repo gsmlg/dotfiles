@@ -250,7 +250,7 @@
       (delete-directory root t))))
 
 (ert-deftest gsmlg-org-note-org-global-feed-write-firewall ()
-  "Direct write-region is refused unless private publication authorization is bound."
+  "Direct `write-region' is refused unless private publication authorization is bound."
   (require 'gsmlg-org-note-org)
   (let* ((feed (make-temp-file "org-note-write-firewall-" nil ".org"))
          (gsmlg-org-note-org-enable t)

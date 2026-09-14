@@ -2567,7 +2567,9 @@ bindings that dynamically replace `org-agenda-files' after entrypoint advice."
              (equal path (expand-file-name (gsmlg-org-note-org--empty-feed-file)))))))
 
 (defun gsmlg-org-note-org--around-write-region (orig start end filename &rest args)
-  "Reject direct writes to generated feeds outside private publication scope."
+  "Reject direct writes to generated feeds outside private publication scope.
+
+Call ORIG with START, END, FILENAME, and ARGS when the write is allowed."
   (when (and gsmlg-org-note-org-enable
              (gsmlg-org-note-org--generated-feed-path-p filename)
              (not gsmlg-org-note-org--feed-write-authorized))
@@ -2585,7 +2587,9 @@ bindings that dynamically replace `org-agenda-files' after entrypoint advice."
              (equal (buffer-name) org-agenda-buffer-name)))))
 
 (defun gsmlg-org-note-org--around-agenda-mutator (orig &rest args)
-  "Reject native Agenda mutation/navigation on generated feed buffers."
+  "Reject native Agenda mutation/navigation on generated feed buffers.
+
+Call ORIG with ARGS when the mutation is allowed."
   (if (and gsmlg-org-note-org-enable
            (gsmlg-org-note-org--agenda-feed-buffer-p))
       (user-error "Org Note bridge refuses native Agenda mutation on generated feed")

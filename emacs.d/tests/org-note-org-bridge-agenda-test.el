@@ -180,6 +180,97 @@
             '("/tmp/org-note-feed.org"))))
       (put 'org-agenda-files 'org-restrict original-restriction))))
 
+(ert-deftest gsmlg-org-note-org-agenda-native-mutator-refuses-feed ()
+  "Native Agenda mutators must stop before touching feed markers or files."
+  (require 'gsmlg-org-note-org)
+  (let* ((feed (make-temp-file "org-note-agenda-feed-" nil ".org"))
+         (gsmlg-org-note-org-enable t)
+         (gsmlg-org-note-org--selected-feed-file feed)
+         (called nil))
+    (unwind-protect
+        (with-temp-buffer
+          (setq buffer-file-name feed)
+          (should-error
+           (gsmlg-org-note-org--around-agenda-mutator
+            (lambda (&rest _) (setq called t)) nil)
+           :type 'user-error)
+          (should-not called))
+      (delete-file feed))))
+
+(ert-deftest gsmlg-org-note-org-feed-digest-tamper-refuses-write ()
+  "A feed changed outside the bridge must fail closed before replacement."
+  (require 'gsmlg-org-note-org)
+  (let* ((feed (make-temp-file "org-note-feed-firewall-" nil ".org"))
+         (gsmlg-org-note-org-enable nil)
+         (gsmlg-org-note-org--feed-file feed)
+         (gsmlg-org-note-org--selected-feed-file feed)
+         (gsmlg-org-note-org--feed-digests (make-hash-table :test #'equal)))
+    (unwind-protect
+        (progn
+          (gsmlg-org-note-org--write-feed "original\n" feed)
+          (with-temp-file feed (insert "tampered\n"))
+          (let ((gsmlg-org-note-org-enable t))
+            (should-error (gsmlg-org-note-org--write-feed "replacement\n" feed)
+                          :type 'user-error)))
+      (delete-file feed))))
+
+(ert-deftest gsmlg-org-note-org-feed-descriptor-roundtrip-and-tamper ()
+  "Descriptors persist endpoint, workspaces, generation, and full-byte digest."
+  (require 'gsmlg-org-note-org)
+  (let* ((root (make-temp-file "org-note-descriptor-" t))
+         (org-note-endpoint "https://agent-note.example")
+         (workspace-ids '("workspace-a"))
+         (contents "#+TITLE: Feed\n")
+         (gsmlg-org-note-org--feed-file (expand-file-name "feed.org" root))
+         (gsmlg-org-note-org--feed-digests (make-hash-table :test #'equal)))
+    (unwind-protect
+        (cl-letf (((symbol-function 'gsmlg-state-file)
+                   (lambda (&rest parts)
+                     (expand-file-name (mapconcat #'identity parts "/") root))))
+          (gsmlg-org-note-org--write-feed contents)
+          (let ((first (gsmlg-org-note-org--write-feed-descriptor
+                        workspace-ids contents)))
+            (should (= 1 (alist-get 'generation first)))
+            (let ((roundtrip (gsmlg-org-note-org--read-feed-descriptor workspace-ids)))
+              (should (equal (alist-get 'endpoint first)
+                             (alist-get 'endpoint roundtrip)))
+              (should (equal (alist-get 'generation first)
+                             (alist-get 'generation roundtrip)))
+              (should (equal (alist-get 'byte_digest first)
+                             (alist-get 'byte_digest roundtrip))))
+            (should (= 1 (alist-get 'generation
+                                    (gsmlg-org-note-org--write-feed-descriptor
+                                     workspace-ids contents)))))
+          (let ((descriptor-file
+                 (gsmlg-org-note-org--feed-descriptor-file workspace-ids)))
+            (with-temp-file descriptor-file (insert "tampered"))
+            (should-error
+             (gsmlg-org-note-org--read-feed-descriptor workspace-ids)
+             :type 'user-error)))
+      (delete-directory root t))))
+
+(ert-deftest gsmlg-org-note-org-global-feed-write-firewall ()
+  "Direct write-region is refused unless private publication authorization is bound."
+  (require 'gsmlg-org-note-org)
+  (let* ((feed (make-temp-file "org-note-write-firewall-" nil ".org"))
+         (gsmlg-org-note-org-enable t)
+         (gsmlg-org-note-org--feed-file feed)
+         (gsmlg-org-note-org--selected-feed-file feed))
+    (unwind-protect
+        (progn
+          (advice-add #'write-region :around
+                      #'gsmlg-org-note-org--around-write-region)
+          (should-error (write-region "blocked\n" nil feed nil 'silent)
+                        :type 'user-error)
+          (let ((gsmlg-org-note-org--feed-write-authorized t))
+            (write-region "allowed\n" nil feed nil 'silent))
+          (gsmlg-org-note-org--write-feed "bridge\n" feed)
+          (with-temp-buffer
+            (insert-file-contents feed)
+            (should (equal (buffer-string) "bridge\n"))))
+      (advice-remove #'write-region #'gsmlg-org-note-org--around-write-region)
+      (delete-file feed))))
+
 (ert-deftest gsmlg-org-note-org-disabled-entrypoint-is-pass-through ()
   "The release gate leaves normal Org behavior untouched while disabled."
   (require 'gsmlg-org-note-org)

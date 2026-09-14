@@ -1502,6 +1502,78 @@ EXPECTED-REVISION."
 (defvar gsmlg-org-note-org--agenda-command-active nil
   "Non-nil while the outermost guarded Agenda producer is running.")
 
+(defvar gsmlg-org-note-org--feed-digests (make-hash-table :test #'equal)
+  "Known complete-byte digests for generated feed files.")
+
+(defvar gsmlg-org-note-org--feed-write-authorized nil
+  "Non-nil only during the bridge's private feed publication write.")
+
+(defun gsmlg-org-note-org--feed-descriptor-file (workspace-ids)
+  "Return the durable descriptor path for WORKSPACE-IDS and endpoint."
+  (let* ((key (concat (gsmlg-org-note-org--endpoint-identity) "\0"
+                      (mapconcat #'identity workspace-ids "\0")))
+         (digest (secure-hash 'sha256 key)))
+    (gsmlg-state-file (format "org-note/agenda-%s.descriptor.json"
+                              (substring digest 0 32)))))
+
+(defun gsmlg-org-note-org--read-feed-descriptor (workspace-ids)
+  "Read and validate the durable descriptor for WORKSPACE-IDS, or nil."
+  (let ((file (gsmlg-org-note-org--feed-descriptor-file workspace-ids)))
+    (when (file-regular-p file)
+      (condition-case err
+          (let ((descriptor
+                 (json-parse-string
+                  (with-temp-buffer
+                    (insert-file-contents-literally file)
+                    (buffer-string))
+                  :object-type 'alist)))
+            (let ((descriptor-workspaces (alist-get 'workspace_ids descriptor)))
+              (when (vectorp descriptor-workspaces)
+                (setq descriptor-workspaces (append descriptor-workspaces nil)))
+              (unless (and (equal (alist-get 'endpoint descriptor)
+                                (gsmlg-org-note-org--endpoint-identity))
+                         (equal descriptor-workspaces
+                                workspace-ids)
+                         (integerp (alist-get 'generation descriptor))
+                         (> (alist-get 'generation descriptor) 0)
+                         (stringp (alist-get 'byte_digest descriptor))
+                         (string-match-p "\\`[[:xdigit:]]\\{64\\}\\'"
+                                         (alist-get 'byte_digest descriptor)))
+                (user-error "Org Note agenda feed descriptor is invalid"))
+              descriptor))
+        (error
+         (if (eq (car err) 'user-error)
+             (signal (car err) (cdr err))
+           (user-error "Org Note agenda feed descriptor is unreadable")))))))
+
+(defun gsmlg-org-note-org--write-feed-descriptor (workspace-ids contents)
+  "Atomically publish a descriptor for WORKSPACE-IDS and CONTENTS."
+  (let* ((file (gsmlg-org-note-org--feed-descriptor-file workspace-ids))
+         (old (gsmlg-org-note-org--read-feed-descriptor workspace-ids))
+         (digest (secure-hash 'sha256 contents))
+         (generation (if (and old (equal digest (alist-get 'byte_digest old)))
+                         (alist-get 'generation old)
+                       (1+ (or (and old (alist-get 'generation old)) 0))))
+         (descriptor `((schema . 1)
+                       (endpoint . ,(gsmlg-org-note-org--endpoint-identity))
+                       (workspace_ids . ,(vconcat workspace-ids))
+                       (generation . ,generation)
+                       (byte_digest . ,digest))))
+    (gsmlg-ensure-parent-directory file)
+    (unless (and old (= generation (alist-get 'generation old)))
+      (let ((temporary (make-temp-file "org-note-agenda-descriptor-"
+                                       nil ".tmp"
+                                       (json-serialize descriptor))))
+        (unwind-protect
+            (progn
+              (set-file-modes temporary #o600)
+              (rename-file temporary file t))
+          (when (file-exists-p temporary)
+            (delete-file temporary)))))
+    (puthash (gsmlg-org-note-org-feed-file) digest
+             gsmlg-org-note-org--feed-digests)
+    descriptor))
+
 (defconst gsmlg-org-note-org--plain-local-refuse-fmt
   "Org Note bridge refuses %s in plain local .org buffers; use Org Note documents or agenda."
   "User-error format for plain-local refuse.")
@@ -1519,6 +1591,16 @@ EXPECTED-REVISION."
     org-agenda-redo-all)
   "Public Agenda producers guarded against cold-start local-file access.")
 
+(defconst gsmlg-org-note-org--agenda-mutator-entrypoints
+  '(org-agenda-refile
+    org-agenda-clock-in
+    org-agenda-clock-out
+    org-agenda-clock-cancel
+    org-agenda-clock-goto
+    org-agenda-archive-with
+    org-agenda-bulk-action)
+  "Native Agenda mutators intercepted before feed marker/file operations.")
+
 ;;;###autoload
 (defun gsmlg-org-note-org-install-guards ()
   "Install inert around-advice on Org agenda and capture entrypoints.
@@ -1534,6 +1616,10 @@ This must not load Org Note or perform network I/O."
                 :around #'gsmlg-org-note-org--around-agenda-files)
     (autoload 'org-capture "org-capture" nil t)
     (advice-add #'org-capture :around #'gsmlg-org-note-org--around-capture)
+    (advice-add #'write-region :around #'gsmlg-org-note-org--around-write-region)
+    (dolist (command gsmlg-org-note-org--agenda-mutator-entrypoints)
+      (autoload command "org-agenda" nil t)
+      (advice-add command :around #'gsmlg-org-note-org--around-agenda-mutator))
     (gsmlg-org-note-org--install-mutation-hooks)))
 
 (defun gsmlg-org-note-org-feed-file ()
@@ -1545,7 +1631,28 @@ This must not load Org Note or perform network I/O."
   "Return agenda files for the active Org Note bridge.
 
 The list contains exactly the selected feed path (or empty-feed path)."
-  (list (gsmlg-org-note-org-feed-file)))
+  (let ((feed (gsmlg-org-note-org-feed-file))
+        (known (gethash (gsmlg-org-note-org-feed-file)
+                        gsmlg-org-note-org--feed-digests)))
+    (when (and gsmlg-org-note-org-enable known (file-readable-p feed))
+      (with-temp-buffer
+        (insert-file-contents-literally feed)
+        (unless (equal known (secure-hash 'sha256 (buffer-string)))
+          (user-error "Org Note agenda feed digest mismatch"))))
+    (when (and gsmlg-org-note-org-enable
+               gsmlg-org-note-org--last-workspace-ids
+               (equal feed gsmlg-org-note-org--feed-file))
+      (let ((descriptor
+             (gsmlg-org-note-org--read-feed-descriptor
+              gsmlg-org-note-org--last-workspace-ids)))
+        (unless descriptor
+          (user-error "Org Note agenda feed descriptor is missing"))
+        (with-temp-buffer
+          (insert-file-contents-literally feed)
+          (unless (equal (alist-get 'byte_digest descriptor)
+                         (secure-hash 'sha256 (buffer-string)))
+            (user-error "Org Note agenda feed descriptor does not match feed")))))
+    (list feed)))
 
 ;;;###autoload
 (defun gsmlg-org-note-org-activate ()
@@ -2446,6 +2553,40 @@ bindings that dynamically replace `org-agenda-files' after entrypoint advice."
       (gsmlg-org-note-org-agenda-files)
     (apply orig args)))
 
+(defun gsmlg-org-note-org--generated-feed-path-p (filename)
+  "Return non-nil when FILENAME names a generated bridge feed."
+  (and filename
+       (let ((path (expand-file-name filename)))
+         (or (equal path (expand-file-name gsmlg-org-note-org--feed-file))
+             (equal path (expand-file-name
+                          (or gsmlg-org-note-org--selected-feed-file "")))
+             (equal path (expand-file-name (gsmlg-org-note-org--empty-feed-file)))))))
+
+(defun gsmlg-org-note-org--around-write-region (orig start end filename &rest args)
+  "Reject direct writes to generated feeds outside private publication scope."
+  (when (and gsmlg-org-note-org-enable
+             (gsmlg-org-note-org--generated-feed-path-p filename)
+             (not gsmlg-org-note-org--feed-write-authorized))
+    (user-error "Org Note bridge refuses direct writes to generated agenda feed"))
+  (apply orig start end filename args))
+
+(defun gsmlg-org-note-org--agenda-feed-buffer-p ()
+  "Return non-nil when the current Agenda row is backed by the feed."
+  (let ((feed (gsmlg-org-note-org-feed-file)))
+    (or (and buffer-file-name
+             (file-equal-p (expand-file-name buffer-file-name)
+                           (expand-file-name feed)))
+        (and (boundp 'org-agenda-buffer-name)
+             (stringp org-agenda-buffer-name)
+             (equal (buffer-name) org-agenda-buffer-name)))))
+
+(defun gsmlg-org-note-org--around-agenda-mutator (orig &rest args)
+  "Reject native Agenda mutation/navigation on generated feed buffers."
+  (if (and gsmlg-org-note-org-enable
+           (gsmlg-org-note-org--agenda-feed-buffer-p))
+      (user-error "Org Note bridge refuses native Agenda mutation on generated feed")
+    (apply orig args)))
+
 (defun gsmlg-org-note-org--around-capture (orig &rest args)
   "Activate the bridge then call ORIG with ARGS.
 
@@ -2929,12 +3070,26 @@ propagate to `gsmlg-org-note-org-refresh-feed' for last-good handling."
 
 Publication locking is performed by the refresh entrypoint before fetch."
   (let ((target (or path gsmlg-org-note-org--feed-file)))
+    (when (and gsmlg-org-note-org-enable
+               (not (or (equal target gsmlg-org-note-org--feed-file)
+                        (equal target gsmlg-org-note-org--selected-feed-file)
+                        (equal target (gsmlg-org-note-org--empty-feed-file)))))
+      (user-error "Org Note bridge refuses writes outside generated feed files"))
+    (let ((known (gethash target gsmlg-org-note-org--feed-digests)))
+      (when (and known (file-readable-p target))
+        (with-temp-buffer
+          (insert-file-contents-literally target)
+          (unless (equal known (secure-hash 'sha256 (buffer-string)))
+            (user-error "Org Note agenda feed changed outside the bridge")))))
     (gsmlg-ensure-parent-directory target)
     (unless (and (file-readable-p target)
                  (with-temp-buffer
                    (insert-file-contents target)
                    (equal contents (buffer-string))))
-      (write-region contents nil target nil 'silent))
+      (let ((gsmlg-org-note-org--feed-write-authorized t))
+        (write-region contents nil target nil 'silent)))
+    (puthash target (secure-hash 'sha256 contents)
+             gsmlg-org-note-org--feed-digests)
     target))
 
 (defvar gsmlg-org-note-org--publication-reservation nil)
@@ -3202,6 +3357,12 @@ Pre-rename failures offer a matching last-good snapshot via
                     (progn
                       (gsmlg-org-note-org--write-feed
                        (gsmlg-org-note-org--build-feed-contents workspace-ids))
+                      (gsmlg-org-note-org--write-feed-descriptor
+                       workspace-ids
+                       (with-temp-buffer
+                         (insert-file-contents-literally
+                          gsmlg-org-note-org--feed-file)
+                         (buffer-string)))
                       (setq gsmlg-org-note-org--last-workspace-ids
                             (copy-sequence workspace-ids))
                       (gsmlg-org-note-org--select-feed

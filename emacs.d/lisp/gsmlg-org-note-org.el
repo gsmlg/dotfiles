@@ -73,6 +73,7 @@
 (declare-function org-id-uuid "org-id" ())
 (declare-function org-note-item-context "org-note" (workspace-id item-id))
 (declare-function org-note-document--require-metadata "org-note" ())
+(declare-function org-note-document--source "org-note-document" ())
 (declare-function org-note-document--kill-buffer-safely "org-note" ())
 (declare-function org-note--document-buffer-name "org-note" (workspace-id))
 (declare-function org-clock-goto "org-clock" (&rest args))
@@ -106,6 +107,8 @@
 (defvar org-note-document-path)
 (defvar org-note-document-revision)
 (defvar org-note-document-base-source)
+(defvar org-note-document--conflict)
+(defvar org-note-endpoint)
 
 (defgroup gsmlg-org-note-org nil
   "Org Note bridge for Org agenda and capture."
@@ -1091,6 +1094,228 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 
 (defvar gsmlg-org-note-org--document-ambiguities (make-hash-table :test #'equal)
   "In-memory fail-closed document PUT ambiguity records keyed by document-id.")
+
+(defun gsmlg-org-note-org--document-save-marker (record state)
+  "Return the durable save marker for RECORD in lifecycle STATE."
+  (list :operation-kind "document-put" :purpose "save"
+        :state state
+        :operation-id (plist-get record :operation-id)
+        :endpoint (plist-get (plist-get record :frozen) :endpoint)
+        :workspace-id (plist-get record :workspace-id)
+        :document-id (plist-get record :document-id)
+        :path (plist-get record :path)
+        :expected-revision (plist-get record :expected-revision)
+        :source-digest (secure-hash 'sha256 (plist-get record :origin-source))
+        :proposed-digest (secure-hash 'sha256 (plist-get record :proposed-source))
+        :created-at (plist-get record :created-at)
+        :updated-at (float-time)))
+
+(defun gsmlg-org-note-org--document-save-definitive-noncommit-p (error-data)
+  "Return non-nil when ERROR-DATA proves a save did not commit."
+  (and (eq (car error-data) 'org-note-http-error)
+       (let* ((payload (cadr error-data))
+              (status (and (listp payload) (plist-get payload :status)))
+              (code (and (listp payload) (plist-get payload :code))))
+         (and (eq status 409)
+              (or (eq code 'stale_revision)
+                  (equal code "stale_revision"))))))
+
+(defun gsmlg-org-note-org--finish-document-save-attempt (record response)
+  "Apply validated save RESPONSE to the buffer described by RECORD."
+  (let* ((document-id (plist-get record :document-id))
+         (expected-revision (plist-get record :expected-revision))
+         (new-revision
+          (gsmlg-org-note-org--put-response-revision response document-id))
+         (buffer (plist-get record :buffer))
+         (source (plist-get record :proposed-source)))
+    (unless (> new-revision expected-revision)
+      (user-error "Org Note document PUT did not advance revision"))
+    (unless (buffer-live-p buffer)
+      (error "Org Note document buffer for %s is no longer live" document-id))
+    (with-current-buffer buffer
+      (unless (equal org-note-document-id document-id)
+        (error "Org Note document recovery buffer identity changed"))
+      ;; The validated revision is authoritative before any fallible local
+      ;; presentation work.  Save-mode divergence is a later local edit, not a
+      ;; transform conflict.
+      (setq-local org-note-document-revision new-revision
+                  org-note-document-base-source source
+                  org-note-document--conflict nil)
+      (set-buffer-modified-p
+       (not (and (= (buffer-modified-tick) (plist-get record :origin-tick))
+                 (equal (org-note-document--source)
+                        (plist-get record :origin-source)))))
+      new-revision)))
+
+(defun gsmlg-org-note-org--complete-document-save-attempt (record response)
+  "Finish RECORD from RESPONSE and remove its replay and durable state."
+  (let ((revision (gsmlg-org-note-org--finish-document-save-attempt
+                   record response)))
+    (gsmlg-org-note-org--noncapture-marker-delete
+     (plist-get record :operation-id))
+    (remhash (plist-get record :document-id)
+             gsmlg-org-note-org--document-ambiguities)
+    (message "Saved Org Note %s at revision %s"
+             (plist-get record :path) revision)
+    nil))
+
+(defun gsmlg-org-note-org-retry-ambiguous-document-save (document-id)
+  "Replay the in-process ambiguous save PUT for DOCUMENT-ID."
+  (interactive "sDocument ID: ")
+  (require 'org-note-operation)
+  (let ((record (gethash document-id
+                         gsmlg-org-note-org--document-ambiguities)))
+    (unless (and record
+                 (eq (plist-get record :mode) 'save)
+                 (eq (plist-get record :state) 'ambiguous)
+                 (plist-get record :frozen))
+      (user-error "No replayable Org Note document save for %s" document-id))
+    (let ((committed-p nil))
+      (condition-case err
+          (progn
+            (gsmlg-org-note-org--noncapture-marker-write
+             (gsmlg-org-note-org--document-save-marker record "dispatched"))
+            (let ((response
+                   (org-note-operation--dispatch-frozen
+                    (plist-get record :frozen))))
+              (setq committed-p t
+                    record (plist-put record :state 'committed-pending-refresh))
+              (gsmlg-org-note-org--complete-document-save-attempt
+               record response)))
+      ((quit error)
+         (if committed-p
+             (progn
+               (puthash document-id record
+                        gsmlg-org-note-org--document-ambiguities)
+               (gsmlg-org-note-org--noncapture-marker-write
+                (gsmlg-org-note-org--document-save-marker
+                 record "committed-pending-refresh")))
+           (setq record (plist-put record :state 'ambiguous))
+           (puthash document-id record
+                    gsmlg-org-note-org--document-ambiguities)
+           (gsmlg-org-note-org--noncapture-marker-write
+            (gsmlg-org-note-org--document-save-marker record "ambiguous")))
+         (signal (car err) (cdr err)))))))
+
+(defun gsmlg-org-note-org-retry-document-save-cleanup (document-id)
+  "Retry only local cleanup for committed save of DOCUMENT-ID."
+  (interactive "sDocument ID: ")
+  (let* ((record (gethash document-id
+                          gsmlg-org-note-org--document-ambiguities))
+         (buffer (plist-get record :buffer)))
+    (unless (and record
+                 (eq (plist-get record :mode) 'save)
+                 (eq (plist-get record :state) 'committed-pending-refresh)
+                 (buffer-live-p buffer))
+      (user-error "No committed Org Note document save cleanup for %s"
+                  document-id))
+    (with-current-buffer buffer
+      (unless (and (equal org-note-document-id document-id)
+                   (> org-note-document-revision
+                      (plist-get record :expected-revision))
+                   (equal org-note-document-base-source
+                          (plist-get record :proposed-source)))
+        (user-error "Committed Org Note document save metadata is incomplete")))
+    (gsmlg-org-note-org--noncapture-marker-delete
+     (plist-get record :operation-id))
+    (remhash document-id gsmlg-org-note-org--document-ambiguities)
+    nil))
+
+(defun gsmlg-org-note-org--attempt-document-save ()
+  "Save the current Org Note document through one frozen marked attempt."
+  (require 'org-note-operation)
+  (org-note-document--require-metadata)
+  (when org-note-document--conflict
+    (user-error "Resolve the Org Note document conflict before saving"))
+  (when (gethash org-note-document-id
+                 gsmlg-org-note-org--document-ambiguities)
+    (user-error
+     "Org Note document PUT for %s is ambiguous; resolve before retrying"
+     org-note-document-id))
+  (gsmlg-org-note-org--noncapture-blocked-p
+   (org-note-validation-canonical-endpoint org-note-endpoint)
+   org-note-document-id)
+  (let* ((workspace-id org-note-document-workspace-id)
+         (document-id org-note-document-id)
+         (path org-note-document-path)
+         (expected-revision org-note-document-revision)
+         (origin-source (org-note-document--source))
+         (origin-tick (buffer-modified-tick))
+         (operation-id (org-note-client-new-operation-id))
+         (lease-proofs (org-note-operation-lease-proofs document-id))
+         (typed
+          (list :method "PUT"
+                :route (format "/api/org/documents/%s"
+                               (org-note-operation--path-segment document-id))
+                :query nil
+                :body (org-note-operation--mutation-body
+                       workspace-id
+                       `((path . ,path)
+                         (source . ,origin-source)
+                         (expected_revision . ,expected-revision)
+                         (lease_proofs . ,(or lease-proofs
+                                              (org-note-client-empty-object))))
+                       operation-id)
+                :response-validator
+                (lambda (response)
+                  (unless (> (gsmlg-org-note-org--put-response-revision
+                              response document-id)
+                             expected-revision)
+                    (user-error "Org Note document PUT did not advance revision")))))
+         (frozen (org-note-operation--freeze-request typed))
+         (record (list :mode 'save :operation-id operation-id :frozen frozen
+                       :buffer (current-buffer) :workspace-id workspace-id
+                       :document-id document-id :path path
+                       :expected-revision expected-revision
+                       :origin-source origin-source :proposed-source origin-source
+                       :origin-tick origin-tick :created-at (float-time)))
+         (prepared-p nil)
+         (dispatched-p nil)
+         (committed-p nil))
+    (condition-case err
+        (progn
+          (gsmlg-org-note-org--noncapture-marker-write
+           (gsmlg-org-note-org--document-save-marker record "prepared"))
+          (setq prepared-p t)
+          (unless (and (= origin-tick (buffer-modified-tick))
+                       (equal origin-source (org-note-document--source)))
+            (user-error "Org Note document changed before save dispatch"))
+          (gsmlg-org-note-org--noncapture-marker-write
+           (gsmlg-org-note-org--document-save-marker record "dispatched"))
+          (setq dispatched-p t)
+          (let ((response (org-note-operation--dispatch-frozen frozen)))
+            (setq committed-p t
+                  record (plist-put record :state 'committed-pending-refresh))
+            (gsmlg-org-note-org--complete-document-save-attempt record response)))
+      ((quit error)
+       (cond
+        (committed-p
+         (puthash document-id record gsmlg-org-note-org--document-ambiguities)
+         (gsmlg-org-note-org--noncapture-marker-write
+          (gsmlg-org-note-org--document-save-marker
+           record "committed-pending-refresh")))
+        ((and dispatched-p
+              (gsmlg-org-note-org--document-save-definitive-noncommit-p err))
+         (gsmlg-org-note-org--noncapture-marker-write
+          (gsmlg-org-note-org--document-save-marker
+           record "definitive-noncommit-pending-cleanup"))
+         (gsmlg-org-note-org--noncapture-marker-delete operation-id))
+        (dispatched-p
+         (setq record (plist-put record :state 'ambiguous))
+         (puthash document-id record gsmlg-org-note-org--document-ambiguities)
+         (gsmlg-org-note-org--noncapture-marker-write
+          (gsmlg-org-note-org--document-save-marker record "ambiguous")))
+        (prepared-p
+         (gsmlg-org-note-org--noncapture-marker-delete operation-id)))
+       (signal (car err) (cdr err))))))
+
+(defun gsmlg-org-note-org--around-document-save-remote (orig &rest args)
+  "Call ORIG with ARGS or route save through the bridge attempt protocol."
+  (if (not gsmlg-org-note-org-enable)
+      (apply orig args)
+    (unless gsmlg-org-note-org--activated
+      (gsmlg-org-note-org-activate))
+    (gsmlg-org-note-org--attempt-document-save)))
 
 (defvar gsmlg-org-note-org--clock-presentation nil
   "Active bridge clock presentation and registered lease metadata.")
@@ -2512,6 +2737,7 @@ errors mark the item ambiguous fail-closed and re-signal."
     (autoload 'org-clock-cancel "org-clock" nil t)
     (autoload 'org-clock-goto "org-clock" nil t)
     (autoload 'org-note-document-archive "org-note" nil t)
+    (autoload 'org-note-document--save-remote "org-note-document" nil nil)
     (advice-add #'org-todo :around #'gsmlg-org-note-org--around-todo)
     (advice-add #'org-agenda-todo :around #'gsmlg-org-note-org--around-agenda-todo)
     (advice-add #'org-refile :around #'gsmlg-org-note-org--around-refile)
@@ -2519,6 +2745,8 @@ errors mark the item ambiguous fail-closed and re-signal."
     (advice-add #'org-clock-out :around #'gsmlg-org-note-org--around-clock-out)
     (advice-add #'org-clock-cancel :around #'gsmlg-org-note-org--around-clock-cancel)
     (advice-add #'org-clock-goto :around #'gsmlg-org-note-org--around-clock-goto)
+    (advice-add #'org-note-document--save-remote :around
+                #'gsmlg-org-note-org--around-document-save-remote)
     (advice-add #'org-note-document-archive :around
                 #'gsmlg-org-note-org--around-archive-subtree)
     (dolist (entry '((org-archive-subtree . "org-archive")

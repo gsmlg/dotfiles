@@ -1106,7 +1106,9 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--noncapture-recovery-required nil)
 
 (defun gsmlg-org-note-org--noncapture-marker-directory (&optional create)
-  "Return the private non-Capture marker directory, optionally creating it."
+  "Return the private non-Capture marker directory.
+
+When CREATE is non-nil, create the directory if needed."
   (let ((dir (file-name-as-directory
               (expand-file-name "noncapture/"
                                 (gsmlg-state-file "org-note/mutation-recovery/")))))
@@ -1116,7 +1118,9 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
     dir))
 
 (defun gsmlg-org-note-org--noncapture-marker-file (operation-id &optional create)
-  "Return marker path for OPERATION-ID after strict validation."
+  "Return marker path for OPERATION-ID after strict validation.
+
+When CREATE is non-nil, create the parent directory if needed."
   (unless (and (stringp operation-id)
                (string-match-p "\\`[A-Za-z0-9][A-Za-z0-9_-]*\\'" operation-id))
     (user-error "Invalid Org Note mutation operation id"))

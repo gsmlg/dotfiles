@@ -4,6 +4,8 @@
 (require 'gsmlg-paths)
 (require 'gsmlg-org-note-org)
 
+;;; Code:
+
 (ert-deftest gsmlg-org-note-noncapture-marker-roundtrip-and-secret-rejection ()
   (let ((gsmlg-state-directory (make-temp-file "org-note-state-" t)))
     (unwind-protect

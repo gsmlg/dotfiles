@@ -1645,50 +1645,76 @@ errors mark the item ambiguous fail-closed and re-signal."
               (push (cons title pos) choices)))))
       (unless choices
         (user-error "No valid same-document Org Note refile target"))
-      (let* ((selected (completing-read "Refile under: " (nreverse choices) nil t))
+      (let* ((choices (nreverse choices))
+             (selected (completing-read "Refile under: " choices nil t))
              (target-pos (cdr (assoc selected choices))))
         (unless target-pos
           (user-error "Org Note refile target is invalid"))
-        (let* ((source (buffer-substring-no-properties (point-min) (point-max)))
-               (moved (buffer-substring-no-properties source-pos source-end))
-               (without (concat (substring source 0 source-pos)
-                                (substring source source-end)))
-               (insert-pos (save-excursion
-                             (goto-char target-pos)
-                             (org-end-of-subtree t t)
-                             (point)))
-               (new-source (concat (substring without 0
-                                               (min insert-pos (length without)))
-                                   moved
-                                   (substring without
-                                              (min insert-pos (length without)))))
+        (let* ((origin-source (buffer-substring-no-properties (point-min) (point-max)))
+               (origin-tick (buffer-modified-tick))
+               (origin-point (point))
+               (document-id org-note-document-id)
+               (workspace-id org-note-document-workspace-id)
+               (expected-revision org-note-document-revision)
+               (proposed
+                (with-temp-buffer
+                  (org-mode)
+                  (insert origin-source)
+                  (goto-char source-pos)
+                  (let ((source-marker (copy-marker (point) t))
+                        (source-end-marker (copy-marker source-end t))
+                        (target-marker (copy-marker target-pos t))
+                        (moved (buffer-substring-no-properties source-pos source-end)))
+                    (goto-char source-marker)
+                    (delete-region source-marker source-end-marker)
+                    (goto-char target-marker)
+                    (org-end-of-subtree t t)
+                    (unless (bolp) (insert "\n"))
+                    (insert moved)
+                    (buffer-string))))
                (operation-id (org-note-client-new-operation-id))
                (typed (list :method "PUT"
                             :route (format "/api/org/documents/%s"
-                                           (org-note-operation--path-segment
-                                            org-note-document-id))
+                                           (org-note-operation--path-segment document-id))
                             :query nil
                             :body (org-note-operation--mutation-body
-                                   org-note-document-workspace-id
+                                   workspace-id
                                    `((path . ,org-note-document-path)
-                                     (source . ,new-source)
-                                     (expected_revision . ,org-note-document-revision)
+                                     (source . ,proposed)
+                                     (expected_revision . ,expected-revision)
                                      (lease_proofs . ,(or
-                                                      (org-note-operation-lease-proofs
-                                                       org-note-document-id)
+                                                      (org-note-operation-lease-proofs document-id)
                                                       (org-note-client-empty-object))))
-                                   operation-id)))
+                                   operation-id)
+                            :response-validator
+                            (lambda (response)
+                              (let ((revision
+                                     (gsmlg-org-note-org--put-response-revision
+                                      response document-id)))
+                                (unless (> revision expected-revision)
+                                  (user-error "Org Note refile PUT did not advance revision"))))))
                (frozen (org-note-operation--freeze-request typed))
-               (response (org-note-operation--dispatch-frozen frozen))
-               (revision (gsmlg-org-note-org--put-response-revision
-                          response org-note-document-id)))
-          (unless (> revision org-note-document-revision)
-            (user-error "Org Note refile PUT did not advance revision"))
-          (erase-buffer)
-          (insert new-source)
-          (set-buffer-modified-p nil)
-          (setq-local org-note-document-revision revision)
-          (message "Org Note refile committed"))))))
+               (record (list :operation-id operation-id :frozen frozen
+                             :buffer (current-buffer) :origin-tick origin-tick
+                             :origin-point origin-point :origin-source origin-source
+                             :proposed-source proposed :expected-revision expected-revision))
+               response)
+          (when (gethash document-id gsmlg-org-note-org--document-ambiguities)
+            (user-error "Org Note refile for %s is ambiguous; resolve before retrying" document-id))
+          (condition-case err
+              (progn
+                (setq response (org-note-operation--dispatch-frozen frozen))
+                (gsmlg-org-note-org--finish-document-todo-attempt document-id record response)
+                (message "Org Note refile committed"))
+            ((quit error)
+             ;; A validated HTTP 409 is definitive non-commit.  Do not retain
+             ;; a replay record for it; only transport/ambiguous failures may
+             ;; be retried with the frozen wire envelope.
+             (if (and (eq (car err) 'org-note-http-error)
+                      (= (or (plist-get (cadr err) :status) 0) 409))
+                 (remhash document-id gsmlg-org-note-org--document-ambiguities)
+               (puthash document-id record gsmlg-org-note-org--document-ambiguities))
+             (signal (car err) (cdr err)))))))))
 
 (defun gsmlg-org-note-org--around-clock-in (orig &rest args)
   "Call ORIG with ARGS or claim the current identified Org Note item."

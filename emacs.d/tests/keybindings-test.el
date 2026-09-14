@@ -20,6 +20,7 @@
 (declare-function vertico-next "vertico" ())
 (declare-function vertico-previous "vertico" ())
 (defvar corfu-map)
+(defvar css-indent-offset)
 (defvar magit-diff-refine-hunk)
 (defvar magit-display-buffer-function)
 (defvar vertico-map)

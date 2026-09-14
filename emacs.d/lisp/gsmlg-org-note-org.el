@@ -43,6 +43,9 @@
                   (response workspace-id item-id document-id expected-revision
                             target-state operation-id &optional expected-lease-id
                             expected-kind))
+(declare-function org-note-operation--validate-claim-response
+                  "org-note-operation"
+                  (response workspace-id item-id document-id kind operation-id))
 (declare-function org-note-operation--registered-transition-lease
                   "org-note-operation"
                   (workspace-id item-id proof))
@@ -53,6 +56,10 @@
                   (document-id))
 (declare-function org-note-operation-claim "org-note-operation"
                   (workspace-id item-id document-id expected-revision kind &rest args))
+(declare-function org-note-operation-register-claim "org-note-operation"
+                  (workspace-id item-id document-id kind response))
+(declare-function org-note-operation-forget-lease "org-note-operation"
+                  (workspace-id item-id kind))
 (declare-function org-note-operation-release "org-note-operation"
                   (workspace-id item-id document-id expected-revision lease-id kind
                                 fencing-token &rest args))
@@ -1045,6 +1052,76 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--clock-presentation nil
   "Active bridge clock presentation and registered lease metadata.")
 
+(defvar gsmlg-org-note-org--clock-ambiguities (make-hash-table :test #'equal)
+  "Frozen claim or release attempts awaiting same-operation-id recovery.")
+
+(defun gsmlg-org-note-org--clock-claim-response-validator
+    (response workspace-id item-id document-id expected-revision kind operation-id)
+  "Validate claim RESPONSE and require its document revision to be current."
+  (org-note-operation--validate-claim-response
+   response workspace-id item-id document-id kind operation-id)
+  (let* ((context (gsmlg-org-note-org--context-field
+                   (gsmlg-org-note-org--context-field response 'context)
+                   'document))
+         (revision (gsmlg-org-note-org--context-field context 'revision)))
+    (unless (and (integerp revision) (>= revision expected-revision))
+      (user-error "Org Note claim response revision is older than preflight")))
+  response)
+
+(defun gsmlg-org-note-org--clock-register-presentation
+    (record response lease)
+  "Register LEASE and presentation from successful frozen claim RECORD."
+  (setq gsmlg-org-note-org--clock-presentation
+        (list :workspace-id (plist-get record :workspace-id)
+              :item-id (plist-get record :item-id)
+              :document-id (plist-get record :document-id)
+              :kind (plist-get record :kind)
+              :operation-id (plist-get record :operation-id)
+              :started-at (or (plist-get record :started-at) (float-time))
+              :response response
+              :lease lease)))
+
+(defun gsmlg-org-note-org-retry-ambiguous-clock (operation-id)
+  "Replay frozen clock attempt OPERATION-ID after an ambiguous outcome."
+  (interactive "sClock operation ID: ")
+  (let ((record (gethash operation-id gsmlg-org-note-org--clock-ambiguities)))
+    (unless record
+      (user-error "No replayable Org Note clock operation %s" operation-id))
+    (let ((response (org-note-operation--dispatch-frozen
+                     (plist-get record :frozen))))
+      (if (eq (plist-get record :action) 'claim)
+          (progn
+            (gsmlg-org-note-org--clock-claim-response-validator
+             response (plist-get record :workspace-id)
+             (plist-get record :item-id) (plist-get record :document-id)
+             (plist-get record :expected-revision) (plist-get record :kind)
+             operation-id)
+            (let ((lease (org-note-operation-register-claim
+                          (plist-get record :workspace-id)
+                          (plist-get record :item-id)
+                          (plist-get record :document-id)
+                          (plist-get record :kind) response)))
+              (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+              (gsmlg-org-note-org--clock-register-presentation
+               record response lease)
+              (message "Org Note clock started")))
+        (let* ((context (org-note-operation-get-item-context
+                         (plist-get record :workspace-id)
+                         (plist-get record :item-id)))
+               (lease (gsmlg-org-note-org--context-field
+                       (gsmlg-org-note-org--context-field context 'data)
+                       'context 'lease)))
+          (when (and lease
+                     (equal (gsmlg-org-note-org--context-field lease 'id)
+                            (plist-get record :lease-id)))
+            (user-error "Org Note clock release remains unresolved"))
+          (org-note-operation-forget-lease
+           (plist-get record :workspace-id) (plist-get record :item-id)
+           (plist-get record :kind))
+          (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+          (setq gsmlg-org-note-org--clock-presentation nil)
+          (message "Org Note clock stopped"))))))
+
 (defun gsmlg-org-note-org--clock-reconcile ()
   "Return the active clock presentation when its lease remains registered."
   (let ((clock gsmlg-org-note-org--clock-presentation))
@@ -1732,21 +1809,43 @@ errors mark the item ambiguous fail-closed and re-signal."
       (let* ((origin (gsmlg-org-note-org--preflight-identified-item
                       (car ids) (cdr ids)))
              (operation-id (org-note-client-new-operation-id))
-             (response (org-note-operation-claim
-                        (car ids) (cdr ids)
-                        (plist-get origin :document-id)
-                        (plist-get origin :revision)
-                        "execution" :operation-id operation-id))
-             (lease (org-note-operation-find-lease
-                     (car ids) (cdr ids) "execution")))
-        (unless lease
-          (user-error "Org Note clock claim did not register a lease"))
-        (setq gsmlg-org-note-org--clock-presentation
-              (list :workspace-id (car ids) :item-id (cdr ids)
-                    :document-id (plist-get origin :document-id)
-                    :kind "execution" :operation-id operation-id
-                    :started-at (float-time) :response response))
-        (message "Org Note clock started")))))
+             (workspace-id (car ids)) (item-id (cdr ids))
+             (document-id (plist-get origin :document-id))
+             (expected-revision (plist-get origin :revision))
+             (kind "execution")
+             (typed (list :method "POST"
+                          :route (format "/api/org/items/%s/claim"
+                                         (org-note-operation--path-segment item-id))
+                          :query nil
+                          :body (org-note-operation--mutation-body
+                                 workspace-id
+                                 `((document_id . ,document-id)
+                                   (expected_document_revision . ,expected-revision)
+                                   (kind . ,kind))
+                                 operation-id)
+                          :response-validator
+                          (lambda (response)
+                            (gsmlg-org-note-org--clock-claim-response-validator
+                             response workspace-id item-id document-id
+                             expected-revision kind operation-id))))
+             (frozen (org-note-operation--freeze-request typed))
+             (record (list :action 'claim :operation-id operation-id
+                           :workspace-id workspace-id :item-id item-id
+                           :document-id document-id :expected-revision expected-revision
+                           :kind kind :started-at (float-time) :frozen frozen)))
+        (condition-case err
+            (let* ((response (org-note-operation--dispatch-frozen frozen))
+                   (lease (org-note-operation-register-claim
+                           workspace-id item-id document-id kind response)))
+              (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+              (gsmlg-org-note-org--clock-register-presentation record response lease)
+              (message "Org Note clock started"))
+          ((quit error)
+           (if (and (eq (car err) 'org-note-http-error)
+                    (= (or (plist-get (cadr err) :status) 0) 409))
+               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+             (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
+           (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--around-clock-out (orig &rest args)
   "Call ORIG with ARGS or release the stored bridge clock lease."
@@ -1764,18 +1863,50 @@ errors mark the item ambiguous fail-closed and re-signal."
                         (plist-get clock :kind)))))
       (unless (and clock lease)
         (user-error "No active Org Note clock"))
-      (org-note-operation-release
-       (plist-get clock :workspace-id) (plist-get clock :item-id)
-       (plist-get clock :document-id)
-       (plist-get (gsmlg-org-note-org--preflight-identified-item
-                   (plist-get clock :workspace-id)
-                   (plist-get clock :item-id)) :revision)
-       (org-note-operation-lease-lease-id lease)
-       (plist-get clock :kind)
-       (org-note-operation-lease-fencing-token lease)
-       :operation-id (org-note-client-new-operation-id))
-      (setq gsmlg-org-note-org--clock-presentation nil)
-      (message "Org Note clock stopped"))))
+      (let* ((workspace-id (plist-get clock :workspace-id))
+             (item-id (plist-get clock :item-id))
+             (document-id (plist-get clock :document-id))
+             (pre (gsmlg-org-note-org--preflight-identified-item workspace-id item-id))
+             (operation-id (org-note-client-new-operation-id))
+             (kind (plist-get clock :kind))
+             (lease-id (org-note-operation-lease-lease-id lease))
+             (fencing-token (org-note-operation-lease-fencing-token lease))
+             (typed (list :method "POST"
+                          :route (format "/api/org/items/%s/claim/release"
+                                         (org-note-operation--path-segment item-id))
+                          :query nil
+                          :body (org-note-operation--mutation-body
+                                 workspace-id
+                                 `((document_id . ,document-id)
+                                   (expected_document_revision . ,(plist-get pre :revision))
+                                   (lease_id . ,lease-id) (kind . ,kind)
+                                   (fencing_token . ,fencing-token))
+                                 operation-id)))
+             (frozen (org-note-operation--freeze-request typed))
+             (record (list :action 'release :operation-id operation-id
+                           :workspace-id workspace-id :item-id item-id
+                           :document-id document-id :expected-revision (plist-get pre :revision)
+                           :kind kind :lease-id lease-id :frozen frozen)))
+        (condition-case err
+            (progn
+              (org-note-operation--dispatch-frozen frozen)
+              (let* ((context (org-note-operation-get-item-context workspace-id item-id))
+                     (remote-lease (gsmlg-org-note-org--context-field
+                                    (gsmlg-org-note-org--context-field context 'data)
+                                    'context 'lease)))
+                (when (and remote-lease
+                           (equal (gsmlg-org-note-org--context-field remote-lease 'id)
+                                  lease-id))
+                  (user-error "Org Note clock release was not confirmed")))
+              (org-note-operation-forget-lease workspace-id item-id kind)
+              (setq gsmlg-org-note-org--clock-presentation nil)
+              (message "Org Note clock stopped"))
+          ((quit error)
+           (if (and (eq (car err) 'org-note-http-error)
+                    (= (or (plist-get (cadr err) :status) 0) 409))
+               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+             (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
+           (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--around-clock-cancel (orig &rest args)
   "Call ORIG with ARGS or release the stored bridge clock lease."

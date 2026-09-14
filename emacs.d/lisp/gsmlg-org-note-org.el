@@ -1957,9 +1957,6 @@ Does not truncate a valid last-good snapshot."
         (progn
           (require 'org-note)
           (require 'org)
-          ;; Bridge clocks are deliberately session-only and never use Org's
-          ;; native clock persistence or drawer machinery.
-          (setq org-clock-persist nil)
           (gsmlg-org-note-org-check-noncapture-recovery)
           (gsmlg-org-note-org--install-todo-keywords)
           (gsmlg-org-note-org--install-feed-hooks)

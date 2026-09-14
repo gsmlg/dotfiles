@@ -22,6 +22,25 @@
                           (acquired_at . 1) (last_heartbeat_at . 1)
                           (expires_at . 4102444800) (status . "active")))))))
 
+(ert-deftest gsmlg-org-note-activation-preserves-native-clock-persistence ()
+  "Bridge activation leaves native Org clock persistence configured."
+  (let ((gsmlg-org-note-org-enable t)
+        (gsmlg-org-note-org--activated nil)
+        (gsmlg-org-note-org--activating nil)
+        (org-clock-persist 'history))
+    (cl-letf (((symbol-function 'gsmlg-org-note-org-check-noncapture-recovery)
+               #'ignore)
+              ((symbol-function 'gsmlg-org-note-org--install-todo-keywords)
+               #'ignore)
+              ((symbol-function 'gsmlg-org-note-org--install-feed-hooks)
+               #'ignore)
+              ((symbol-function 'gsmlg-org-note-org--install-mutation-hooks)
+               #'ignore)
+              ((symbol-function 'gsmlg-org-apply-path-settings)
+               #'ignore))
+      (gsmlg-org-note-org-activate)
+      (should (eq org-clock-persist 'history)))))
+
 (ert-deftest gsmlg-org-note-clock-claim-validates-revision ()
   "A claim response older than preflight is rejected."
   (let ((org-note-actor-id "actor"))

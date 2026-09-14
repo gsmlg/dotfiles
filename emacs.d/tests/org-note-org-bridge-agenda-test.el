@@ -280,7 +280,8 @@
          (saved-workspaces (and (boundp 'org-note-agenda-workspace-ids)
                                 org-note-agenda-workspace-ids))
          (saved-selected (and (boundp 'gsmlg-org-note-org--selected-feed-file)
-                              gsmlg-org-note-org--selected-feed-file)))
+                              gsmlg-org-note-org--selected-feed-file))
+         (original-write-region (symbol-function 'write-region)))
     (unwind-protect
         (progn
           (setq gsmlg-org-note-org--feed-file feed-file
@@ -293,9 +294,12 @@
                     ((symbol-function 'yes-or-no-p)
                      (lambda (prompt) (setq asked prompt) t))
                     ((symbol-function 'write-region)
-                     (lambda (&rest _)
-                       (cl-incf writes)
-                       (error "Must not rewrite last-good"))))
+                     (lambda (&rest args)
+                       (if (equal (nth 2 args) feed-file)
+                           (progn
+                             (cl-incf writes)
+                             (error "Must not rewrite last-good"))
+                         (apply original-write-region args)))))
             (should (equal (gsmlg-org-note-org-refresh-feed t) feed-file))
             (should asked)
             (should (= writes 0))

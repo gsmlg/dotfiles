@@ -148,6 +148,18 @@ When non-nil, it must match `org-note-endpoint' before Capture can mutate."
 (defvar gsmlg-org-note-org--capture-reservation nil
   "Process-local Capture reservation owner record, or nil.")
 
+(defcustom gsmlg-org-note-org-reservation-ownerless-grace 2.0
+  "Seconds to wait before an ownerless reservation may be recovered."
+  :type 'number
+  :group 'gsmlg-org-note-org)
+
+(defun gsmlg-org-note-org--process-start-token (pid)
+  "Return a best-effort stable start token for PID, or nil."
+  (let ((attrs (and (integerp pid) (process-attributes pid))))
+    (let ((token (or (cdr (assq 'start attrs))
+                     (cdr (assq 'etime attrs)))))
+      (and token (format "%s" token)))))
+
 (defun gsmlg-org-note-org--capture-reservation-directory ()
   "Return the private Capture reservation directory."
   (gsmlg-state-file "org-note/capture.lock/"))
@@ -167,14 +179,26 @@ When non-nil, it must match `org-note-endpoint' before Capture can mutate."
                            :object-type 'alist)
                         (error nil))))
           (if (and owner (integerp (alist-get 'pid owner))
-                   (process-attributes (alist-get 'pid owner)))
+                   (process-attributes (alist-get 'pid owner))
+                   (or (null (alist-get 'start_token owner))
+                       (equal (alist-get 'start_token owner)
+                              (gsmlg-org-note-org--process-start-token
+                               (alist-get 'pid owner)))))
               (user-error "Another Org Note Capture is already in progress")
-            (user-error "Org Note Capture reservation is busy"))))
+            (if (and (not (file-exists-p owner-file))
+                     (< (- (float-time)
+                           (float-time (file-attribute-modification-time
+                                        (file-attributes directory))))
+                        gsmlg-org-note-org-reservation-ownerless-grace))
+                (user-error "Org Note Capture reservation owner is being published")
+              (user-error "Org Note Capture reservation is busy")))))
       (make-directory directory t)
       (set-file-modes directory #o700)
       (let ((owner `((hostname . ,(system-name))
                      (pid . ,(emacs-pid))
-                     (started_at . ,(emacs-uptime))
+                     (started_at . ,(float-time))
+                     (start_token . ,(gsmlg-org-note-org--process-start-token
+                                      (emacs-pid)))
                      (nonce . ,(org-note-client-new-operation-id)))))
         (let ((file (expand-file-name "owner.json" directory)))
           (with-temp-file file
@@ -236,6 +260,21 @@ When non-nil, it must match `org-note-endpoint' before Capture can mutate."
                         '(ambiguous committed-pending-journal committed
                           committed-local-divergence))))
     (gsmlg-org-note-org--capture-reservation-release)))
+
+(defun gsmlg-org-note-org--release-transient-reservations-on-exit ()
+  "Release only transient reservations during normal Emacs exit."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when (and (boundp 'gsmlg-org-note-org--capture-attempt)
+                 gsmlg-org-note-org--capture-attempt
+                 (not (memq (plist-get gsmlg-org-note-org--capture-attempt :state)
+                            '(ambiguous committed-pending-journal committed
+                              committed-local-divergence))))
+        (gsmlg-org-note-org--capture-reservation-release))))
+  (unless (and gsmlg-org-note-org--capture-attempt
+               (memq (plist-get gsmlg-org-note-org--capture-attempt :state)
+                     '(ambiguous committed-pending-journal committed-local-divergence)))
+    (gsmlg-org-note-org--publication-release)))
 
 (defconst gsmlg-org-note-org--capture-journal-schema-version 1
   "Current schema version for Org Note Capture recovery journals.")
@@ -1197,9 +1236,11 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 
 (defun gsmlg-org-note-org--clock-claim-response-validator
     (response workspace-id item-id document-id expected-revision kind operation-id)
-  "Validate RESPONSE for the claim identified by WORKSPACE-ID, ITEM-ID, DOCUMENT-ID, EXPECTED-REVISION, KIND, and OPERATION-ID.
+  "Validate a claim RESPONSE.
 
-Require its document revision to be at least EXPECTED-REVISION."
+Require identity fields WORKSPACE-ID, ITEM-ID, DOCUMENT-ID, KIND, and
+OPERATION-ID to match, and require its document revision to be at least
+EXPECTED-REVISION."
   (org-note-operation--validate-claim-response
    response workspace-id item-id document-id kind operation-id)
   (let* ((context (gsmlg-org-note-org--context-field
@@ -2633,10 +2674,7 @@ propagate to `gsmlg-org-note-org-refresh-feed' for last-good handling."
 (defun gsmlg-org-note-org--write-feed (contents &optional path)
   "Write CONTENTS to PATH or the last-good Org Note agenda feed file.
 
-Phase 1 uses a direct single-process `write-region'.  Cross-process
-publication reservation locks, nonce-checked release, and acquire-
-before-fetch ordering (spec blockers 69, 74, 79) are deferred to
-Phase 7."
+Publication locking is performed by the refresh entrypoint before fetch."
   (let ((target (or path gsmlg-org-note-org--feed-file)))
     (gsmlg-ensure-parent-directory target)
     (unless (and (file-readable-p target)
@@ -2645,6 +2683,56 @@ Phase 7."
                    (equal contents (buffer-string))))
       (write-region contents nil target nil 'silent))
     target))
+
+(defvar gsmlg-org-note-org--publication-reservation nil)
+
+(defun gsmlg-org-note-org--publication-reservation-directory (workspace-ids)
+  "Return endpoint/workspace keyed publication lock for WORKSPACE-IDS."
+  (let* ((key (concat (gsmlg-org-note-org--endpoint-identity) "\0"
+                      (mapconcat #'identity workspace-ids "\0")))
+         (digest (secure-hash 'sha256 key)))
+    (gsmlg-state-file (format "org-note/publication-%s.lock/"
+                              (substring digest 0 32)))))
+
+(defun gsmlg-org-note-org--publication-acquire (workspace-ids)
+  "Acquire the publication reservation before any remote fetch."
+  (let ((directory (directory-file-name
+                    (gsmlg-org-note-org--publication-reservation-directory
+                     workspace-ids))))
+    (condition-case err
+        (progn
+          (make-directory directory t)
+          (set-file-modes directory #o700)
+          (let ((owner `((pid . ,(emacs-pid))
+                         (start_token . ,(gsmlg-org-note-org--process-start-token
+                                          (emacs-pid)))
+                         (nonce . ,(org-note-client-new-operation-id)))))
+            (with-temp-file (expand-file-name "owner.json" directory)
+              (insert (json-serialize owner)))
+            (set-file-modes (expand-file-name "owner.json" directory) #o600)
+            (setq gsmlg-org-note-org--publication-reservation
+                  (list :directory directory :owner owner))))
+      (file-already-exists
+       (user-error "Another Org Note agenda publication is already in progress")))))
+
+(defun gsmlg-org-note-org--publication-release ()
+  "Release publication reservation when still owned by this process."
+  (let* ((reservation gsmlg-org-note-org--publication-reservation)
+         (directory (plist-get reservation :directory))
+         (owner-file (and directory (expand-file-name "owner.json" directory))))
+    (when (and reservation (file-readable-p owner-file))
+      (let ((owner (condition-case nil
+                       (json-parse-string
+                        (with-temp-buffer
+                          (insert-file-contents-literally owner-file)
+                          (buffer-string))
+                        :object-type 'alist)
+                     (error nil))))
+        (when (equal (alist-get 'nonce owner)
+                     (alist-get 'nonce (plist-get reservation :owner)))
+          (delete-file owner-file)
+          (delete-directory directory))))
+    (setq gsmlg-org-note-org--publication-reservation nil)))
 
 (defun gsmlg-org-note-org--empty-feed-contents (&optional workspace-ids)
   "Return the contents of an empty Org Note agenda feed.
@@ -2788,17 +2876,21 @@ Pre-rename failures offer a matching last-good snapshot via
                  (file-readable-p gsmlg-org-note-org--feed-file))
             (gsmlg-org-note-org--select-feed gsmlg-org-note-org--feed-file))
            (t
-            (condition-case err
-                (progn
-                  (gsmlg-org-note-org--write-feed
-                   (gsmlg-org-note-org--build-feed-contents workspace-ids))
-                  (setq gsmlg-org-note-org--last-workspace-ids
-                        (copy-sequence workspace-ids))
-                  (gsmlg-org-note-org--select-feed
-                   gsmlg-org-note-org--feed-file))
-              (error
-               (gsmlg-org-note-org--offer-last-good-or-abort
-                workspace-ids err))))))
+            (require 'org-note-client)
+            (gsmlg-org-note-org--publication-acquire workspace-ids)
+            (unwind-protect
+                (condition-case err
+                    (progn
+                      (gsmlg-org-note-org--write-feed
+                       (gsmlg-org-note-org--build-feed-contents workspace-ids))
+                      (setq gsmlg-org-note-org--last-workspace-ids
+                            (copy-sequence workspace-ids))
+                      (gsmlg-org-note-org--select-feed
+                       gsmlg-org-note-org--feed-file))
+                  (error
+                   (gsmlg-org-note-org--offer-last-good-or-abort
+                    workspace-ids err)))
+              (gsmlg-org-note-org--publication-release)))))
       (setq gsmlg-org-note-org--refresh-active nil)))
   (gsmlg-org-note-org-feed-file))
 
@@ -2825,6 +2917,9 @@ Pre-rename failures offer a matching last-good snapshot via
       (funcall orig-fun highlight))))
 
 (gsmlg-org-note-org-check-capture-recovery)
+
+(add-hook 'kill-emacs-hook
+          #'gsmlg-org-note-org--release-transient-reservations-on-exit)
 
 (provide 'gsmlg-org-note-org)
 ;;; gsmlg-org-note-org.el ends here

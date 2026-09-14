@@ -36,6 +36,14 @@
                   (typed-request))
 (declare-function org-note-operation--dispatch-frozen "org-note-operation"
                   (frozen-envelope))
+(declare-function org-note-operation--build-frozen-claim "org-note-operation"
+                  (workspace-id item-id document-id expected-revision kind operation-id))
+(declare-function org-note-operation--dispatch-frozen-claim "org-note-operation"
+                  (frozen workspace-id item-id document-id kind))
+(declare-function org-note-operation--build-frozen-release "org-note-operation"
+                  (&rest args))
+(declare-function org-note-operation--dispatch-frozen-release "org-note-operation"
+                  (record))
 (declare-function org-note-validation-canonical-endpoint "org-note-validation"
                   (url-or-string))
 (declare-function org-note-operation--validate-transition-response
@@ -77,6 +85,12 @@
 (declare-function org-note-document--kill-buffer-safely "org-note" ())
 (declare-function org-note--document-buffer-name "org-note" (workspace-id))
 (declare-function org-clock-goto "org-clock" (&rest args))
+(declare-function org-clock-out "org-clock" (&rest args))
+(declare-function org-clock-cancel "org-clock" (&rest args))
+(declare-function org-clock-menu "org-clock" ())
+(declare-function org-pomodoro "org-pomodoro" ())
+(declare-function org-note-document-archive "org-note" (&rest args))
+(declare-function org-note-document--save-remote "org-note-document" (&rest args))
 (declare-function org-note-configure-agenda-workspaces "org-note" ())
 (declare-function org-note-validation-page-cursor "org-note-validation"
                   (cursor))
@@ -100,6 +114,10 @@
 (defvar org-todo-key-trigger)
 (defvar org-todo-keywords)
 (defvar org-todo-keywords-1)
+(defvar org-clock-persist)
+(defvar org-clock-current-task)
+(defvar org-clock-marker)
+(defvar global-mode-string)
 (declare-function gsmlg-org-apply-path-settings "gsmlg-org" ())
 (defvar org-use-fast-todo-selection)
 (defvar org-note-document-workspace-id)
@@ -1320,8 +1338,24 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 (defvar gsmlg-org-note-org--clock-presentation nil
   "Active bridge clock presentation and registered lease metadata.")
 
+(defconst gsmlg-org-note-org--clock-mode-line-segment
+  '(:eval (gsmlg-org-note-org--clock-display))
+  "Bridge-owned mode-line segment for the active Org Note clock.")
+
+(defvar gsmlg-org-note-org--clock-mode-line-installed nil
+  "Non-nil when the bridge installed its clock display segment.")
+
 (defvar gsmlg-org-note-org--clock-ambiguities (make-hash-table :test #'equal)
   "Frozen claim or release attempts awaiting same-operation-id recovery.")
+
+(defun gsmlg-org-note-org--clock-unresolved-p ()
+  "Return non-nil when any clock claim or release needs exact recovery."
+  (> (hash-table-count gsmlg-org-note-org--clock-ambiguities) 0))
+
+(defun gsmlg-org-note-org--clock-require-unambiguous ()
+  "Refuse a clock mutation while an earlier attempt remains unresolved."
+  (when (gsmlg-org-note-org--clock-unresolved-p)
+    (user-error "Resolve the pending Org Note clock operation first")))
 
 (defvar gsmlg-org-note-org--archive-ambiguities (make-hash-table :test #'equal)
   "Frozen whole-document archive attempts awaiting explicit replay.")
@@ -1671,9 +1705,40 @@ EXPECTED-REVISION."
               :document-id (plist-get record :document-id)
               :kind (plist-get record :kind)
               :operation-id (plist-get record :operation-id)
+              :title (or (plist-get record :title) (plist-get record :item-id))
               :started-at (or (plist-get record :started-at) (float-time))
               :response response
-              :lease lease)))
+              :lease lease)
+        gsmlg-org-note-org--clock-mode-line-installed t)
+  (unless (member gsmlg-org-note-org--clock-mode-line-segment
+                  global-mode-string)
+    (setq global-mode-string
+          (append (if (listp global-mode-string)
+                      global-mode-string
+                    (and global-mode-string (list global-mode-string)))
+                  (list gsmlg-org-note-org--clock-mode-line-segment))))
+  (force-mode-line-update t))
+
+(defun gsmlg-org-note-org--clock-clear-presentation ()
+  "Clear bridge clock presentation without performing a network mutation."
+  (setq gsmlg-org-note-org--clock-presentation nil)
+  (when gsmlg-org-note-org--clock-mode-line-installed
+    (setq global-mode-string
+          (delete gsmlg-org-note-org--clock-mode-line-segment
+                  global-mode-string)
+          gsmlg-org-note-org--clock-mode-line-installed nil))
+  (force-mode-line-update t))
+
+(defun gsmlg-org-note-org--clock-display ()
+  "Return the current bridge clock title and elapsed duration for display."
+  (let ((clock (condition-case nil
+                   (gsmlg-org-note-org--clock-reconcile)
+                 (user-error nil))))
+    (when clock
+      (format " Org Note %s [%s]"
+              (plist-get clock :title)
+              (format-seconds "%h:%.2m" (max 0 (- (float-time)
+                                                   (plist-get clock :started-at))))))))
 
 (defun gsmlg-org-note-org-retry-ambiguous-clock (operation-id)
   "Replay frozen clock attempt OPERATION-ID after an ambiguous outcome."
@@ -1681,52 +1746,42 @@ EXPECTED-REVISION."
   (let ((record (gethash operation-id gsmlg-org-note-org--clock-ambiguities)))
     (unless record
       (user-error "No replayable Org Note clock operation %s" operation-id))
-    (let ((response (org-note-operation--dispatch-frozen
-                     (plist-get record :frozen))))
-      (if (eq (plist-get record :action) 'claim)
+    (if (eq (plist-get record :action) 'claim)
+        (let ((response
+               (org-note-operation--dispatch-frozen-claim
+                (plist-get record :frozen)
+                (plist-get record :workspace-id) (plist-get record :item-id)
+                (plist-get record :document-id) (plist-get record :kind))))
           (progn
-            (gsmlg-org-note-org--clock-claim-response-validator
-             response (plist-get record :workspace-id)
-             (plist-get record :item-id) (plist-get record :document-id)
-             (plist-get record :expected-revision) (plist-get record :kind)
-             operation-id)
-            (let ((lease (org-note-operation-register-claim
+            (let ((lease (org-note-operation-find-lease
                           (plist-get record :workspace-id)
-                          (plist-get record :item-id)
-                          (plist-get record :document-id)
-                          (plist-get record :kind) response)))
+                          (plist-get record :item-id) (plist-get record :kind))))
               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
               (gsmlg-org-note-org--clock-register-presentation
                record response lease)
-              (message "Org Note clock started")))
-        (let* ((context (org-note-operation-get-item-context
-                         (plist-get record :workspace-id)
-                         (plist-get record :item-id)))
-               (lease (gsmlg-org-note-org--context-field
-                       (gsmlg-org-note-org--context-field context 'data)
-                       'context 'lease)))
-          (when (and lease
-                     (equal (gsmlg-org-note-org--context-field lease 'id)
-                            (plist-get record :lease-id)))
-            (user-error "Org Note clock release remains unresolved"))
-          (org-note-operation-forget-lease
-           (plist-get record :workspace-id) (plist-get record :item-id)
-           (plist-get record :kind))
-          (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
-          (setq gsmlg-org-note-org--clock-presentation nil)
-          (message "Org Note clock stopped"))))))
+              (message "Org Note clock started"))))
+      (prog1
+          (org-note-operation--dispatch-frozen-release
+           (plist-get record :release-record))
+        (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+        (gsmlg-org-note-org--clock-clear-presentation)
+        (message "Org Note clock stopped")))))
 
 (defun gsmlg-org-note-org--clock-reconcile ()
   "Return the active clock presentation when its lease remains registered."
   (let ((clock gsmlg-org-note-org--clock-presentation))
     (when clock
-      (unless (org-note-operation-find-lease
-               (plist-get clock :workspace-id)
-               (plist-get clock :item-id)
-               (plist-get clock :kind))
-        (setq gsmlg-org-note-org--clock-presentation nil)
+      (let ((lease (org-note-operation-find-lease
+                    (plist-get clock :workspace-id)
+                    (plist-get clock :item-id)
+                    (plist-get clock :kind))))
+        (unless (and lease
+                     (equal (org-note-operation-lease-lease-id lease)
+                            (org-note-operation-lease-lease-id
+                             (plist-get clock :lease))))
+          (gsmlg-org-note-org--clock-clear-presentation)
         (user-error "Org Note clock lease is no longer active")))
-    gsmlg-org-note-org--clock-presentation))
+    gsmlg-org-note-org--clock-presentation)))
 
 (defvar gsmlg-org-note-org--agenda-command-active nil
   "Non-nil while the outermost guarded Agenda producer is running.")
@@ -1822,10 +1877,6 @@ EXPECTED-REVISION."
 
 (defconst gsmlg-org-note-org--agenda-mutator-entrypoints
   '(org-agenda-refile
-    org-agenda-clock-in
-    org-agenda-clock-out
-    org-agenda-clock-cancel
-    org-agenda-clock-goto
     org-agenda-archive-with
     org-agenda-bulk-action)
   "Native Agenda mutators intercepted before feed marker/file operations.")
@@ -1849,6 +1900,12 @@ This must not load Org Note or perform network I/O."
     (dolist (command gsmlg-org-note-org--agenda-mutator-entrypoints)
       (autoload command "org-agenda" nil t)
       (advice-add command :around #'gsmlg-org-note-org--around-agenda-mutator))
+    (dolist (entry '((org-agenda-clock-in . gsmlg-org-note-org--around-agenda-clock-in)
+                     (org-agenda-clock-out . gsmlg-org-note-org--around-agenda-clock-out)
+                     (org-agenda-clock-cancel . gsmlg-org-note-org--around-agenda-clock-cancel)
+                     (org-agenda-clock-goto . gsmlg-org-note-org--around-agenda-clock-goto)))
+      (autoload (car entry) "org-agenda" nil t)
+      (advice-add (car entry) :around (cdr entry)))
     (gsmlg-org-note-org--install-mutation-hooks)))
 
 (defun gsmlg-org-note-org-feed-file ()
@@ -1899,6 +1956,9 @@ Does not truncate a valid last-good snapshot."
         (progn
           (require 'org-note)
           (require 'org)
+          ;; Bridge clocks are deliberately session-only and never use Org's
+          ;; native clock persistence or drawer machinery.
+          (setq org-clock-persist nil)
           (gsmlg-org-note-org-check-noncapture-recovery)
           (gsmlg-org-note-org--install-todo-keywords)
           (gsmlg-org-note-org--install-feed-hooks)
@@ -1969,6 +2029,7 @@ unsaved document edits, or invalid/mismatched context."
          (document-id (gsmlg-org-note-org--context-field document 'id))
          (revision (gsmlg-org-note-org--context-field document 'revision))
          (state (gsmlg-org-note-org--context-field item 'state))
+         (title (gsmlg-org-note-org--context-field item 'title))
          (item-ws (gsmlg-org-note-org--context-field item 'workspace_id))
          (item-doc (gsmlg-org-note-org--context-field item 'document_id))
          (item-id* (gsmlg-org-note-org--context-field item 'id)))
@@ -1998,6 +2059,7 @@ unsaved document edits, or invalid/mismatched context."
             :document-id document-id
             :revision revision
             :state state
+            :title title
             :lease-proof proof))))
 
 (defun gsmlg-org-note-org--mark-transition-ambiguous (workspace-id item-id
@@ -2565,6 +2627,54 @@ errors mark the item ambiguous fail-closed and re-signal."
                (puthash document-id record gsmlg-org-note-org--document-ambiguities))
              (signal (car err) (cdr err)))))))))
 
+(defun gsmlg-org-note-org--legacy-native-clock-p ()
+  "Return non-nil when a native Org clock is already active."
+  (or (and (boundp 'org-clock-current-task) org-clock-current-task)
+      (and (boundp 'org-clock-marker)
+           (markerp org-clock-marker)
+           (marker-buffer org-clock-marker))))
+
+(defun gsmlg-org-note-org--clock-in (ids)
+  "Claim the Org Note item identified by IDS and start its presentation."
+  (gsmlg-org-note-org--clock-require-unambiguous)
+  (when (gsmlg-org-note-org--legacy-native-clock-p)
+    (user-error "Resolve the active native Org clock before bridge clock-in"))
+  (when (gsmlg-org-note-org--clock-reconcile)
+    (user-error "An Org Note clock is already active"))
+  (unless ids
+    (user-error "Org Note clock-in requires item ids"))
+  (let* ((endpoint (org-note-validation-canonical-endpoint org-note-endpoint))
+         (origin (gsmlg-org-note-org--preflight-identified-item
+                  (car ids) (cdr ids)))
+             (operation-id (org-note-client-new-operation-id))
+             (workspace-id (car ids)) (item-id (cdr ids))
+             (document-id (plist-get origin :document-id))
+             (expected-revision (plist-get origin :revision))
+             (kind "execution")
+             (frozen (org-note-operation--build-frozen-claim
+                      workspace-id item-id document-id expected-revision kind
+                      operation-id :endpoint endpoint))
+             (record (list :action 'claim :operation-id operation-id
+                           :workspace-id workspace-id :item-id item-id
+                           :document-id document-id :expected-revision expected-revision
+                           :kind kind :title (plist-get origin :title)
+                           :started-at (float-time) :frozen frozen)))
+        (condition-case err
+            (let* ((response (org-note-operation--dispatch-frozen-claim
+                              frozen workspace-id item-id document-id kind))
+                   (lease (org-note-operation-find-lease
+                           workspace-id item-id kind)))
+              (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+              (gsmlg-org-note-org--clock-register-presentation record response lease)
+              (message "Org Note clock started")
+              response)
+          ((quit error)
+           (if (and (eq (car err) 'org-note-http-error)
+                    (= (or (plist-get (cadr err) :status) 0) 409))
+               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+             (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
+           (signal (car err) (cdr err))))))
+
 (defun gsmlg-org-note-org--around-clock-in (orig &rest args)
   "Call ORIG with ARGS or claim the current identified Org Note item."
   (when (and gsmlg-org-note-org-enable
@@ -2573,51 +2683,7 @@ errors mark the item ambiguous fail-closed and re-signal."
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "clock")
-    (when gsmlg-org-note-org--clock-presentation
-      (user-error "An Org Note clock is already active"))
-    (let* ((ids (gsmlg-org-note-org--origin-item-ids)))
-      (unless ids
-        (user-error "Org Note clock-in requires item ids"))
-      (let* ((origin (gsmlg-org-note-org--preflight-identified-item
-                      (car ids) (cdr ids)))
-             (operation-id (org-note-client-new-operation-id))
-             (workspace-id (car ids)) (item-id (cdr ids))
-             (document-id (plist-get origin :document-id))
-             (expected-revision (plist-get origin :revision))
-             (kind "execution")
-             (typed (list :method "POST"
-                          :route (format "/api/org/items/%s/claim"
-                                         (org-note-operation--path-segment item-id))
-                          :query nil
-                          :body (org-note-operation--mutation-body
-                                 workspace-id
-                                 `((document_id . ,document-id)
-                                   (expected_document_revision . ,expected-revision)
-                                   (kind . ,kind))
-                                 operation-id)
-                          :response-validator
-                          (lambda (response)
-                            (gsmlg-org-note-org--clock-claim-response-validator
-                             response workspace-id item-id document-id
-                             expected-revision kind operation-id))))
-             (frozen (org-note-operation--freeze-request typed))
-             (record (list :action 'claim :operation-id operation-id
-                           :workspace-id workspace-id :item-id item-id
-                           :document-id document-id :expected-revision expected-revision
-                           :kind kind :started-at (float-time) :frozen frozen)))
-        (condition-case err
-            (let* ((response (org-note-operation--dispatch-frozen frozen))
-                   (lease (org-note-operation-register-claim
-                           workspace-id item-id document-id kind response)))
-              (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
-              (gsmlg-org-note-org--clock-register-presentation record response lease)
-              (message "Org Note clock started"))
-          ((quit error)
-           (if (and (eq (car err) 'org-note-http-error)
-                    (= (or (plist-get (cadr err) :status) 0) 409))
-               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
-             (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
-           (signal (car err) (cdr err))))))))
+    (gsmlg-org-note-org--clock-in (gsmlg-org-note-org--origin-item-ids))))
 
 (defun gsmlg-org-note-org--around-clock-out (orig &rest args)
   "Call ORIG with ARGS or release the stored bridge clock lease."
@@ -2626,7 +2692,7 @@ errors mark the item ambiguous fail-closed and re-signal."
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
-    (gsmlg-org-note-org--refuse-if-plain-local "clock")
+    (gsmlg-org-note-org--clock-require-unambiguous)
     (let* ((clock (gsmlg-org-note-org--clock-reconcile))
            (lease (and clock
                        (org-note-operation-find-lease
@@ -2635,7 +2701,8 @@ errors mark the item ambiguous fail-closed and re-signal."
                         (plist-get clock :kind)))))
       (unless (and clock lease)
         (user-error "No active Org Note clock"))
-      (let* ((workspace-id (plist-get clock :workspace-id))
+      (let* ((endpoint (org-note-validation-canonical-endpoint org-note-endpoint))
+             (workspace-id (plist-get clock :workspace-id))
              (item-id (plist-get clock :item-id))
              (document-id (plist-get clock :document-id))
              (pre (gsmlg-org-note-org--preflight-identified-item workspace-id item-id))
@@ -2643,41 +2710,27 @@ errors mark the item ambiguous fail-closed and re-signal."
              (kind (plist-get clock :kind))
              (lease-id (org-note-operation-lease-lease-id lease))
              (fencing-token (org-note-operation-lease-fencing-token lease))
-             (typed (list :method "POST"
-                          :route (format "/api/org/items/%s/claim/release"
-                                         (org-note-operation--path-segment item-id))
-                          :query nil
-                          :body (org-note-operation--mutation-body
-                                 workspace-id
-                                 `((document_id . ,document-id)
-                                   (expected_document_revision . ,(plist-get pre :revision))
-                                   (lease_id . ,lease-id) (kind . ,kind)
-                                   (fencing_token . ,fencing-token))
-                                 operation-id)))
-             (frozen (org-note-operation--freeze-request typed))
+             (release-record
+              (org-note-operation--build-frozen-release
+               workspace-id item-id document-id (plist-get pre :revision)
+               lease-id kind fencing-token (plist-get pre :state) nil
+               :operation-id operation-id :endpoint endpoint))
              (record (list :action 'release :operation-id operation-id
                            :workspace-id workspace-id :item-id item-id
                            :document-id document-id :expected-revision (plist-get pre :revision)
-                           :kind kind :lease-id lease-id :frozen frozen)))
+                           :kind kind :lease-id lease-id
+                           :release-record release-record)))
         (condition-case err
             (progn
-              (org-note-operation--dispatch-frozen frozen)
-              (let* ((context (org-note-operation-get-item-context workspace-id item-id))
-                     (remote-lease (gsmlg-org-note-org--context-field
-                                    (gsmlg-org-note-org--context-field context 'data)
-                                    'context 'lease)))
-                (when (and remote-lease
-                           (equal (gsmlg-org-note-org--context-field remote-lease 'id)
-                                  lease-id))
-                  (user-error "Org Note clock release was not confirmed")))
-              (org-note-operation-forget-lease workspace-id item-id kind)
-              (setq gsmlg-org-note-org--clock-presentation nil)
-              (message "Org Note clock stopped"))
+              (prog1 (org-note-operation--dispatch-frozen-release release-record)
+                (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
+                (gsmlg-org-note-org--clock-clear-presentation)
+                (message "Org Note clock stopped")))
           ((quit error)
-           (if (and (eq (car err) 'org-note-http-error)
-                    (= (or (plist-get (cadr err) :status) 0) 409))
-               (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
-             (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
+           (setq gsmlg-org-note-org--clock-presentation
+                 (plist-put gsmlg-org-note-org--clock-presentation
+                            :release-pending t))
+           (puthash operation-id record gsmlg-org-note-org--clock-ambiguities)
            (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--around-clock-cancel (orig &rest args)
@@ -2687,7 +2740,6 @@ errors mark the item ambiguous fail-closed and re-signal."
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
-    (gsmlg-org-note-org--refuse-if-plain-local "clock")
     (apply #'gsmlg-org-note-org--around-clock-out
            (lambda (&rest _ignored) nil) args)))
 
@@ -2700,6 +2752,77 @@ errors mark the item ambiguous fail-closed and re-signal."
         (user-error "No active Org Note clock"))
       (org-note-item-context (plist-get clock :workspace-id)
                              (plist-get clock :item-id)))))
+
+(defun gsmlg-org-note-org--around-agenda-clock-in (orig &rest args)
+  "Call ORIG with ARGS or clock in the current bridge Agenda row."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (when (gsmlg-org-note-org--agenda-bulk-or-region-todo-p)
+      (user-error "Org Note bridge refuses bulk or region Agenda clock-in"))
+    (let* ((origin (gsmlg-org-note-org--agenda-row-origin))
+           (workspace-id (plist-get origin :workspace-id))
+           (item-id (plist-get origin :item-id)))
+      (unless (and (stringp workspace-id) (not (string-empty-p workspace-id))
+                   (stringp item-id) (not (string-empty-p item-id)))
+        (user-error "Agenda clock-in requires Org Note item provenance"))
+      (gsmlg-org-note-org--clock-in
+       (cons workspace-id item-id)))))
+
+(defun gsmlg-org-note-org--around-agenda-clock-out (orig &rest args)
+  "Call ORIG with ARGS or globally stop the active bridge clock."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (apply #'gsmlg-org-note-org--around-clock-out
+           (lambda (&rest _ignored) nil) args)))
+
+(defun gsmlg-org-note-org--around-agenda-clock-cancel (orig &rest args)
+  "Call ORIG with ARGS or globally cancel the active bridge clock."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (apply #'gsmlg-org-note-org--around-clock-cancel
+           (lambda (&rest _ignored) nil) args)))
+
+(defun gsmlg-org-note-org--around-agenda-clock-goto (orig &rest args)
+  "Call ORIG with ARGS or visit the active bridge clock item."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (apply #'gsmlg-org-note-org--around-clock-goto
+           (lambda (&rest _ignored) nil) args)))
+
+(defun gsmlg-org-note-org--around-clock-menu (orig &rest args)
+  "Call ORIG with ARGS or present only bridge-supported clock actions."
+  (if (not (and gsmlg-org-note-org-enable
+                gsmlg-org-note-org--clock-presentation))
+      (apply orig args)
+    (gsmlg-org-note-org--clock-reconcile)
+    (pcase (car (read-multiple-choice
+                 "Org Note clock: "
+                 '((?g "goto" "Visit the claimed item")
+                   (?o "out" "Release the claim")
+                   (?c "cancel" "Cancel and release the claim"))))
+      (?g (call-interactively #'org-clock-goto))
+      (?o (call-interactively #'org-clock-out))
+      (?c (call-interactively #'org-clock-cancel)))))
+
+(defun gsmlg-org-note-org--around-pomodoro (orig &rest args)
+  "Call ORIG with ARGS unless invoked from a bridge Agenda."
+  (if (and gsmlg-org-note-org-enable
+           (gsmlg-org-note-org--agenda-feed-buffer-p))
+      (user-error "Pomodoro is unsupported for Org Note bridge clocks")
+    (apply orig args)))
+
+(defun gsmlg-org-note-org--clock-session-end ()
+  "Forget bridge clock presentation at session end without network access."
+  (when gsmlg-org-note-org--clock-presentation
+    (let ((clock gsmlg-org-note-org--clock-presentation))
+      (org-note-operation-forget-lease
+       (plist-get clock :workspace-id) (plist-get clock :item-id)
+       (plist-get clock :kind)))
+    (gsmlg-org-note-org--clock-clear-presentation)))
 
 (defun gsmlg-org-note-org--around-archive-subtree (orig &rest args)
   "Call ORIG with ARGS or bridge an Org Note archive operation."
@@ -2736,6 +2859,8 @@ errors mark the item ambiguous fail-closed and re-signal."
     (autoload 'org-clock-out "org-clock" nil t)
     (autoload 'org-clock-cancel "org-clock" nil t)
     (autoload 'org-clock-goto "org-clock" nil t)
+    (autoload 'org-clock-menu "org-clock" nil t)
+    (autoload 'org-pomodoro "org-pomodoro" nil t)
     (autoload 'org-note-document-archive "org-note" nil t)
     (autoload 'org-note-document--save-remote "org-note-document" nil nil)
     (advice-add #'org-todo :around #'gsmlg-org-note-org--around-todo)
@@ -2745,6 +2870,9 @@ errors mark the item ambiguous fail-closed and re-signal."
     (advice-add #'org-clock-out :around #'gsmlg-org-note-org--around-clock-out)
     (advice-add #'org-clock-cancel :around #'gsmlg-org-note-org--around-clock-cancel)
     (advice-add #'org-clock-goto :around #'gsmlg-org-note-org--around-clock-goto)
+    (advice-add #'org-clock-menu :around #'gsmlg-org-note-org--around-clock-menu)
+    (advice-add #'org-pomodoro :around #'gsmlg-org-note-org--around-pomodoro)
+    (add-hook 'kill-emacs-hook #'gsmlg-org-note-org--clock-session-end)
     (advice-add #'org-note-document--save-remote :around
                 #'gsmlg-org-note-org--around-document-save-remote)
     (advice-add #'org-note-document-archive :around

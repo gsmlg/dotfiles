@@ -25,6 +25,9 @@
 (defvar org-note-operation--leases (make-hash-table :test #'equal)
   "Active leases keyed by workspace, item, and claim kind.")
 
+(defvar org-note-operation--pending-releases (make-hash-table :test #'equal)
+  "Frozen release attempts keyed by workspace, item, kind, and lease id.")
+
 (defun org-note-operation--lease-key (workspace-id item-id kind)
   "Return the registry key for WORKSPACE-ID, ITEM-ID, and KIND."
   (list workspace-id item-id kind))
@@ -120,11 +123,19 @@ request whose response is being checked."
          (equal (org-note-operation--response-value lease 'status) "active"))))
 
 (defun org-note-operation--validate-claim-response
-    (response workspace-id item-id document-id kind operation-id)
+    (response workspace-id item-id document-id kind operation-id
+              &optional expected-revision)
   "Validate and return a claim RESPONSE for the expected identifiers."
   (unless (org-note-operation--claim-response-valid-p
            response workspace-id item-id document-id kind operation-id)
     (signal 'org-note-error '("Org Note claim response is invalid")))
+  (when expected-revision
+    (let* ((context (org-note-operation--response-value response 'context))
+           (document (org-note-operation--response-value context 'document))
+           (revision (org-note-operation--response-value document 'revision)))
+      (unless (and (integerp revision) (>= revision expected-revision))
+        (signal 'org-note-error
+                '("Org Note claim response revision is older than expected")))))
   response)
 
 (defun org-note-operation--schedule-heartbeat-after (lease delay)
@@ -610,8 +621,8 @@ OPERATION-ID, when non-nil, is used as the operation identifier."
 (defun org-note-operation--freeze-request (typed-request)
   "Freeze TYPED-REQUEST into a replayable wire envelope.
 
-TYPED-REQUEST is a plist with `:method', `:route', optional `:query', and
-`:body' (Lisp JSON value).  The body is encoded once.  The returned
+TYPED-REQUEST is a plist with `:method', `:route', optional `:query',
+`:endpoint', and `:body' (Lisp JSON value).  The body is encoded once.  The returned
 envelope holds method, canonical endpoint, absolute URL, route, query,
 headers, UTF-8 body bytes, body SHA-256, and memory-only redaction
 secrets derived from structural fencing-token fields.  Secrets must not
@@ -621,7 +632,8 @@ be copied into durable markers or journals."
          (query (plist-get typed-request :query))
          (body (plist-get typed-request :body))
          (context (org-note-validation-endpoint-bound-read-context
-                   org-note-endpoint))
+                   (or (plist-get typed-request :endpoint)
+                       org-note-endpoint)))
          (endpoint (alist-get 'endpoint context))
          (url-builder (alist-get 'url-builder context))
          (url (funcall url-builder route query))
@@ -881,28 +893,234 @@ SOURCE may be the empty string.  The request omits expected_revision."
     (signal 'org-note-error '("Org Note fencing token must be a string")))
   fencing-token)
 
+(defun org-note-operation--frozen-context-read (endpoint workspace-id item-id)
+  "Freeze an item context GET at ENDPOINT for WORKSPACE-ID and ITEM-ID."
+  (let* ((read-context
+          (org-note-validation-endpoint-bound-read-context endpoint))
+         (url-builder (alist-get 'url-builder read-context))
+         (route (org-note-operation--item-route item-id "/context"))
+         (query `((workspace_id . ,workspace-id))))
+    (list :method "GET"
+          :endpoint (alist-get 'endpoint read-context)
+          :url (funcall url-builder route query)
+          :route route
+          :query query
+          :headers (org-note-client--request-headers nil)
+          :body nil
+          :body-sha256 nil
+          :redaction-secrets nil)))
+
+(defun org-note-operation--context-components
+    (response workspace-id item-id document-id)
+  "Return validated context components from RESPONSE for the given ids."
+  (let* ((context response)
+         (workspace (org-note-operation--response-value context 'workspace))
+         (document (org-note-operation--response-value context 'document))
+         (item (org-note-operation--response-value context 'item))
+         (lease-entry (org-note-operation--response-entry context 'lease))
+         (revision (org-note-operation--response-value document 'revision)))
+    (unless (and (org-note-operation--json-object-p response)
+                 (org-note-operation--json-object-p context)
+                 (org-note-operation--json-object-p workspace)
+                 (equal (org-note-operation--response-value workspace 'id)
+                        workspace-id)
+                 (org-note-operation--json-object-p document)
+                 (equal (org-note-operation--response-value document 'id)
+                        document-id)
+                 (integerp revision)
+                 (>= revision 0)
+                 (org-note-operation--json-object-p item)
+                 (equal (org-note-operation--response-value item 'id) item-id)
+                 (equal (org-note-operation--response-value item 'workspace_id)
+                        workspace-id)
+                 (equal (org-note-operation--response-value item 'document_id)
+                        document-id)
+                 (org-note-operation--nonempty-string-p
+                  (org-note-operation--response-value item 'state))
+                 lease-entry)
+      (signal 'org-note-error '("Org Note item context is invalid")))
+    (list :context context :document document :item item
+          :lease (cdr lease-entry) :revision revision
+          :state (org-note-operation--response-value item 'state))))
+
+(defun org-note-operation--release-lease-valid-p
+    (lease workspace-id item-id)
+  "Return non-nil when release context LEASE is valid for the item ids."
+  (and (org-note-operation--json-object-p lease)
+       (org-note-operation--nonempty-string-p
+        (org-note-operation--response-value lease 'id))
+       (equal (org-note-operation--response-value lease 'workspace_id)
+              workspace-id)
+       (equal (org-note-operation--response-value lease 'work_item_id) item-id)
+       (org-note-operation--nonempty-string-p
+        (org-note-operation--response-value lease 'attempt_id))
+       (org-note-operation--nonempty-string-p
+        (org-note-operation--response-value lease 'kind))
+       (org-note-operation--nonempty-string-p
+        (org-note-operation--response-value lease 'actor_id))
+       (integerp (org-note-operation--response-value lease 'acquired_at))
+       (integerp
+        (org-note-operation--response-value lease 'last_heartbeat_at))
+       (integerp (org-note-operation--response-value lease 'expires_at))
+       (org-note-operation--nonempty-string-p
+        (org-note-operation--response-value lease 'status))))
+
+(defun org-note-operation--validate-release-preflight
+    (response workspace-id item-id document-id expected-revision lease-id kind)
+  "Validate a fresh release preflight RESPONSE and return its item state."
+  (let* ((parts (org-note-operation--context-components
+                 response workspace-id item-id document-id))
+         (lease (plist-get parts :lease)))
+    (unless (and (= (plist-get parts :revision) expected-revision)
+                 (org-note-operation--release-lease-valid-p
+                  lease workspace-id item-id)
+                 (equal (org-note-operation--response-value lease 'id) lease-id)
+                 (equal (org-note-operation--response-value lease 'kind) kind)
+                 (equal (org-note-operation--response-value lease 'status)
+                        "active"))
+      (signal 'org-note-error '("Org Note release preflight is invalid")))
+    (plist-get parts :state)))
+
+(defun org-note-operation--validate-release-context (response record)
+  "Validate authoritative release context RESPONSE against frozen RECORD."
+  (let* ((workspace-id (plist-get record :workspace-id))
+         (item-id (plist-get record :item-id))
+         (parts (org-note-operation--context-components
+                 response workspace-id item-id (plist-get record :document-id)))
+         (lease (plist-get parts :lease))
+         (lease-id (plist-get record :lease-id))
+         (revision (plist-get parts :revision))
+         (expected (plist-get record :expected-revision))
+         (target (plist-get record :target-state)))
+    (when (and lease
+               (not (org-note-operation--release-lease-valid-p
+                     lease workspace-id item-id)))
+      (signal 'org-note-error '("Org Note release context lease is invalid")))
+    (when lease
+      (let ((context-lease-id
+             (org-note-operation--response-value lease 'id))
+            (status (org-note-operation--response-value lease 'status)))
+        (cond
+         ((equal context-lease-id lease-id)
+          (signal 'org-note-error '("Org Note released lease remains active")))
+         ((not (equal status "active"))
+          (signal 'org-note-error
+                  '("Org Note replacement lease is not active"))))))
+    (unless (and (>= revision expected)
+                 (or (null target)
+                     (equal (plist-get parts :state) target))
+                 (or (null target)
+                     (plist-get record :target-already-current-p)
+                     (> revision expected)))
+      (signal 'org-note-error '("Org Note release context is inconsistent")))
+    response))
+
+(cl-defun org-note-operation--build-frozen-claim
+    (workspace-id item-id document-id expected-revision kind operation-id
+                  &key endpoint)
+  "Build a frozen claim for ITEM-ID with the exact supplied request context."
+  (org-note-operation--freeze-request
+   (list :method "POST"
+         :endpoint endpoint
+         :route (org-note-operation--item-route item-id "/claim")
+         :query nil
+         :body (org-note-operation--mutation-body
+                workspace-id
+                `((document_id . ,document-id)
+                  (expected_document_revision . ,expected-revision)
+                  (kind . ,kind))
+                operation-id)
+         :response-validator
+         (lambda (response)
+           (org-note-operation--validate-claim-response
+            response workspace-id item-id document-id kind operation-id
+            expected-revision)))))
+
+(defun org-note-operation--dispatch-frozen-claim
+    (frozen workspace-id item-id document-id kind)
+  "Dispatch FROZEN claim, register it, and return the exact response."
+  (let ((response (org-note-operation--dispatch-frozen frozen)))
+    (org-note-operation-register-claim
+     workspace-id item-id document-id kind response)
+    response))
+
+(defun org-note-operation--release-key (workspace-id item-id kind lease-id)
+  "Return a pending release key for WORKSPACE-ID, ITEM-ID, KIND, and LEASE-ID."
+  (list workspace-id item-id kind lease-id))
+
+(cl-defun org-note-operation--build-frozen-release
+    (workspace-id item-id document-id expected-revision lease-id kind fencing-token
+                  preflight-state target-already-current-p
+                  &key target-state operation-id endpoint)
+  "Build a frozen release record from explicit validated preflight values."
+  (org-note-operation--require-fencing-token fencing-token)
+  (let* ((request-operation-id
+          (or operation-id (org-note-client-new-operation-id)))
+         (post
+          (org-note-operation--freeze-request
+           (list :method "POST"
+                 :endpoint endpoint
+                 :route (org-note-operation--item-route item-id "/claim/release")
+                 :query nil
+                 :body (org-note-operation--mutation-body
+                        workspace-id
+                        (append `((document_id . ,document-id)
+                                  (expected_document_revision . ,expected-revision)
+                                  (lease_id . ,lease-id)
+                                  (kind . ,kind)
+                                  (fencing_token . ,fencing-token))
+                                (and target-state
+                                     `((target_state . ,target-state))))
+                        request-operation-id)))))
+    (list :workspace-id workspace-id :item-id item-id :document-id document-id
+          :expected-revision expected-revision :lease-id lease-id :kind kind
+          :preflight-state preflight-state :target-state target-state
+          :target-already-current-p target-already-current-p
+          :operation-id request-operation-id :post post
+          :read (org-note-operation--frozen-context-read
+                 (plist-get post :endpoint) workspace-id item-id))))
+
+(defun org-note-operation--dispatch-frozen-release (record)
+  "Dispatch or reconcile frozen release RECORD and return its original POST result."
+  (let* ((key (org-note-operation--release-key
+               (plist-get record :workspace-id) (plist-get record :item-id)
+               (plist-get record :kind) (plist-get record :lease-id)))
+         (pending (gethash key org-note-operation--pending-releases)))
+    (if pending
+        (setq record pending)
+      (puthash key record org-note-operation--pending-releases))
+    (unless (plist-get record :post-complete-p)
+      (let ((post-result
+             (org-note-operation--dispatch-frozen (plist-get record :post))))
+        (setq record (plist-put record :post-result post-result))
+        (setq record (plist-put record :post-complete-p t))
+        (puthash key record org-note-operation--pending-releases)))
+    (org-note-operation--validate-release-context
+     (org-note-operation--dispatch-frozen (plist-get record :read)) record)
+    (let ((lease (org-note-operation-find-lease
+                  (plist-get record :workspace-id) (plist-get record :item-id)
+                  (plist-get record :kind))))
+      (when (and lease
+                 (equal (org-note-operation-lease-lease-id lease)
+                        (plist-get record :lease-id)))
+        (org-note-operation-forget-lease
+         (plist-get record :workspace-id) (plist-get record :item-id)
+         (plist-get record :kind))))
+    (remhash key org-note-operation--pending-releases)
+    (plist-get record :post-result)))
+
 (cl-defun org-note-operation-claim
     (workspace-id item-id document-id expected-revision kind &key operation-id)
   "Claim ITEM-ID in WORKSPACE-ID for DOCUMENT-ID at EXPECTED-REVISION.
 
 KIND identifies the claim type.  OPERATION-ID optionally supplies the
 mutation ID."
-  (let* ((request-operation-id
-          (or operation-id (org-note-client-new-operation-id)))
-         (response
-         (org-note-client-request
-          "POST" (org-note-operation--item-route item-id "/claim") nil
-          (org-note-operation--mutation-body
-           workspace-id
-           `((document_id . ,document-id)
-             (expected_document_revision . ,expected-revision)
-             (kind . ,kind))
-           request-operation-id))))
-    (org-note-operation--validate-claim-response
-     response workspace-id item-id document-id kind request-operation-id)
-    (org-note-operation-register-claim
-     workspace-id item-id document-id kind response)
-    response))
+  (let ((request-operation-id
+         (or operation-id (org-note-client-new-operation-id))))
+    (org-note-operation--dispatch-frozen-claim
+     (org-note-operation--build-frozen-claim
+      workspace-id item-id document-id expected-revision kind request-operation-id)
+     workspace-id item-id document-id kind)))
 
 (cl-defun org-note-operation-heartbeat
     (workspace-id item-id lease-id kind fencing-token &key operation-id)
@@ -973,19 +1191,24 @@ EXPECTED-REVISION identifies the document version.  KIND identifies the claim
 type.  FENCING-TOKEN authorizes the release.  TARGET-STATE is included only
 when non-nil.  OPERATION-ID optionally supplies the mutation ID."
   (org-note-operation--require-fencing-token fencing-token)
-  (prog1
-      (org-note-client-request
-       "POST" (org-note-operation--item-route item-id "/claim/release") nil
-       (org-note-operation--mutation-body
-        workspace-id
-        (append `((document_id . ,document-id)
-                  (expected_document_revision . ,expected-revision)
-                  (lease_id . ,lease-id)
-                  (kind . ,kind)
-                  (fencing_token . ,fencing-token))
-                (and target-state `((target_state . ,target-state))))
-        operation-id))
-    (org-note-operation-forget-lease workspace-id item-id kind)))
+  (let* ((key (org-note-operation--release-key
+               workspace-id item-id kind lease-id))
+         (pending (gethash key org-note-operation--pending-releases)))
+    (if pending
+        (org-note-operation--dispatch-frozen-release pending)
+      (let* ((read (org-note-operation--frozen-context-read
+                    org-note-endpoint workspace-id item-id))
+             (state
+              (org-note-operation--validate-release-preflight
+               (org-note-operation--dispatch-frozen read)
+               workspace-id item-id document-id expected-revision lease-id kind))
+             (record
+              (org-note-operation--build-frozen-release
+               workspace-id item-id document-id expected-revision lease-id kind
+               fencing-token state (and target-state (equal state target-state))
+               :target-state target-state :operation-id operation-id
+               :endpoint (plist-get read :endpoint))))
+        (org-note-operation--dispatch-frozen-release record)))))
 
 (cl-defun org-note-operation-report-progress
     (workspace-id item-id lease-id kind fencing-token summary &key metadata operation-id)

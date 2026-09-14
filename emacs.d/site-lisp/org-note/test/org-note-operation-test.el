@@ -180,6 +180,7 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
   "Run BODY with isolated lease state and the clock initialized to NOW."
   (declare (indent 1) (debug ((form) body)))
   `(let ((org-note-operation--leases (make-hash-table :test #'equal))
+         (org-note-operation--pending-releases (make-hash-table :test #'equal))
          (org-note-operation-test--now ,now)
          (org-note-operation-test--scheduled nil)
          (org-note-operation-test--cancelled nil)
@@ -200,7 +201,8 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
                     (lambda (timer)
                       (push timer org-note-operation-test--cancelled))))
            ,@body)
-       (clrhash org-note-operation--leases))))
+       (clrhash org-note-operation--leases)
+       (clrhash org-note-operation--pending-releases))))
 
 (ert-deftest org-note-operation-registers-claim-and-retry-leases ()
   (org-note-operation-test--with-lease-state (100.0)
@@ -213,7 +215,9 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
            (org-note-operation-test--claim-response
             "workspace-1" "item-execution" "document-1" "execution"
             "retry-operation" "lease-execution" "fence-execution" 220)))
-      (cl-letf (((symbol-function 'org-note-client-request)
+      (cl-letf (((symbol-function 'org-note-client-request-raw)
+                 (lambda (&rest _arguments) claim-response))
+                ((symbol-function 'org-note-client-request)
                  (lambda (method route _query _body)
                    (if (string-suffix-p "/retry" route)
                        retry-response
@@ -339,6 +343,8 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
                  (malformed (funcall (cdr case) response)))
             (ert-info ((format "%s: %s" wrapper (car case)))
               (cl-letf (((symbol-function 'org-note-client-request)
+                         (lambda (&rest _arguments) malformed))
+                        ((symbol-function 'org-note-client-request-raw)
                          (lambda (&rest _arguments) malformed)))
                 (let ((error-data
                        (should-error
@@ -437,9 +443,22 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
        `((lease_id . "lease-1")
          (fencing_token . "fence-1")
          (expires_at . 200.0)))
-      (cl-letf (((symbol-function 'org-note-client-request)
-                 (lambda (&rest _) '((ok . t)))))
-        (funcall (cdr case)))
+      (let ((get-count 0))
+        (cl-letf (((symbol-function 'org-note-client-request)
+                   (lambda (&rest _) '((ok . t))))
+                  ((symbol-function 'org-note-client-request-raw)
+                   (lambda (&rest args)
+                     (if (equal (plist-get args :method) "GET")
+                         (progn
+                           (cl-incf get-count)
+                           (org-note-operation-test--item-context
+                            "workspace-1" "item-1" "document-1" 3 "running"
+                            (and (= get-count 1)
+                                 (org-note-operation-test--active-context-lease
+                                  "workspace-1" "item-1" "lease-1"
+                                  (car case) 200))))
+                       '((ok . t))))))
+          (funcall (cdr case))))
       (should-not
        (org-note-operation-find-lease "workspace-1" "item-1" (car case))))
     (org-note-operation-register-claim
@@ -447,10 +466,15 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
      '((lease_id . "lease-1")
        (fencing_token . "fence-1")
        (expires_at . 200.0)))
-    (cl-letf (((symbol-function 'org-note-client-request)
-               (lambda (&rest _)
-                 (signal 'org-note-http-error
-                         '((:status 409 :code "conflict"))))))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest args)
+                 (if (equal (plist-get args :method) "GET")
+                     (org-note-operation-test--item-context
+                      "workspace-1" "item-1" "document-1" 3 "running"
+                      (org-note-operation-test--active-context-lease
+                       "workspace-1" "item-1" "lease-1" "review" 200))
+                   (signal 'org-note-http-error
+                           '((:status 409 :code "conflict")))))))
       (should-error
        (org-note-operation-release
         "workspace-1" "item-1" "document-1" 3 "lease-1" "review" "fence-1")
@@ -1384,9 +1408,15 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
   (org-note-operation-test--with-lease-state (100.0)
     (let ((org-note-actor-id "emacs:test@example")
           request)
-      (cl-letf (((symbol-function 'org-note-client-request)
-                 (lambda (method route query body)
-                   (setq request (list method route query body))
+      (cl-letf (((symbol-function 'org-note-client-request-raw)
+                 (lambda (&rest args)
+                   (setq request
+                         (list (plist-get args :method)
+                               (plist-get args :route)
+                               (plist-get args :query)
+                               (org-note-client--parse-json
+                                (decode-coding-string
+                                 (plist-get args :body) 'utf-8))))
                    (org-note-operation-test--claim-response
                     "workspace-1" "item / one" "document-1" "review"
                     "operation-1"))))
@@ -1421,12 +1451,27 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
        (fencing_token . "fence-4")))))
 
 (ert-deftest org-note-operation-releases-claim-without-target-state ()
-  (let* ((org-note-actor-id "emacs:test@example")
-         (request
-          (org-note-operation-test--capture-request
-           (org-note-operation-release
-            "workspace-1" "item-1" "document-1" 3 "lease-1" "task" "fence-4"
-            :operation-id "operation-1"))))
+  (org-note-operation-test--with-lease-state (100.0)
+    (let* ((org-note-actor-id "emacs:test@example") request (get-count 0))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest args)
+                 (if (equal (plist-get args :method) "GET")
+                     (progn
+                       (cl-incf get-count)
+                       (org-note-operation-test--item-context
+                        "workspace-1" "item-1" "document-1" 3 "running"
+                        (and (= get-count 1)
+                             (org-note-operation-test--active-context-lease
+                              "workspace-1" "item-1" "lease-1" "task" 200))))
+                   (setq request
+                         (list (plist-get args :method) (plist-get args :route)
+                               (plist-get args :query)
+                               (org-note-client--parse-json
+                                (decode-coding-string (plist-get args :body) 'utf-8))))
+                   '((released . t))))))
+      (org-note-operation-release
+       "workspace-1" "item-1" "document-1" 3 "lease-1" "task" "fence-4"
+       :operation-id "operation-1"))
     (org-note-operation-test--should-mutation-request
      request "POST" "/api/org/items/item-1/claim/release"
      '((schema_version . 1)
@@ -1437,15 +1482,32 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
        (expected_document_revision . 3)
        (lease_id . "lease-1")
        (kind . "task")
-       (fencing_token . "fence-4")))))
+       (fencing_token . "fence-4"))))))
 
 (ert-deftest org-note-operation-releases-claim-with-target-state ()
-  (let* ((org-note-actor-id "emacs:test@example")
-         (request
-          (org-note-operation-test--capture-request
-           (org-note-operation-release
-            "workspace-1" "item-1" "document-1" 3 "lease-1" "task" "fence-4"
-            :target-state "ready" :operation-id "operation-1"))))
+  (org-note-operation-test--with-lease-state (100.0)
+    (let* ((org-note-actor-id "emacs:test@example") request (get-count 0))
+    (cl-letf (((symbol-function 'org-note-client-request-raw)
+               (lambda (&rest args)
+                 (if (equal (plist-get args :method) "GET")
+                     (progn
+                       (cl-incf get-count)
+                       (org-note-operation-test--item-context
+                        "workspace-1" "item-1" "document-1"
+                        (if (= get-count 1) 3 4)
+                        (if (= get-count 1) "running" "ready")
+                        (and (= get-count 1)
+                             (org-note-operation-test--active-context-lease
+                              "workspace-1" "item-1" "lease-1" "task" 200))))
+                   (setq request
+                         (list (plist-get args :method) (plist-get args :route)
+                               (plist-get args :query)
+                               (org-note-client--parse-json
+                                (decode-coding-string (plist-get args :body) 'utf-8))))
+                   '((released . t))))))
+      (org-note-operation-release
+       "workspace-1" "item-1" "document-1" 3 "lease-1" "task" "fence-4"
+       :target-state "ready" :operation-id "operation-1"))
     (org-note-operation-test--should-mutation-request
      request "POST" "/api/org/items/item-1/claim/release"
      '((schema_version . 1)
@@ -1457,7 +1519,162 @@ STATE defaults to \"ready\".  Document revision defaults to 5."
        (lease_id . "lease-1")
        (kind . "task")
        (fencing_token . "fence-4")
-       (target_state . "ready")))))
+       (target_state . "ready"))))))
+
+(defun org-note-operation-test--item-context
+    (workspace-id item-id document-id revision state lease)
+  "Return item context for WORKSPACE-ID, ITEM-ID, and DOCUMENT-ID.
+
+REVISION, STATE, and LEASE describe the authoritative item state."
+  `((workspace . ((id . ,workspace-id)))
+    (workspace_revision . 4)
+    (document . ((id . ,document-id)
+                 (path . "inbox.org")
+                 (revision . ,revision)))
+    (item . ((id . ,item-id)
+             (workspace_id . ,workspace-id)
+             (document_id . ,document-id)
+             (state . ,state)))
+    (lease . ,lease)))
+
+(ert-deftest org-note-operation-release-context-uses-top-level-contract ()
+  "Release validation accepts the real top-level item-context result only."
+  (let* ((context (org-note-operation-test--item-context
+                   "workspace-1" "item-1" "document-1" 3 "running" nil))
+         (record '(:workspace-id "workspace-1" :item-id "item-1"
+                   :document-id "document-1" :expected-revision 3
+                   :lease-id "lease-1" :kind "execution")))
+    (should (eq (org-note-operation--validate-release-context context record)
+                context))
+    (should-error
+     (org-note-operation--validate-release-context
+      `((data . ((context . ,context)))) record)
+     :type 'org-note-error)))
+
+(ert-deftest org-note-operation-release-rejects-terminal-replacement-lease ()
+  "A different non-active lease does not authorize release completion."
+  (org-note-operation-test--with-lease-state (100.0)
+    (let* ((org-note-actor-id "emacs:test@example")
+           (lease
+            (copy-tree
+             (org-note-operation-test--active-context-lease
+              "workspace-1" "item-1" "replacement" "execution" 200)))
+           (record '(:workspace-id "workspace-1" :item-id "item-1"
+                     :document-id "document-1" :expected-revision 3
+                     :lease-id "original" :kind "execution"
+                     :post-result ((released . t)) :post-complete-p t
+                     :post frozen-post :read frozen-read)))
+      (setcdr (assq 'status lease) "expired")
+      (org-note-operation-register-claim
+       "workspace-1" "item-1" "document-1" "execution"
+       '((lease_id . "original") (fencing_token . "fence")
+         (expires_at . 200)))
+      (cl-letf (((symbol-function 'org-note-operation--dispatch-frozen)
+                 (lambda (wire)
+                   (should (eq wire 'frozen-read))
+                   (org-note-operation-test--item-context
+                    "workspace-1" "item-1" "document-1" 3 "running" lease))))
+        (should-error (org-note-operation--dispatch-frozen-release record)
+                      :type 'org-note-error)
+        (should (org-note-operation-find-lease
+                 "workspace-1" "item-1" "execution"))
+        (should (= (hash-table-count org-note-operation--pending-releases) 1))))))
+
+(ert-deftest org-note-operation-release-retries-verification-before-replay ()
+  "A pending release retries its frozen GET before another POST."
+  (org-note-operation-test--with-lease-state (100.0)
+    (let ((org-note-endpoint "https://example.invalid")
+          (org-note-actor-id "emacs:test@example")
+          (post-result '((accepted . t)))
+          (post-count 0)
+          (get-count 0))
+      (org-note-operation-register-claim
+       "workspace-1" "item-1" "document-1" "execution"
+       '((lease_id . "lease-1") (fencing_token . "fence-1")
+         (expires_at . 200)))
+      (cl-letf (((symbol-function 'org-note-client-request-raw)
+                 (lambda (&rest args)
+                   (if (equal (plist-get args :method) "POST")
+                       (progn (cl-incf post-count) post-result)
+                     (cl-incf get-count)
+                     (pcase get-count
+                       (1 (org-note-operation-test--item-context
+                           "workspace-1" "item-1" "document-1" 3 "running"
+                           '((id . "lease-1") (workspace_id . "workspace-1")
+                             (work_item_id . "item-1") (attempt_id . "attempt")
+                             (kind . "execution") (actor_id . "actor")
+                             (acquired_at . 1) (last_heartbeat_at . 1)
+                             (expires_at . 200) (status . "active"))))
+                       (2 (signal 'org-note-transport-error '("GET failed")))
+                       (_ (org-note-operation-test--item-context
+                           "workspace-1" "item-1" "document-1" 3 "running" nil)))))))
+        (should-error
+         (org-note-operation-release
+          "workspace-1" "item-1" "document-1" 3 "lease-1" "execution"
+          "fence-1" :operation-id "operation-1")
+         :type 'org-note-transport-error)
+        (should (org-note-operation-find-lease
+                 "workspace-1" "item-1" "execution"))
+        (should (eq (org-note-operation-release
+                     "workspace-1" "item-1" "document-1" 999 "lease-1"
+                     "execution" "fence-1" :operation-id "ignored")
+                    post-result))
+        (should (= post-count 1))
+        (should (= get-count 3))
+        (should-not (org-note-operation-find-lease
+                     "workspace-1" "item-1" "execution"))))))
+
+(ert-deftest org-note-operation-release-rejects-terminal-original-lease ()
+  "The released lease id must be absent regardless of its reported status."
+  (org-note-operation-test--with-lease-state (100.0)
+    (let* ((lease
+            (copy-tree
+             (org-note-operation-test--active-context-lease
+              "workspace-1" "item-1" "original" "execution" 200)))
+           (record '(:workspace-id "workspace-1" :item-id "item-1"
+                     :document-id "document-1" :expected-revision 3
+                     :lease-id "original" :kind "execution"
+                     :post-result ((released . t)) :post-complete-p t
+                     :post frozen-post :read frozen-read)))
+      (setcdr (assq 'status lease) "expired")
+      (cl-letf (((symbol-function 'org-note-operation--dispatch-frozen)
+                 (lambda (_wire)
+                   (org-note-operation-test--item-context
+                    "workspace-1" "item-1" "document-1" 3 "running" lease))))
+        (should-error (org-note-operation--dispatch-frozen-release record)
+                      :type 'org-note-error)
+        (should (= (hash-table-count org-note-operation--pending-releases) 1))))))
+
+(ert-deftest org-note-operation-release-freezes-endpoint-before-preflight ()
+  "Endpoint changes during preflight cannot redirect the release POST."
+  (org-note-operation-test--with-lease-state (100.0)
+    (let ((org-note-endpoint "https://a.example")
+          (org-note-actor-id "emacs:test@example")
+          post-urls
+          (get-count 0))
+      (cl-letf (((symbol-function 'org-note-client-request-raw)
+                 (lambda (&rest args)
+                   (if (equal (plist-get args :method) "GET")
+                       (progn
+                         (cl-incf get-count)
+                         (if (= get-count 1)
+                             (progn
+                               (setq org-note-endpoint "https://b.example")
+                               (org-note-operation-test--item-context
+                                "workspace-1" "item-1" "document-1" 3 "running"
+                                (org-note-operation-test--active-context-lease
+                                 "workspace-1" "item-1" "lease-1"
+                                 "execution" 200)))
+                           (org-note-operation-test--item-context
+                            "workspace-1" "item-1" "document-1" 3 "running" nil)))
+                     (push (plist-get args :url) post-urls)
+                     '((released . t))))))
+        (org-note-operation-release
+         "workspace-1" "item-1" "document-1" 3 "lease-1" "execution"
+         "fence-1" :operation-id "operation-1")
+        (should (= (length post-urls) 1))
+        (should (string-prefix-p "https://a.example/" (car post-urls)))
+        (should-not (string-prefix-p "https://b.example/" (car post-urls)))))))
 
 (ert-deftest org-note-operation-reports-progress-with-empty-metadata ()
   (let* ((org-note-actor-id "emacs:test@example")

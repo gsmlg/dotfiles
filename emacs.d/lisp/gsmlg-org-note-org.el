@@ -1232,7 +1232,7 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
                (signal (car err) (cdr err)))
            (when dispatched
              (puthash document-id record gsmlg-org-note-org--archive-ambiguities))
-           (signal (car err) (cdr err)))))))
+           (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--clock-claim-response-validator
     (response workspace-id item-id document-id expected-revision kind operation-id)
@@ -2028,7 +2028,7 @@ errors mark the item ambiguous fail-closed and re-signal."
                     (= (or (plist-get (cadr err) :status) 0) 409))
                (remhash operation-id gsmlg-org-note-org--clock-ambiguities)
              (puthash operation-id record gsmlg-org-note-org--clock-ambiguities))
-           (signal (car err) (cdr err)))))))))
+           (signal (car err) (cdr err))))))))
 
 (defun gsmlg-org-note-org--around-clock-out (orig &rest args)
   "Call ORIG with ARGS or release the stored bridge clock lease."

@@ -10,6 +10,9 @@
 (ert-deftest gsmlg-org-note-org-phase7-default-disabled ()
   (should-not gsmlg-org-note-org-enable))
 
+(ert-deftest gsmlg-org-note-org-phase7-install-guards-is-top-level ()
+  (should (fboundp 'gsmlg-org-note-org-install-guards)))
+
 (ert-deftest gsmlg-org-note-org-phase7-publication-key-isolated ()
   (let* ((org-note-endpoint "https://agent-note.example/a")
          (a (gsmlg-org-note-org--publication-reservation-directory '("one")))

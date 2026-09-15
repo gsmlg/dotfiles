@@ -8,6 +8,13 @@
 (require 'org-note)
 (require 'gsmlg-org-note-org)
 
+(defun gsmlg-org-note-org-archive-test--ensure-runtime ()
+  "Load the real Org Note runtime after another test unloads it."
+  (require 'org-note)
+  (unless (and (fboundp 'org-note--document-lifecycle-context)
+               (fboundp 'org-note--document-lifecycle-from-context))
+    (error "Org Note document lifecycle helpers are unavailable")))
+
 (defmacro gsmlg-org-note-org-archive-test--with-document (&rest body)
   "Evaluate BODY in a bridge-enabled disposable Org Note document buffer."
   (declare (indent 0) (debug t))
@@ -18,6 +25,7 @@
           (make-hash-table :test #'equal)))
      (unwind-protect
          (with-temp-buffer
+           (gsmlg-org-note-org-archive-test--ensure-runtime)
            (gsmlg-org-note-org-install-guards)
            (org-note-document-mode)
            (setq-local org-note-document-workspace-id "workspace-1"
@@ -211,6 +219,7 @@
         (buffer (generate-new-buffer " *org-note-archive-divergence*")))
     (unwind-protect
         (with-current-buffer buffer
+          (gsmlg-org-note-org-archive-test--ensure-runtime)
           (org-note-document-mode)
           (setq-local org-note-document-workspace-id "workspace-1"
                       org-note-document-id "document-1"

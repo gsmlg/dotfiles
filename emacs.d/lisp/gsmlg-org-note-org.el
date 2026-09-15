@@ -85,12 +85,17 @@
 (declare-function org-note-document--source "org-note-document" ())
 (declare-function org-note-document--kill-buffer-safely "org-note" ())
 (declare-function org-note--document-buffer-name "org-note" (workspace-id))
+(declare-function org-note--refresh-document-list-buffer "org-note" (list-buffer))
 (declare-function org-clock-goto "org-clock" (&rest args))
 (declare-function org-clock-out "org-clock" (&rest args))
 (declare-function org-clock-cancel "org-clock" (&rest args))
 (declare-function org-clock-menu "org-clock" ())
 (declare-function org-pomodoro "org-pomodoro" ())
 (declare-function org-note-document-archive "org-note" (&rest args))
+(declare-function org-note--document-lifecycle-context "org-note" ())
+(declare-function org-note--document-lifecycle-from-context "org-note" ())
+(defvar org-note-document-archive-prompt)
+(defvar org-note-document-archive-unsaved-prompt)
 (declare-function org-note-document--save-remote "org-note-document" (&rest args))
 (declare-function org-note-configure-agenda-workspaces "org-note" ())
 (declare-function org-note-validation-page-cursor "org-note-validation"
@@ -178,8 +183,7 @@ When non-nil, it must match `org-note-endpoint' before Capture can mutate."
 (defun gsmlg-org-note-org--process-start-token (pid)
   "Return a best-effort stable start token for PID, or nil."
   (let ((attrs (and (integerp pid) (process-attributes pid))))
-    (let ((token (or (cdr (assq 'start attrs))
-                     (cdr (assq 'etime attrs)))))
+    (let ((token (cdr (assq 'start attrs))))
       (and token (format "%s" token)))))
 
 (defun gsmlg-org-note-org--capture-reservation-directory ()

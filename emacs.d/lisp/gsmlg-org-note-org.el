@@ -1332,6 +1332,8 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
   "Call ORIG with ARGS or route save through the bridge attempt protocol."
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
+    (when gsmlg-org-note-org--archive-recovery-state
+      (user-error "Archived Org Note document is locked for local recovery"))
     (unless gsmlg-org-note-org--activated
       (gsmlg-org-note-org-activate))
     (gsmlg-org-note-org--attempt-document-save)))
@@ -1360,6 +1362,9 @@ May be the last-good snapshot or an endpoint-keyed empty feed.")
 
 (defvar gsmlg-org-note-org--archive-ambiguities (make-hash-table :test #'equal)
   "Frozen whole-document archive attempts awaiting explicit replay.")
+
+(defvar-local gsmlg-org-note-org--archive-recovery-state nil
+  "Local archive recovery state for a committed divergent document buffer.")
 
 ;; Non-Capture mutations persist only nonsecret identity and lifecycle metadata.
 (defconst gsmlg-org-note-org--noncapture-marker-schema-version 1)
@@ -1522,41 +1527,44 @@ When CREATE is non-nil, create the parent directory if needed."
 (defconst gsmlg-org-note-org--archive-page-limit 100
   "Maximum rows requested per archive reconciliation page.")
 
-(defun gsmlg-org-note-org--archive-list-documents (workspace-id)
-  "Exhaustively list archived documents in WORKSPACE-ID with bounded paging."
+(defun gsmlg-org-note-org--archive-list-documents (workspace-id &optional endpoint)
+  "Exhaustively list archived documents in WORKSPACE-ID at ENDPOINT."
   (require 'org-note-validation)
-  (org-note-validation-bounded-pager-fold
-   (org-note-validation-bounded-pager-state :limit gsmlg-org-note-org--archive-page-limit)
-   (lambda (cursor)
-     (let* ((response (org-note-operation-list-documents
-                       workspace-id :cursor cursor
-                       :limit gsmlg-org-note-org--archive-page-limit
-                       :include-archived t))
-            (data (or (alist-get 'data response) response))
-            (rows (or (alist-get 'documents data)
-                      (alist-get 'items data)
-                      (alist-get 'rows data)))
-            (next (or (alist-get 'next_cursor data)
-                      (alist-get 'next_cursor response))))
-       (when (vectorp rows)
-         (setq rows (append rows nil)))
-       (unless (listp rows)
-         (user-error "Org Note archive reconciliation returned malformed rows"))
-       (list :rows rows :next-cursor next)))))
+  (let ((frozen-endpoint (or endpoint org-note-endpoint)))
+    (org-note-validation-bounded-pager-fold
+     (org-note-validation-bounded-pager-state
+      :limit gsmlg-org-note-org--archive-page-limit)
+     (lambda (cursor)
+       (let* ((org-note-endpoint frozen-endpoint)
+              (response (org-note-operation-list-documents
+                         workspace-id :cursor cursor
+                         :limit gsmlg-org-note-org--archive-page-limit
+                         :include-archived t))
+              (data (or (alist-get 'data response) response))
+              (rows (or (alist-get 'documents data)
+                        (alist-get 'items data)
+                        (alist-get 'rows data)))
+              (next (or (alist-get 'next_cursor data)
+                        (alist-get 'next_cursor response))))
+         (when (vectorp rows)
+           (setq rows (append rows nil)))
+         (unless (listp rows)
+           (user-error "Org Note archive reconciliation returned malformed rows"))
+         (list :rows rows :next-cursor next))))))
 
 (defun gsmlg-org-note-org--archive-row (rows document-id path)
   "Find the unique archived DOCUMENT-ID at PATH in ROWS."
   (let ((matches (cl-remove-if-not
                   (lambda (row)
-                    (and (equal (alist-get 'id row) document-id)
-                         (equal (alist-get 'path row) path)))
+                    (equal (alist-get 'id row) document-id))
                   rows)))
     (unless (= (length matches) 1)
       (user-error "Org Note archive reconciliation did not find a unique document"))
     (let* ((row (car matches))
            (archived-at (alist-get 'archived_at row))
            (revision (alist-get 'revision row)))
-      (unless (and (integerp archived-at) (> archived-at 0)
+      (unless (and (equal (alist-get 'path row) path)
+                   (integerp archived-at) (> archived-at 0)
                    (integerp revision))
         (user-error "Org Note archive reconciliation returned invalid metadata"))
       row)))
@@ -1566,58 +1574,230 @@ When CREATE is non-nil, create the parent directory if needed."
   (or (alist-get 'revision response)
       (alist-get 'document_revision response)))
 
+(defun gsmlg-org-note-org--archive-marker (record state)
+  "Return the durable archive marker for RECORD in lifecycle STATE."
+  (list :operation-kind "archive" :purpose "archive" :state state
+        :operation-id (plist-get record :operation-id)
+        :endpoint (plist-get (plist-get record :frozen) :endpoint)
+        :workspace-id (plist-get record :workspace-id)
+        :document-id (plist-get record :document-id)
+        :path (plist-get record :path)
+        :expected-revision (plist-get record :expected-revision)
+        :committed-revision (plist-get record :committed-revision)
+        :source-digest (plist-get record :source-digest)
+        :created-at (plist-get record :created-at)
+        :updated-at (float-time)))
+
+(defun gsmlg-org-note-org--archive-origin (buffer role)
+  "Snapshot live BUFFER as archive origin ROLE."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (save-restriction
+        (widen)
+        (let ((source (buffer-substring-no-properties (point-min) (point-max))))
+          (list :buffer buffer :role role :source source
+                :digest (secure-hash 'sha256 source)
+                :tick (buffer-modified-tick)
+                :read-only buffer-read-only))))))
+
+(defun gsmlg-org-note-org--archive-origin-unchanged-p (origin)
+  "Return non-nil when live ORIGIN still matches its frozen snapshot."
+  (let ((buffer (plist-get origin :buffer)))
+    (and (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (save-restriction
+             (widen)
+             (let ((source (buffer-substring-no-properties
+                            (point-min) (point-max))))
+               (and (= (buffer-modified-tick) (plist-get origin :tick))
+                    (equal source (plist-get origin :source))
+                    (equal (secure-hash 'sha256 source)
+                           (plist-get origin :digest)))))))))
+
+(defun gsmlg-org-note-org--archive-set-origin-read-only (record read-only)
+  "Set live document origins in RECORD to READ-ONLY."
+  (dolist (origin (plist-get record :origins))
+    (when (and (eq (plist-get origin :role) 'document)
+               (buffer-live-p (plist-get origin :buffer)))
+      (with-current-buffer (plist-get origin :buffer)
+        (setq buffer-read-only read-only)))))
+
+(defun gsmlg-org-note-org--archive-restore-origin-guards (record)
+  "Restore pre-dispatch read-only state for origins in RECORD."
+  (dolist (origin (plist-get record :origins))
+    (when (buffer-live-p (plist-get origin :buffer))
+      (with-current-buffer (plist-get origin :buffer)
+        (setq buffer-read-only (plist-get origin :read-only))))))
+
+(defun gsmlg-org-note-org--archive-cleanup-committed (record)
+  "Perform local-only cleanup for verified committed archive RECORD."
+  (let* ((document-origin
+          (cl-find 'document (plist-get record :origins)
+                   :key (lambda (origin) (plist-get origin :role))))
+         (list-origin
+          (cl-find 'list (plist-get record :origins)
+                   :key (lambda (origin) (plist-get origin :role))))
+         (document-buffer (plist-get document-origin :buffer))
+         (list-buffer (plist-get list-origin :buffer)))
+    (if (and (not (plist-get record :origins-verified))
+             document-origin
+             (buffer-live-p document-buffer)
+             (not (gsmlg-org-note-org--archive-origin-unchanged-p
+                   document-origin)))
+        (progn
+          (setq record (plist-put record :state 'committed-local-divergence))
+          (puthash (plist-get record :document-id) record
+                   gsmlg-org-note-org--archive-ambiguities)
+          (with-current-buffer document-buffer
+            (setq-local gsmlg-org-note-org--archive-recovery-state record)
+            (setq buffer-read-only t))
+          (gsmlg-org-note-org--noncapture-marker-write
+           (gsmlg-org-note-org--archive-marker record "post-commit-conflict"))
+          (message "Org Note archive committed; local text diverged and was preserved")
+          (plist-get record :response))
+      (when (and (not (plist-get record :origins-verified))
+                 list-origin (buffer-live-p list-buffer))
+        (unless (gsmlg-org-note-org--archive-origin-unchanged-p list-origin)
+          (error "Org Note archive list view changed during dispatch")))
+      (setq record (plist-put record :origins-verified t))
+      (puthash (plist-get record :document-id) record
+               gsmlg-org-note-org--archive-ambiguities)
+      (when (and list-origin (buffer-live-p list-buffer))
+        (org-note--refresh-document-list-buffer list-buffer))
+      (when (buffer-live-p document-buffer)
+        (with-current-buffer document-buffer
+          (org-note-document--kill-buffer-safely)))
+      (gsmlg-org-note-org--noncapture-marker-delete
+       (plist-get record :operation-id))
+      (remhash (plist-get record :document-id)
+               gsmlg-org-note-org--archive-ambiguities)
+      (plist-get record :response))))
+
 (defun gsmlg-org-note-org--finish-archive-attempt (record response)
-  "Validate archived RESPONSE and clean up the document described by RECORD."
+  "Reconcile RESPONSE and locally finish the archive described by RECORD."
   (let* ((workspace-id (plist-get record :workspace-id))
          (document-id (plist-get record :document-id))
          (path (plist-get record :path))
          (expected (plist-get record :expected-revision))
          (post-revision (gsmlg-org-note-org--archive-response-revision
                          response document-id))
-         (rows (gsmlg-org-note-org--archive-list-documents workspace-id))
+         (rows (gsmlg-org-note-org--archive-list-documents
+                workspace-id (plist-get (plist-get record :frozen) :endpoint)))
          (row (gsmlg-org-note-org--archive-row rows document-id path))
          (revision (alist-get 'revision row)))
     (unless (and (or (null post-revision)
                      (and (integerp post-revision) (> post-revision expected)))
                  (> revision expected))
       (user-error "Org Note archive revision did not advance"))
-    (remhash document-id gsmlg-org-note-org--archive-ambiguities)
-    (let ((buffer (plist-get record :buffer))
-          (list-buffer (plist-get record :list-buffer)))
-      (condition-case err
-          (progn
-            (when (buffer-live-p list-buffer)
-              (with-current-buffer list-buffer
-                (when (fboundp 'org-note--refresh-document-list-buffer)
-                  (org-note--refresh-document-list-buffer list-buffer))))
-            (when (buffer-live-p buffer)
-              (with-current-buffer buffer
-                (org-note-document--kill-buffer-safely)))
-            response)
-        ((quit error)
-         (message "Org Note archive committed; cleanup pending (%s)"
-                  (error-message-string err))
-         response)))))
+    (setq record (plist-put record :response response))
+    (setq record (plist-put record :committed-revision revision))
+    (setq record (plist-put record :state 'committed-pending-cleanup))
+    (puthash document-id record gsmlg-org-note-org--archive-ambiguities)
+    (condition-case err
+        (progn
+          (gsmlg-org-note-org--noncapture-marker-write
+           (gsmlg-org-note-org--archive-marker record "committed"))
+          (gsmlg-org-note-org--archive-cleanup-committed record))
+      ((quit error)
+       (condition-case nil
+           (gsmlg-org-note-org--noncapture-marker-write
+            (gsmlg-org-note-org--archive-marker record "cleanup-pending"))
+         (error nil))
+       (message "Org Note archive succeeded; view stale (%s)"
+                (error-message-string err))
+       response))))
+
+(defun gsmlg-org-note-org--archive-definitive-noncommit-p (error-data)
+  "Return non-nil when ERROR-DATA validates a stale-revision archive conflict."
+  (and (eq (car error-data) 'org-note-http-error)
+       (let* ((payload (cadr error-data))
+              (status (and (listp payload) (plist-get payload :status)))
+              (code (and (listp payload) (plist-get payload :code))))
+         (and (eq status 409)
+              (or (eq code 'stale_revision)
+                  (equal code "stale_revision"))))))
+
+(defun gsmlg-org-note-org--archive-finish-noncommit (record)
+  "Persist and locally clean definitive noncommit RECORD without networking."
+  (setq record (plist-put record :state 'definitive-noncommit-pending-cleanup))
+  (puthash (plist-get record :document-id) record
+           gsmlg-org-note-org--archive-ambiguities)
+  (gsmlg-org-note-org--noncapture-marker-write
+   (gsmlg-org-note-org--archive-marker
+    record "definitive-noncommit-pending-cleanup"))
+  (gsmlg-org-note-org--archive-restore-origin-guards record)
+  (gsmlg-org-note-org--noncapture-marker-delete (plist-get record :operation-id))
+  (remhash (plist-get record :document-id)
+           gsmlg-org-note-org--archive-ambiguities))
 
 (defun gsmlg-org-note-org-retry-ambiguous-archive (document-id)
   "Replay frozen whole-document archive for DOCUMENT-ID."
   (interactive "sDocument ID: ")
   (let ((record (gethash document-id gsmlg-org-note-org--archive-ambiguities)))
-    (unless record
+    (unless (and record (eq (plist-get record :state) 'ambiguous))
       (user-error "No replayable Org Note archive for %s" document-id))
-    (gsmlg-org-note-org--finish-archive-attempt
-     record (org-note-operation--dispatch-frozen (plist-get record :frozen)))))
+    (condition-case err
+        (gsmlg-org-note-org--finish-archive-attempt
+         record (org-note-operation--dispatch-frozen (plist-get record :frozen)))
+      ((quit error)
+       (when (gsmlg-org-note-org--archive-definitive-noncommit-p err)
+         (gsmlg-org-note-org--archive-finish-noncommit record))
+       (signal (car err) (cdr err))))))
 
-(defun gsmlg-org-note-org--archive-document ()
-  "Archive the current Org Note document through one frozen operation."
+(defun gsmlg-org-note-org-retry-archive-cleanup (document-id)
+  "Retry local-only cleanup for a resolved archive of DOCUMENT-ID."
+  (interactive "sDocument ID: ")
+  (let ((record (gethash document-id gsmlg-org-note-org--archive-ambiguities)))
+    (pcase (plist-get record :state)
+      ('definitive-noncommit-pending-cleanup
+       (gsmlg-org-note-org--archive-finish-noncommit record))
+      ('committed-pending-cleanup
+       (gsmlg-org-note-org--archive-cleanup-committed record))
+      ('committed-local-divergence
+       (user-error "Discard the divergent archived document buffer first"))
+      (_ (user-error "No local Org Note archive cleanup for %s" document-id)))))
+
+(defun gsmlg-org-note-org-discard-archived-buffer ()
+  "Confirm and discard a divergent buffer after verified remote archive."
+  (interactive)
+  (unless (and gsmlg-org-note-org--archive-recovery-state
+               (eq (plist-get gsmlg-org-note-org--archive-recovery-state :state)
+                   'committed-local-divergence))
+    (user-error "Current buffer has no divergent committed archive"))
+  (unless (y-or-n-p "Discard divergent text for archived Org Note document? ")
+    (user-error "Org Note archive cleanup cancelled"))
+  (let ((record (plist-put gsmlg-org-note-org--archive-recovery-state
+                           :state 'committed-pending-cleanup)))
+    (setq record (plist-put record :origins-verified t))
+    (puthash (plist-get record :document-id) record
+             gsmlg-org-note-org--archive-ambiguities)
+    (setq-local gsmlg-org-note-org--archive-recovery-state nil)
+    (setq buffer-read-only nil)
+    (gsmlg-org-note-org--archive-cleanup-committed record)))
+
+(defun gsmlg-org-note-org--archive-document (&optional lifecycle)
+  "Archive the current Org Note document through frozen LIFECYCLE metadata."
   (require 'org-note-operation)
-  (org-note-document--require-metadata)
-  (when (buffer-modified-p)
-    (user-error "Save or discard Org Note document edits before archive"))
-  (let* ((workspace-id org-note-document-workspace-id)
-         (document-id org-note-document-id)
-         (path org-note-document-path)
-         (expected org-note-document-revision)
+  (let* ((context (or lifecycle (org-note--document-lifecycle-from-context))))
+    (unless context
+      (user-error "Org Note document archive requires document context"))
+    (pcase-let* ((`(,workspace-id ,document-id ,path ,expected ,_archived
+                    ,source-buffer) context)
+                 (document-buffer
+                  (and (derived-mode-p 'org-note-document-mode)
+                       (current-buffer)))
+                 (list-buffer
+                  (if (derived-mode-p 'org-note-document-list-mode)
+                      source-buffer
+                    (get-buffer (org-note--document-buffer-name workspace-id))))
+                 (origins (delq nil
+                                (list (gsmlg-org-note-org--archive-origin
+                                       document-buffer 'document)
+                                      (gsmlg-org-note-org--archive-origin
+                                       list-buffer 'list))))
+                 (source-digest
+                  (and document-buffer
+                       (plist-get (car origins) :digest)))
          (operation-id (org-note-client-new-operation-id))
          (typed (list :method "POST"
                       :route (format "/api/org/documents/%s/archive"
@@ -1626,59 +1806,45 @@ When CREATE is non-nil, create the parent directory if needed."
                       :body (org-note-operation--mutation-body
                              workspace-id `((expected_revision . ,expected)) operation-id)))
          (frozen (org-note-operation--freeze-request typed))
-         (record (list :operation-id operation-id :frozen frozen
+         (record (list :operation-id operation-id :frozen frozen :state 'prepared
                        :workspace-id workspace-id :document-id document-id
                        :path path :expected-revision expected
-                       :buffer (current-buffer)
-                       :list-buffer (get-buffer
-                                     (org-note--document-buffer-name workspace-id))))
-         (dispatched nil))
+                       :origins origins :source-digest source-digest
+                       :created-at (float-time)))
+         (prepared-p nil)
+         (dispatched-p nil))
     (when (gethash document-id gsmlg-org-note-org--archive-ambiguities)
       (user-error "Org Note archive for %s is ambiguous; resolve before retrying" document-id))
     (gsmlg-org-note-org--noncapture-blocked-p (plist-get frozen :endpoint) document-id)
-    (gsmlg-org-note-org--noncapture-marker-write
-     (list :operation-kind "archive" :purpose "archive"
-           :state "prepared" :operation-id operation-id
-           :endpoint (plist-get frozen :endpoint)
-           :workspace-id workspace-id :document-id document-id :path path
-           :expected-revision expected :created-at (float-time)))
     (condition-case err
         (progn
-          (setq dispatched t)
           (gsmlg-org-note-org--noncapture-marker-write
-           (list :operation-kind "archive" :purpose "archive"
-                 :state "dispatched" :operation-id operation-id
-                 :endpoint (plist-get frozen :endpoint)
-                 :workspace-id workspace-id :document-id document-id :path path
-                 :expected-revision expected :created-at (float-time)))
+           (gsmlg-org-note-org--archive-marker record "prepared"))
+          (setq prepared-p t)
+          (dolist (origin origins)
+            (unless (gsmlg-org-note-org--archive-origin-unchanged-p origin)
+              (user-error "Org Note archive source changed before dispatch")))
+          (gsmlg-org-note-org--archive-set-origin-read-only record t)
+          (gsmlg-org-note-org--noncapture-marker-write
+           (gsmlg-org-note-org--archive-marker record "dispatched"))
+          (setq dispatched-p t
+                record (plist-put record :state 'ambiguous))
           (gsmlg-org-note-org--finish-archive-attempt
-           record (org-note-operation--dispatch-frozen frozen))
-          (gsmlg-org-note-org--noncapture-marker-delete operation-id))
+           record (org-note-operation--dispatch-frozen frozen)))
       ((quit error)
-       (let* ((data (cdr err))
-              (props (and (listp (car data)) (car data)))
-              (status (plist-get props :status)))
-         (if (and (eq (car err) 'org-note-http-error) (= status 409))
-             (progn
-               (gsmlg-org-note-org--noncapture-marker-write
-                (list :operation-kind "archive" :purpose "archive"
-                      :state "definitive-noncommit-pending-cleanup"
-                      :operation-id operation-id :endpoint (plist-get frozen :endpoint)
-                      :workspace-id workspace-id :document-id document-id :path path
-                      :expected-revision expected :created-at (float-time)))
-               (message "Org Note archive conflict; no archive was committed")
-               (gsmlg-org-note-org--noncapture-marker-delete operation-id)
-               (signal (car err) (cdr err)))
-           (when dispatched
-             (puthash document-id record gsmlg-org-note-org--archive-ambiguities))
-           (when dispatched
-             (gsmlg-org-note-org--noncapture-marker-write
-              (list :operation-kind "archive" :purpose "archive"
-                    :state "ambiguous" :operation-id operation-id
-                    :endpoint (plist-get frozen :endpoint)
-                    :workspace-id workspace-id :document-id document-id :path path
-                    :expected-revision expected :created-at (float-time))))
-           (signal (car err) (cdr err))))))))
+       (cond
+        ((and dispatched-p
+              (gsmlg-org-note-org--archive-definitive-noncommit-p err))
+         (gsmlg-org-note-org--archive-finish-noncommit record))
+        (dispatched-p
+         (setq record (plist-put record :state 'ambiguous))
+         (puthash document-id record gsmlg-org-note-org--archive-ambiguities)
+         (gsmlg-org-note-org--noncapture-marker-write
+          (gsmlg-org-note-org--archive-marker record "ambiguous")))
+        (prepared-p
+         (gsmlg-org-note-org--archive-restore-origin-guards record)
+         (gsmlg-org-note-org--noncapture-marker-delete operation-id)))
+       (signal (car err) (cdr err)))))))
 
 (defun gsmlg-org-note-org--clock-claim-response-validator
     (response workspace-id item-id document-id expected-revision kind operation-id)
@@ -1877,9 +2043,7 @@ EXPECTED-REVISION."
   "Public Agenda producers guarded against cold-start local-file access.")
 
 (defconst gsmlg-org-note-org--agenda-mutator-entrypoints
-  '(org-agenda-refile
-    org-agenda-archive-with
-    org-agenda-bulk-action)
+  '(org-agenda-refile)
   "Native Agenda mutators intercepted before feed marker/file operations.")
 
 ;;;###autoload
@@ -1901,6 +2065,12 @@ This must not load Org Note or perform network I/O."
     (dolist (command gsmlg-org-note-org--agenda-mutator-entrypoints)
       (autoload command "org-agenda" nil t)
       (advice-add command :around #'gsmlg-org-note-org--around-agenda-mutator))
+    (dolist (entry '((org-agenda-archive-with
+                      . gsmlg-org-note-org--around-agenda-archive-with)
+                     (org-agenda-bulk-action
+                      . gsmlg-org-note-org--around-agenda-bulk-action)))
+      (autoload (car entry) "org-agenda" nil t)
+      (advice-add (car entry) :around (cdr entry)))
     (dolist (entry '((org-agenda-clock-in . gsmlg-org-note-org--around-agenda-clock-in)
                      (org-agenda-clock-out . gsmlg-org-note-org--around-agenda-clock-out)
                      (org-agenda-clock-cancel . gsmlg-org-note-org--around-agenda-clock-cancel)
@@ -2468,6 +2638,8 @@ errors mark the item ambiguous fail-closed and re-signal."
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
+    (when gsmlg-org-note-org--archive-recovery-state
+      (user-error "Archived Org Note document is locked for local recovery"))
     (gsmlg-org-note-org--refuse-if-plain-local "TODO")
     (let* ((arg (car args))
            (ids (gsmlg-org-note-org--origin-item-ids)))
@@ -2531,6 +2703,8 @@ errors mark the item ambiguous fail-closed and re-signal."
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
+    (when gsmlg-org-note-org--archive-recovery-state
+      (user-error "Archived Org Note document is locked for local recovery"))
     (gsmlg-org-note-org--refuse-if-plain-local "refile")
     (unless (and (fboundp 'org-note-document-mode)
                  (derived-mode-p 'org-note-document-mode))
@@ -2822,29 +2996,66 @@ errors mark the item ambiguous fail-closed and re-signal."
        (plist-get clock :kind)))
     (gsmlg-org-note-org--clock-clear-presentation)))
 
+(defun gsmlg-org-note-org--archive-identified-origin ()
+  "Return the identified archive origin at point, or signal."
+  (let ((ids (gsmlg-org-note-org--origin-item-ids)))
+    (unless ids
+      (user-error "Org Note item archive requires an identified item"))
+    (list :workspace-id (car ids) :item-id (cdr ids))))
+
+(defun gsmlg-org-note-org--archive-one-item ()
+  "Transition the one identified item at point to the archive target."
+  (when (gsmlg-org-note-org--agenda-bulk-or-region-todo-p)
+    (user-error "Org Note archive refuses marked or bulk Agenda entries"))
+  (let ((result
+         (gsmlg-org-note-org--attempt-identified-transition
+          gsmlg-org-note-archive-target
+          (gsmlg-org-note-org--archive-identified-origin))))
+    (when (plist-get result :message)
+      (message "%s" (plist-get result :message)))
+    t))
+
+(defun gsmlg-org-note-org--around-document-archive (orig &rest args)
+  "Call ORIG with ARGS or perform an explicit whole-document archive."
+  (if (not gsmlg-org-note-org-enable)
+      (apply orig args)
+    (unless gsmlg-org-note-org--activated
+      (gsmlg-org-note-org-activate))
+    (let ((context (org-note--document-lifecycle-context)))
+      (unless (y-or-n-p
+               (concat org-note-document-archive-prompt (nth 2 context)))
+        (user-error "Org Note archive cancelled"))
+      (when (and (derived-mode-p 'org-note-document-mode)
+                 (buffer-modified-p)
+                 (not (y-or-n-p org-note-document-archive-unsaved-prompt)))
+        (user-error "Org Note archive cancelled"))
+      (gsmlg-org-note-org--archive-document context))))
+
+(defun gsmlg-org-note-org--around-agenda-archive-with (orig &rest args)
+  "Call ORIG with ARGS or archive one identified bridge Agenda row."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (gsmlg-org-note-org--archive-one-item)))
+
+(defun gsmlg-org-note-org--around-agenda-bulk-action (orig &rest args)
+  "Call ORIG with ARGS or refuse bulk mutation in a bridge Agenda."
+  (if (not (and gsmlg-org-note-org-enable
+                (gsmlg-org-note-org--agenda-feed-buffer-p)))
+      (apply orig args)
+    (user-error "Org Note archive refuses marked or bulk Agenda entries")))
+
 (defun gsmlg-org-note-org--around-archive-subtree (orig &rest args)
-  "Call ORIG with ARGS or bridge an Org Note archive operation."
+  "Call ORIG with ARGS or archive one identified Org Note item."
   (when (and gsmlg-org-note-org-enable
              (not gsmlg-org-note-org--activated))
     (gsmlg-org-note-org-activate))
   (if (not gsmlg-org-note-org-enable)
       (apply orig args)
     (gsmlg-org-note-org--refuse-if-plain-local "archive")
-    (cond
-     ((and (fboundp 'org-note-document-mode)
-           (derived-mode-p 'org-note-document-mode)
-           (eq (car-safe args) nil))
-      (gsmlg-org-note-org--archive-document))
-     ((gsmlg-org-note-org--agenda-bulk-or-region-todo-p)
-      (user-error "Org Note archive refuses marked or bulk Agenda entries"))
-     ((gsmlg-org-note-org--origin-item-ids)
-      (gsmlg-org-note-org--attempt-identified-transition
-       gsmlg-org-note-archive-target
-       (let ((ids (gsmlg-org-note-org--origin-item-ids)))
-         (list :workspace-id (car ids) :item-id (cdr ids))))
-      t)
-     (t
-      (user-error "Org Note archive requires an identified item or document buffer")))))
+    (when gsmlg-org-note-org--archive-recovery-state
+      (user-error "Archived Org Note document is locked for local recovery"))
+    (gsmlg-org-note-org--archive-one-item)))
 
 (defun gsmlg-org-note-org--install-mutation-hooks ()
   "Install TODO/refile/archive/clock advice once."
@@ -2874,7 +3085,7 @@ errors mark the item ambiguous fail-closed and re-signal."
     (advice-add #'org-note-document--save-remote :around
                 #'gsmlg-org-note-org--around-document-save-remote)
     (advice-add #'org-note-document-archive :around
-                #'gsmlg-org-note-org--around-archive-subtree)
+                #'gsmlg-org-note-org--around-document-archive)
     (dolist (entry '((org-archive-subtree . "org-archive")
                      (org-toggle-archive-tag . "org-archive")
                      (org-archive-to-archive-sibling . "org-archive")

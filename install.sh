@@ -102,7 +102,7 @@ backup_emacs_path() {
 }
 
 # Step 1: Emacs configuration
-echo "[1/5] Installing Emacs configuration..."
+echo "[1/6] Installing Emacs configuration..."
 emacs_source="$(canonical_existing_path "$DOTFILES_DIR/emacs.d")"
 emacs_config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
 emacs_link="$emacs_config_home/emacs"
@@ -143,7 +143,7 @@ if [ ! -f "$emacs_link/early-init.el" ] || [ ! -f "$emacs_link/init.el" ]; then
 fi
 
 # Step 2: Email configuration
-echo "[2/5] Installing Email configurations (mbsync & msmtp)..."
+echo "[2/6] Installing Email configurations (mbsync & msmtp)..."
 if is_symlink_to "$HOME/.mbsyncrc" "$DOTFILES_DIR/mbsyncrc" && \
    is_symlink_to "$HOME/.msmtprc" "$DOTFILES_DIR/msmtprc"; then
   echo "  - Already linked ~/.mbsyncrc and ~/.msmtprc (skipping)"
@@ -154,7 +154,7 @@ else
 fi
 
 # Step 3: Vim configuration
-echo "[3/5] Installing Vim configuration..."
+echo "[3/6] Installing Vim configuration..."
 if is_file_identical "$DOTFILES_DIR/vimrc/vimrcs/basic.vim" "$HOME/.vimrc"; then
   echo "  - Already installed ~/.vimrc (skipping)"
 else
@@ -162,10 +162,18 @@ else
   echo "  ✓ Generated ~/.vimrc"
 fi
 
-# Step 4: Oh-My-Zsh configuration
-# Skip linking when ~/.zshrc already exists (e.g. managed by Nix/home-manager).
-echo "[4/5] Installing Oh-My-Zsh configuration..."
+# Step 4: Zsh environment and Oh-My-Zsh configuration
+echo "[4/6] Installing Zsh configuration..."
 mkdir -p "$DOTFILES_DIR/oh-my-zsh/cache"
+if is_symlink_to "$HOME/.zshenv" "$DOTFILES_DIR/zshenv"; then
+  echo "  - Already linked ~/.zshenv (skipping)"
+elif [ -e "$HOME/.zshenv" ] || [ -L "$HOME/.zshenv" ]; then
+  echo "  - ~/.zshenv already exists (skipping; not managed by this installer)"
+else
+  ln -s "$DOTFILES_DIR/zshenv" "$HOME/.zshenv"
+  echo "  ✓ Symlinked ~/.zshenv"
+fi
+
 if is_symlink_to "$HOME/.zshrc" "$DOTFILES_DIR/oh-my-zsh/zshrc"; then
   echo "  - Already linked ~/.zshrc (skipping)"
 elif [ -e "$HOME/.zshrc" ] || [ -L "$HOME/.zshrc" ]; then
@@ -176,7 +184,7 @@ else
 fi
 
 # Step 5: Git global configuration
-echo "[5/5] Installing Git global configuration..."
+echo "[5/6] Installing Git global configuration..."
 if is_file_identical "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig" && \
    is_file_identical "$DOTFILES_DIR/gitignore_global" "$HOME/.gitignore_global"; then
   echo "  - Already copied ~/.gitconfig and ~/.gitignore_global (skipping)"
@@ -184,6 +192,18 @@ else
   cp "$DOTFILES_DIR/gitconfig" "$HOME/.gitconfig"
   cp "$DOTFILES_DIR/gitignore_global" "$HOME/.gitignore_global"
   echo "  ✓ Copied ~/.gitconfig and ~/.gitignore_global"
+fi
+
+# Step 6: SSH configuration
+echo "[6/6] Installing SSH configuration..."
+mkdir -p "$HOME/.ssh"
+if is_symlink_to "$HOME/.ssh/config" "$DOTFILES_DIR/ssh_config"; then
+  echo "  - Already linked ~/.ssh/config (skipping)"
+elif [ -e "$HOME/.ssh/config" ] || [ -L "$HOME/.ssh/config" ]; then
+  echo "  - ~/.ssh/config already exists (skipping; not managed by this installer)"
+else
+  ln -s "$DOTFILES_DIR/ssh_config" "$HOME/.ssh/config"
+  echo "  ✓ Symlinked ~/.ssh/config"
 fi
 
 echo ""

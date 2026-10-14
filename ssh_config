@@ -1,0 +1,2 @@
+# Static SSH host configuration retained after sops-nix retirement.
+Include ~/.ssh/config.d/*

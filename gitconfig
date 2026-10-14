@@ -15,12 +15,26 @@
 [push]
     default = simple
 [core]
-    editor = vim
+    editor = nvim
     excludesfile = ~/.gitignore_global
-    autocrlf = input
+    autocrlf = false
     filemode = true
     quotepath = false
     ignorecase = false
+[branch]
+    autosetupmerge = true
+[color]
+    ui = auto
+[diff]
+    mnemonicprefix = true
+    tool = vimdiff
+[filter "lfs"]
+    clean = git-lfs clean -- %f
+    process = git-lfs filter-process
+    required = true
+    smudge = git-lfs smudge -- %f
+[merge]
+    tool = splice
 [pull]
     ff = only
     rebase = true

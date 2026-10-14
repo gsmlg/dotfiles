@@ -1,6 +1,6 @@
 # dotfiles
 
-Personal dotfiles for Emacs, Vim, Zsh, Git, mbsync, and msmtp.
+Personal dotfiles for Emacs, Vim, Zsh, Git, SSH, mbsync, and msmtp.
 
 ## Install
 
@@ -28,7 +28,10 @@ configuration, server / `emacsclient` usage, the GSMLG AI Workbench
   bundled Agent Editor MCP package
 - `vimrc/` — basic and extended Vim configuration
 - `oh-my-zsh/` — Oh My Zsh configuration and themes
+- `zshenv` — portable environment defaults; machine-local credentials remain
+  outside the repository in `~/.zshenv.local`
 - `gitconfig` and `gitignore_global` — Git defaults
+- `ssh_config` — static include for host files under `~/.ssh/config.d/`
 - `mbsyncrc` and `msmtprc` — mail transport configuration
 
 ## Test Emacs
